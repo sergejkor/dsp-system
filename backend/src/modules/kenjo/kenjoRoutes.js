@@ -1,0 +1,467 @@
+import { Router } from 'express';
+import kenjoDirectoryService from './kenjoDirectoryService.js';
+import {
+  getKenjoUsersList,
+  getKenjoEmployeeByIdReadable,
+  getTimeOffRequests,
+  createKenjoAttendance,
+  updateEmployeeWork,
+  updateEmployeePersonals,
+  updateEmployeeAddresses,
+  updateEmployeeHomes,
+  updateEmployeeFinancials,
+  deactivateEmployee,
+  getKenjoCustomFields,
+} from './kenjoClient.js';
+import kenjoCompareService from './kenjoCompareService.js';
+import { query } from '../../db.js';
+
+const router = Router();
+
+router.get('/health', (_req, res) => res.json({ ok: true, module: 'kenjo' }));
+
+router.get('/info', (_req, res) => {
+  res.json(kenjoDirectoryService.getKenjoModuleInfo());
+});
+
+router.get('/users', async (_req, res) => {
+  try {
+    const users = await getKenjoUsersList();
+    res.json(users || []);
+  } catch (error) {
+    console.error('Kenjo /users error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.get('/custom-fields', async (_req, res) => {
+  try {
+    const fields = await getKenjoCustomFields();
+    res.json(fields || []);
+  } catch (error) {
+    console.error('Kenjo /custom-fields error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+/** Sync kenjo_employees from Kenjo API (user-accounts + works). Fills transporter_id, PN, names, etc. for payroll KPI matching. */
+router.post('/sync-employees', async (_req, res) => {
+  try {
+    const users = await getKenjoUsersList();
+    let updated = 0;
+    for (const u of users || []) {
+      const kenjo_user_id = String(u._id || u.id || '').trim();
+      if (!kenjo_user_id) continue;
+      const displayName = u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || '';
+      const startDateRaw = toDateOnly(u.startDate) ?? (u.startDate && String(u.startDate).trim().slice(0, 10));
+      const contractEndRaw = toDateOnly(u.contractEnd) ?? (u.contractEnd && String(u.contractEnd).trim().slice(0, 10));
+      const startDate = (startDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(startDateRaw))) ? startDateRaw : null;
+      const contractEnd = (contractEndRaw && /^\d{4}-\d{2}-\d{2}$/.test(String(contractEndRaw))) ? contractEndRaw : null;
+      await query(
+        `INSERT INTO kenjo_employees (
+          kenjo_user_id, employee_number, transporter_id, first_name, last_name, display_name, job_title, start_date, contract_end, is_active, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+        ON CONFLICT (kenjo_user_id) DO UPDATE SET
+          employee_number = EXCLUDED.employee_number,
+          transporter_id = COALESCE(NULLIF(TRIM(EXCLUDED.transporter_id), ''), kenjo_employees.transporter_id),
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          display_name = EXCLUDED.display_name,
+          job_title = EXCLUDED.job_title,
+          start_date = EXCLUDED.start_date,
+          contract_end = EXCLUDED.contract_end,
+          is_active = EXCLUDED.is_active,
+          updated_at = NOW()`,
+        [
+          kenjo_user_id,
+          String(u.employeeNumber ?? u.employee_number ?? '').trim() || null,
+          String(u.transportationId ?? u.transporterId ?? '').trim() || null,
+          String(u.firstName ?? '').trim() || null,
+          String(u.lastName ?? '').trim() || null,
+          displayName || null,
+          String(u.jobTitle ?? '').trim() || null,
+          startDate,
+          contractEnd,
+          u.isActive !== false,
+        ]
+      );
+      updated++;
+    }
+    res.json({ ok: true, synced: updated });
+  } catch (error) {
+    console.error('Kenjo POST /sync-employees error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.get('/employees/:id', async (req, res) => {
+  try {
+    const employee = await getKenjoEmployeeByIdReadable(req.params.id);
+    if (!employee || !employee.id) {
+      return res.status(404).json({ error: 'Employee not found in Kenjo' });
+    }
+    const locRes = await query(
+      `SELECT fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde
+       FROM kenjo_employees WHERE kenjo_user_id = $1`,
+      [req.params.id]
+    );
+    const row = locRes.rows[0];
+    const dspLocal = {
+      fuehrerschein_aufstellungsdatum: row?.fuehrerschein_aufstellungsdatum
+        ? String(row.fuehrerschein_aufstellungsdatum).slice(0, 10)
+        : '',
+      fuehrerschein_aufstellungsbehoerde: row?.fuehrerschein_aufstellungsbehoerde
+        ? String(row.fuehrerschein_aufstellungsbehoerde)
+        : '',
+    };
+    res.json({ ...employee, dspLocal });
+  } catch (error) {
+    console.error('Kenjo /employees/:id error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.put('/employees/:id/work', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { contractEnd } = req.body || {};
+    if (!id) {
+      return res.status(400).json({ error: 'Employee id is required' });
+    }
+    const body = {};
+    if (contractEnd !== undefined) body.contractEnd = contractEnd === '' || contractEnd === null ? null : String(contractEnd).slice(0, 10);
+    await updateEmployeeWork(id, body);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Kenjo PUT /employees/:id/work error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.put('/employees/:id/deactivate', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { terminationDate, reason } = req.body || {};
+    if (!id) {
+      return res.status(400).json({ error: 'Employee id is required' });
+    }
+    const termDate = toDateOnly(terminationDate) || (terminationDate && String(terminationDate).trim().slice(0, 10)) || null;
+    if (termDate) {
+      await updateEmployeeWork(id, { contractEnd: termDate });
+    }
+    await deactivateEmployee(id);
+    await query(
+      `INSERT INTO employee_terminations (kenjo_employee_id, termination_date, reason, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [id, termDate || null, reason ? String(reason).trim().slice(0, 2000) : null],
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Kenjo PUT /employees/:id/deactivate error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+function toDateOnly(v) {
+  if (v == null || v === '') return undefined;
+  const s = String(v).trim();
+  const iso = s.includes('T') ? s.split('T')[0] : s;
+  return iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : undefined;
+}
+
+router.put('/employees/:id/profile', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { personal, work, address, home, financial, dspLocal } = req.body || {};
+    if (!id) {
+      return res.status(400).json({ error: 'Employee id is required' });
+    }
+    const errors = [];
+    if (personal && typeof personal === 'object') {
+      try {
+        await updateEmployeePersonals(id, personal);
+      } catch (e) {
+        errors.push('personals: ' + (e?.message || e));
+      }
+    }
+    if (work && typeof work === 'object') {
+      try {
+        const workBody = { ...work };
+        delete workBody.managerName;
+        if (workBody.startDate !== undefined) workBody.startDate = toDateOnly(workBody.startDate) ?? workBody.startDate;
+        if (workBody.contractEnd !== undefined) workBody.contractEnd = toDateOnly(workBody.contractEnd) ?? workBody.contractEnd;
+        if (workBody.probationUntil !== undefined) workBody.probationUntil = toDateOnly(workBody.probationUntil) ?? workBody.probationUntil;
+        await updateEmployeeWork(id, workBody);
+      } catch (e) {
+        errors.push('work: ' + (e?.message || e));
+      }
+    }
+    if (address && typeof address === 'object') {
+      try {
+        await updateEmployeeAddresses(id, address);
+      } catch (e) {
+        errors.push('addresses: ' + (e?.message || e));
+      }
+    }
+    if (home && typeof home === 'object') {
+      try {
+        await updateEmployeeHomes(id, home);
+      } catch (e) {
+        errors.push('homes: ' + (e?.message || e));
+      }
+    }
+    if (financial && typeof financial === 'object') {
+      try {
+        await updateEmployeeFinancials(id, financial);
+      } catch (e) {
+        errors.push('financials: ' + (e?.message || e));
+      }
+    }
+    if (dspLocal && typeof dspLocal === 'object') {
+      try {
+        const rawD = dspLocal.fuehrerschein_aufstellungsdatum;
+        const rawB = dspLocal.fuehrerschein_aufstellungsbehoerde;
+        const dateVal =
+          rawD === '' || rawD == null
+            ? null
+            : String(rawD).trim().slice(0, 10);
+        const behVal =
+          rawB === '' || rawB == null ? null : String(rawB).trim().slice(0, 2000);
+        const up = await query(
+          `UPDATE kenjo_employees
+           SET fuehrerschein_aufstellungsdatum = $2::date,
+               fuehrerschein_aufstellungsbehoerde = $3,
+               updated_at = NOW()
+           WHERE kenjo_user_id = $1`,
+          [id, dateVal, behVal]
+        );
+        if (up.rowCount === 0) {
+          await query(
+            `INSERT INTO kenjo_employees (
+               kenjo_user_id, first_name, last_name, display_name, is_active,
+               fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, updated_at
+             ) VALUES ($1, '', '', '', true, $2::date, $3, NOW())
+             ON CONFLICT (kenjo_user_id) DO UPDATE SET
+               fuehrerschein_aufstellungsdatum = EXCLUDED.fuehrerschein_aufstellungsdatum,
+               fuehrerschein_aufstellungsbehoerde = EXCLUDED.fuehrerschein_aufstellungsbehoerde,
+               updated_at = NOW()`,
+            [id, dateVal, behVal]
+          );
+        }
+      } catch (e) {
+        errors.push('dspLocal: ' + (e?.message || e));
+      }
+    }
+    if (errors.length > 0) {
+      return res.status(500).json({ error: errors.join('; ') });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Kenjo PUT /employees/:id/profile error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.get('/compare', async (req, res) => {
+  try {
+    const from = req.query.from;
+    const to = req.query.to;
+    const minDiff = req.query.minDiff;
+    if (!from || !to) {
+      return res.status(400).json({ error: 'Query params from and to (YYYY-MM-DD) are required' });
+    }
+    const result = await kenjoCompareService.compareCortexWithKenjo(from, to, minDiff);
+    res.json(result);
+  } catch (error) {
+    console.error('Kenjo /compare error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.get('/compare-debug', async (req, res) => {
+  try {
+    const from = req.query.from;
+    const to = req.query.to;
+    if (!from || !to) {
+      return res.status(400).json({ error: 'Query params from and to (YYYY-MM-DD) are required' });
+    }
+    const debug = await kenjoCompareService.getCompareDebug(from, to);
+    res.json(debug);
+  } catch (error) {
+    console.error('Kenjo /compare-debug error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.post('/conflicts/ignore', async (req, res) => {
+  try {
+    const { conflictKey } = req.body || {};
+    if (!conflictKey || typeof conflictKey !== 'string') {
+      return res.status(400).json({ error: 'Body must include conflictKey' });
+    }
+    await kenjoCompareService.ignoreConflict(conflictKey.trim());
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Kenjo /conflicts/ignore error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.post('/conflicts/fix', async (req, res) => {
+  try {
+    const { attendanceId, startTime, endTime } = req.body || {};
+    if (!attendanceId) {
+      return res.status(400).json({ error: 'Body must include attendanceId' });
+    }
+    await kenjoCompareService.fixConflictInKenjo(attendanceId, startTime, endTime);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Kenjo /conflicts/fix error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.post('/attendances/create', async (req, res) => {
+  try {
+    const { userId, date, startTime, endTime } = req.body || {};
+    if (!userId || !date) {
+      return res.status(400).json({ error: 'Body must include userId and date' });
+    }
+    if (!startTime || !endTime) {
+      return res.status(400).json({ error: 'Body must include startTime and endTime' });
+    }
+    await createKenjoAttendance(userId, date, startTime, endTime);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Kenjo /attendances/create error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+/** Sync time-off requests from Kenjo API into kenjo_time_off table. Uses monthly chunks so all records are returned (API may paginate on large ranges). */
+router.post('/sync-time-off', async (_req, res) => {
+  try {
+    const users = await getKenjoUsersList();
+    const nameById = new Map();
+    (users || []).forEach((u) => {
+      const id = String(u._id || u.id || '').trim();
+      if (id) nameById.set(id, u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || id);
+    });
+
+    const now = new Date();
+    const startYear = now.getFullYear() - 2;
+    const endYear = now.getFullYear() + 1;
+    let total = 0;
+
+    for (let y = startYear; y <= endYear; y++) {
+      for (let month = 1; month <= 12; month++) {
+        const firstDay = `${y}-${String(month).padStart(2, '0')}-01`;
+        const lastDate = new Date(y, month, 0).getDate();
+        const to = `${y}-${String(month).padStart(2, '0')}-${String(lastDate).padStart(2, '0')}`;
+
+        const list = await getTimeOffRequests(firstDay, to);
+        for (const item of list || []) {
+          const reqId = String(item._id || item.id || '').trim();
+          if (!reqId) continue;
+          const userId = String(item._userId ?? item.userId ?? item.user_id ?? '').trim();
+          const fromVal = item.from ?? item.startDate ?? item.start;
+          const toVal = item.to ?? item.endDate ?? item.end;
+          const startDate = toDateOnly(fromVal);
+          const endDate = toDateOnly(toVal);
+          const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
+          const typeName = String(item.description ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item._timeOffType?.name ?? '').trim() || null;
+          const status = String(item.status ?? '').trim() || null;
+          const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
+          const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;
+          const employeeName = (userId && nameById.get(userId)) || null;
+
+          await query(
+            `INSERT INTO kenjo_time_off (
+              kenjo_request_id, kenjo_user_id, employee_name, start_date, end_date,
+              time_off_type, time_off_type_name, status, part_of_day_from, part_of_day_to, synced_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+            ON CONFLICT (kenjo_request_id) DO UPDATE SET
+              kenjo_user_id = EXCLUDED.kenjo_user_id,
+              employee_name = EXCLUDED.employee_name,
+              start_date = EXCLUDED.start_date,
+              end_date = EXCLUDED.end_date,
+              time_off_type = EXCLUDED.time_off_type,
+              time_off_type_name = EXCLUDED.time_off_type_name,
+              status = EXCLUDED.status,
+              part_of_day_from = EXCLUDED.part_of_day_from,
+              part_of_day_to = EXCLUDED.part_of_day_to,
+              synced_at = NOW()`,
+            [
+              reqId,
+              userId || null,
+              employeeName,
+              startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : null,
+              endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : null,
+              typeId,
+              typeName,
+              status,
+              partFrom,
+              partTo,
+            ]
+          );
+          total++;
+        }
+      }
+    }
+
+    res.json({ ok: true, synced: total });
+  } catch (error) {
+    console.error('Kenjo POST /sync-time-off error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+/** Get raw time-off response from Kenjo API (no DB). Query: from, to (YYYY-MM-DD), max 92 days. */
+router.get('/time-off/raw', async (req, res) => {
+  try {
+    const from = String(req.query.from || '').trim().slice(0, 10);
+    const to = String(req.query.to || '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return res.status(400).json({ error: 'Query params from and to (YYYY-MM-DD) are required' });
+    }
+    const list = await getTimeOffRequests(from, to);
+    res.json({ from, to, count: (list || []).length, data: list || [] });
+  } catch (error) {
+    console.error('Kenjo GET /time-off/raw error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+/** Get time-off records for a month (YYYY-MM). Returns rows that overlap the month. */
+router.get('/time-off', async (req, res) => {
+  try {
+    const month = String(req.query.month || '').trim().slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: 'Query param month (YYYY-MM) is required' });
+    }
+    const [y, m] = month.split('-').map(Number);
+    const firstDay = `${y}-${String(m).padStart(2, '0')}-01`;
+    const lastDay = new Date(y, m, 0);
+    const lastDayStr = `${y}-${String(m).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+
+    const { rows } = await query(
+      `SELECT kenjo_request_id, kenjo_user_id, employee_name,
+              to_char(start_date, 'YYYY-MM-DD') AS start_date,
+              to_char(end_date, 'YYYY-MM-DD') AS end_date,
+              time_off_type, time_off_type_name, status, part_of_day_from, part_of_day_to
+       FROM kenjo_time_off
+       WHERE start_date <= $2::date AND end_date >= $1::date
+       ORDER BY start_date, employee_name`,
+      [firstDay, lastDayStr]
+    );
+
+    res.json(rows || []);
+  } catch (error) {
+    console.error('Kenjo GET /time-off error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+export default router;
+
+

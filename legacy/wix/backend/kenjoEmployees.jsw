@@ -1,0 +1,53 @@
+
+import { fetch } from 'wix-fetch';
+import { getSecret } from 'wix-secrets-backend';
+
+const BASE_URL = "https://api.kenjo.io/api/v1";
+let cachedAuthHeader = null;
+let cachedExpiresAtMs = 0;
+
+function parseIsoToMs(iso) {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : 0;
+}
+
+async function getAuthHeader() {
+  const now = Date.now();
+  if (cachedAuthHeader && now < (cachedExpiresAtMs - 60_000)) {
+    return cachedAuthHeader;
+  }
+  const apiKey = await getSecret("KENJO_API_KEY");
+  if (!apiKey) throw new Error("Missing secret KENJO_API_KEY in Wix Secrets Manager");
+  const resp = await fetch(`${BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey })
+  });
+  const text = await resp.text();
+  if (!resp.ok) throw new Error(`Kenjo login failed ${resp.status}: ${text}`);
+  const json = JSON.parse(text);
+  const token = String(json?.token || "").trim();
+  if (!token.toLowerCase().startsWith("bearer ")) {
+    throw new Error(`Unexpected token format from Kenjo: ${token}`);
+  }
+  cachedAuthHeader = token;
+  const expiresIso = json?.["X-Expires-After"];
+  cachedExpiresAtMs = parseIsoToMs(expiresIso) || (now + 50 * 60 * 1000);
+  return cachedAuthHeader;
+}
+
+async function kenjoGet(path) {
+  const authHeader = await getAuthHeader();
+  const resp = await fetch(`${BASE_URL}${path}`, {
+    method: "GET",
+    headers: { "Authorization": authHeader, "Content-Type": "application/json" }
+  });
+  const text = await resp.text();
+  if (!resp.ok) throw new Error(`Kenjo GET ${path} failed ${resp.status}: ${text}`);
+  if (!text) return null;
+  return JSON.parse(text);
+}
+
+export async function getKenjoUserAccounts() {
+  return await kenjoGet(`/user-accounts`);
+}

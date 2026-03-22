@@ -1,0 +1,4 @@
+# Place the Alfamile export template here for "Export to ADP":
+#   Variable Daten Alfamile.xlsx
+# You can copy it from your Downloads or original location.
+# The first row of the sheet must contain column headers (e.g. Abrechnung Zeitraum, Persönliche Nummer, Arbeitsnehmer, Fahrgeld /Pauschal, Verpflegungsmehrauswahl, Excel Abzug/Sonstige, Abzug/Vorschuss, DA Bonus).

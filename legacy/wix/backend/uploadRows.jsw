@@ -1,0 +1,33 @@
+
+import wixData from 'wix-data';
+
+export async function replaceDailyUploadRows({ dayId, dayKey, uploadId, rows }) {
+  if (!dayId) throw new Error('replaceDailyUploadRows: dayId missing');
+  if (!dayKey) throw new Error('replaceDailyUploadRows: dayKey missing');
+  if (!Array.isArray(rows)) throw new Error('replaceDailyUploadRows: rows must be array');
+
+  while (true) {
+    const oldRes = await wixData.query('DailyUploadRows').eq('dayId', dayId).limit(100).find();
+    if (!oldRes.items.length) break;
+    await Promise.all(oldRes.items.map((it) => wixData.remove('DailyUploadRows', it._id)));
+  }
+
+  const batchSize = 50;
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    await Promise.all(
+      chunk.map((rawRow, idx) => {
+        const rowIndex = i + idx + 1;
+        return wixData.insert('DailyUploadRows', {
+          dayId,
+          dayKey,
+          uploadId: uploadId || null,
+          rowIndex,
+          raw: rawRow
+        });
+      })
+    );
+  }
+
+  return { ok: true, inserted: rows.length };
+}

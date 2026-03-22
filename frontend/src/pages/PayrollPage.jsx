@@ -1,0 +1,1349 @@
+import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { calculatePayroll, exportPayrollToAdp, savePayrollAbzug, savePayrollBonus, savePayrollManualEntry } from '../services/payrollApi';
+import { getKenjoUsers } from '../services/kenjoApi';
+import { saveAdvances } from '../services/advancesApi';
+import { useAppSettings } from '../context/AppSettingsContext';
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WEEKDAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function formatDateDDMMYYYY(iso) {
+  if (!iso) return '—';
+  const s = String(iso).slice(0, 10);
+  if (!s || s.length < 10) return '—';
+  const [y, m, d] = s.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+function formatCurrency(num) {
+  const n = Number(num);
+  if (Number.isNaN(n)) return '—';
+  return `${n.toFixed(2).replace('.', ',')} €`;
+}
+
+export default function PayrollPage() {
+  const navigate = useNavigate();
+  const { t } = useAppSettings();
+  const now = new Date();
+  const [month, setMonth] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [calendarYear, setCalendarYear] = useState(now.getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(now.getMonth() + 1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+  const [abzugModal, setAbzugModal] = useState(null);
+  const [abzugSaving, setAbzugSaving] = useState(false);
+  const [addRecordOpen, setAddRecordOpen] = useState(false);
+  const [addRecordEmployees, setAddRecordEmployees] = useState([]);
+  const [addRecordLoading, setAddRecordLoading] = useState(false);
+  const [addRecordForm, setAddRecordForm] = useState({
+    employeeId: '',
+    employeeName: '',
+    pn: '',
+    working_days: 0,
+    total_bonus: 0,
+    abzug: 0,
+    bonus: 0,
+    vorschuss: 0,
+  });
+  const [addRecordSaving, setAddRecordSaving] = useState(false);
+  const [sortBy, setSortBy] = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
+  const [bonusModal, setBonusModal] = useState(null);
+  const [bonusSaving, setBonusSaving] = useState(false);
+  const [exportAdpLoading, setExportAdpLoading] = useState(false);
+  const [showActiveOpen, setShowActiveOpen] = useState(false);
+  const [activeDriversList, setActiveDriversList] = useState([]);
+  const [activeDriversLoading, setActiveDriversLoading] = useState(false);
+  const [activeAddToListSaving, setActiveAddToListSaving] = useState(false);
+  const [showAdvanceDialog, setShowAdvanceDialog] = useState(false);
+  const [advanceForm, setAdvanceForm] = useState({
+    employeeId: '',
+    month: '',
+    lines: [
+      { amount: '', code_comment: '' },
+      { amount: '', code_comment: '' },
+      { amount: '', code_comment: '' },
+    ],
+  });
+  const [advanceSaving, setAdvanceSaving] = useState(false);
+  const [advanceError, setAdvanceError] = useState('');
+
+  useEffect(() => {
+    const [y, m] = month.split('-').map(Number);
+    if (y && m) {
+      setCalendarYear(y);
+      setCalendarMonth(m);
+    }
+  }, [month]);
+
+  useEffect(() => {
+    if (!addRecordOpen) return;
+    setAddRecordLoading(true);
+    getKenjoUsers()
+      .then((list) => {
+        const arr = Array.isArray(list) ? list : [];
+        setAddRecordEmployees(arr.filter((u) => u.isActive !== false));
+      })
+      .catch(() => setAddRecordEmployees([]))
+      .finally(() => setAddRecordLoading(false));
+  }, [addRecordOpen]);
+
+  useEffect(() => {
+    if (!showAdvanceDialog) return;
+    getKenjoUsers()
+      .then((list) => {
+        const arr = Array.isArray(list) ? list : [];
+        setAddRecordEmployees(arr.filter((u) => u.isActive !== false));
+      })
+      .catch(() => setAddRecordEmployees([]));
+  }, [showAdvanceDialog]);
+
+  const handleCalendarDayClick = (dayKey) => {
+    if (!dayKey) return;
+    if (fromDate && toDate) {
+      setFromDate(dayKey);
+      setToDate('');
+      return;
+    }
+    if (!fromDate) {
+      setFromDate(dayKey);
+      setToDate('');
+      return;
+    }
+    const from = fromDate;
+    const to = dayKey;
+    if (to < from) {
+      setFromDate(to);
+      setToDate(from);
+    } else {
+      setToDate(to);
+    }
+  };
+
+  const monthOptions = useMemo(() => {
+    const list = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      list.push({ value: `${y}-${m}`, label: `${MONTH_NAMES[d.getMonth()]} ${y}` });
+    }
+    return list;
+  }, []);
+
+  // Employees who have no record in the selected month (for Add record dropdown)
+  const addRecordEmployeesAvailable = useMemo(() => {
+    const existingIds = new Set(
+      (result?.rows || []).map((r) => String(r.kenjo_employee_id || '').trim()).filter(Boolean)
+    );
+    return (addRecordEmployees || []).filter((e) => !existingIds.has(String(e._id || e.id || '').trim()));
+  }, [addRecordEmployees, result?.rows]);
+
+  const handleLoad = async () => {
+    if (!fromDate || !toDate) {
+      setError('Select period date from and to.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setResult(null);
+    try {
+      const data = await calculatePayroll(month, fromDate, toDate);
+      setResult(data);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExportAdp = async () => {
+    if (!result?.month || !result?.rows?.length) {
+      setError('Load payroll first, then export.');
+      return;
+    }
+    setExportAdpLoading(true);
+    setError('');
+    try {
+      await exportPayrollToAdp(result.month, result.rows);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setExportAdpLoading(false);
+    }
+  };
+
+  const openShowActive = () => {
+    setShowActiveOpen(true);
+    setActiveDriversLoading(true);
+    setActiveDriversList([]);
+    setError('');
+    const inPayrollIds = new Set((result?.rows || []).map((r) => String(r.kenjo_employee_id || '').trim()).filter(Boolean));
+    getKenjoUsers()
+      .then((list) => {
+        const users = Array.isArray(list) ? list : [];
+        const activeNotInPayroll = users.filter((u) => {
+          const id = String(u._id || u.id || '').trim();
+          if (!id) return false;
+          if (u.isActive === false) return false;
+          return !inPayrollIds.has(id);
+        });
+        setActiveDriversList(
+          activeNotInPayroll.map((u) => ({
+            user: u,
+            selected: false,
+            working_days: 0,
+            total_bonus: 0,
+            abzug: 0,
+            verpfl_mehr: 0,
+            fahrt_geld: 0,
+            bonus: 0,
+            vorschuss: 0,
+          }))
+        );
+      })
+      .catch((e) => {
+        setError(String(e?.message || e));
+        setActiveDriversList([]);
+      })
+      .finally(() => setActiveDriversLoading(false));
+  };
+
+  const closeShowActive = () => setShowActiveOpen(false);
+
+  const updateActiveDriver = (index, field, value) => {
+    setActiveDriversList((prev) => {
+      const next = [...prev];
+      if (!next[index]) return next;
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const advanceMonthOptions = useMemo(() => {
+    const list = [];
+    const d = new Date();
+    for (let i = 0; i < 4; i++) {
+      const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+      const y = x.getFullYear();
+      const m = String(x.getMonth() + 1).padStart(2, '0');
+      list.push({ value: `${y}-${m}`, label: `${MONTH_NAMES[x.getMonth()]} ${y}` });
+    }
+    return list;
+  }, []);
+
+  const openAdvanceDialog = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    setAdvanceForm({
+      employeeId: '',
+      month: `${y}-${m}`,
+      lines: [
+        { amount: '', code_comment: '' },
+        { amount: '', code_comment: '' },
+        { amount: '', code_comment: '' },
+      ],
+    });
+    setAdvanceError('');
+    setShowAdvanceDialog(true);
+  };
+
+  const closeAdvanceDialog = () => setShowAdvanceDialog(false);
+
+  const setAdvanceLine = (index, field, value) => {
+    setAdvanceForm((prev) => {
+      const next = { ...prev, lines: prev.lines.slice() };
+      next.lines[index] = { ...(next.lines[index] || {}), [field]: value };
+      return next;
+    });
+  };
+
+  const submitAdvance = async () => {
+    if (!advanceForm.employeeId || !advanceForm.month) {
+      setAdvanceError('Select an employee and month.');
+      return;
+    }
+    setAdvanceSaving(true);
+    setAdvanceError('');
+    try {
+      await saveAdvances(advanceForm.employeeId, advanceForm.month, advanceForm.lines);
+      closeAdvanceDialog();
+    } catch (e) {
+      setAdvanceError(String(e?.message || e));
+    } finally {
+      setAdvanceSaving(false);
+    }
+  };
+
+  const addActiveDriversToList = async () => {
+    const selected = activeDriversList.filter((a) => a.selected);
+    if (!selected.length) {
+      setError('Select at least one driver.');
+      return;
+    }
+    if (!result?.month) {
+      setError('Load payroll first (select month and click Load).');
+      return;
+    }
+    setActiveAddToListSaving(true);
+    setError('');
+    try {
+      const newRows = [];
+      for (const item of selected) {
+        const u = item.user;
+        const id = String(u._id || u.id || '').trim();
+        const name = u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || '';
+        const pn = u.employeeNumber || u.employee_number || '';
+        const workingDays = Number(item.working_days) || 0;
+        const totalBonus = Number(item.total_bonus) || 0;
+        const abzug = Number(item.abzug) || 0;
+        const verpflMehr = Number(item.verpfl_mehr) || 0;
+        const fahrtGeld = Number(item.fahrt_geld) || 0;
+        const bonus = Number(item.bonus) || 0;
+        const vorschuss = Number(item.vorschuss) || 0;
+        await savePayrollManualEntry(result.month, id, {
+          working_days: workingDays,
+          total_bonus: totalBonus,
+          abzug,
+          bonus,
+          vorschuss,
+        });
+        const afterAbzug = Math.round((totalBonus - abzug) * 100) / 100;
+        newRows.push({
+          kenjo_employee_id: id,
+          name,
+          pn,
+          working_days: workingDays,
+          total_bonus: totalBonus,
+          abzug,
+          abzug_lines: [{ amount: abzug, comment: '' }, { amount: 0, comment: '' }, { amount: 0, comment: '' }],
+          after_abzug: afterAbzug,
+          verpfl_mehr: verpflMehr,
+          fahrt_geld: fahrtGeld,
+          bonus,
+          eintrittsdatum: null,
+          austrittsdatum: null,
+          vorschuss,
+          krank_days: 0,
+          urlaub_days: 0,
+        });
+      }
+      setResult((prev) => {
+        const base = prev || { month, from: fromDate, to: toDate, period_days: 0, rows: [] };
+        const rows = [...(base.rows || []), ...newRows];
+        return { ...base, rows };
+      });
+      closeShowActive();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setActiveAddToListSaving(false);
+    }
+  };
+
+  const openAddRecord = () => {
+    setAddRecordForm({
+      employeeId: '',
+      employeeName: '',
+      pn: '',
+      working_days: 0,
+      total_bonus: 0,
+      abzug: 0,
+      bonus: 0,
+      vorschuss: 0,
+    });
+    setAddRecordOpen(true);
+  };
+
+  const closeAddRecord = () => setAddRecordOpen(false);
+
+  const updateAddRecordForm = (field, value) => {
+    setAddRecordForm((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === 'employeeId') {
+        const emp = addRecordEmployees.find((e) => (e._id || e.id) === value);
+        if (emp) {
+          next.employeeName = emp.displayName || [emp.firstName, emp.lastName].filter(Boolean).join(' ') || '';
+          next.pn = emp.employeeNumber || emp.employee_number || '';
+        }
+      }
+      return next;
+    });
+  };
+
+  const saveAddRecord = async () => {
+    const f = addRecordForm;
+    if (!f.employeeId || !f.employeeName) {
+      setError('Select an employee.');
+      return;
+    }
+    const workingDays = Number(f.working_days) || 0;
+    const totalBonus = Number(f.total_bonus) || 0;
+    const abzug = Number(f.abzug) || 0;
+    const bonus = Number(f.bonus) || 0;
+    const vorschuss = Number(f.vorschuss) || 0;
+    setAddRecordSaving(true);
+    setError('');
+    try {
+      await savePayrollManualEntry(month, f.employeeId, {
+        working_days: workingDays,
+        total_bonus: totalBonus,
+        abzug,
+        bonus,
+        vorschuss,
+      });
+      if (fromDate && toDate) {
+        const data = await calculatePayroll(month, fromDate, toDate);
+        setResult(data);
+      } else {
+        const afterAbzug = Math.round((totalBonus - abzug) * 100) / 100;
+        const maxVerpfl = workingDays * 14;
+        const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+        const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+        const newRow = {
+          kenjo_employee_id: f.employeeId,
+          name: f.employeeName,
+          pn: f.pn,
+          working_days: workingDays,
+          total_bonus: totalBonus,
+          abzug,
+          abzug_lines: [{ amount: abzug, comment: '' }, { amount: 0, comment: '' }, { amount: 0, comment: '' }],
+          after_abzug: afterAbzug,
+          verpfl_mehr: verpflMehr,
+          fahrt_geld: fahrtGeld,
+          bonus,
+          eintrittsdatum: null,
+          austrittsdatum: null,
+          vorschuss,
+          krank_days: 0,
+          urlaub_days: 0,
+        };
+        setResult((prev) => {
+          const base = prev || { month, from: fromDate, to: toDate, period_days: 0, rows: [] };
+          const rows = [...(base.rows || []), newRow].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          return { ...base, rows };
+        });
+      }
+      closeAddRecord();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setAddRecordSaving(false);
+    }
+  };
+
+  const defaultAbzugLines = () => [
+    { amount: 0, comment: '' },
+    { amount: 0, comment: '' },
+    { amount: 0, comment: '' },
+  ];
+
+  const openAbzug = (row) => {
+    const lines = (row.abzug_lines && row.abzug_lines.length >= 3)
+      ? row.abzug_lines.map((l) => ({ amount: Number(l.amount) || 0, comment: String(l.comment ?? '').trim() }))
+      : defaultAbzugLines();
+    setAbzugModal({
+      kenjo_employee_id: row.kenjo_employee_id,
+      name: row.name,
+      periodId: result?.month,
+      working_days: Number(row.working_days) || 0,
+      lines: [
+        { amount: lines[0]?.amount ?? 0, comment: lines[0]?.comment ?? '' },
+        { amount: lines[1]?.amount ?? 0, comment: lines[1]?.comment ?? '' },
+        { amount: lines[2]?.amount ?? 0, comment: lines[2]?.comment ?? '' },
+      ],
+    });
+  };
+
+  const applyCarUsage = (rate) => {
+    setAbzugModal((prev) => {
+      if (!prev || !prev.lines) return prev;
+      const next = prev.lines.map((l) => ({ ...l, amount: Number(l.amount) || 0, comment: String(l.comment ?? '').trim() }));
+      const amount = Math.round((Number(prev.working_days) || 0) * rate * 100) / 100;
+      const idx = next.findIndex((l) => (Number(l.amount) || 0) === 0);
+      const targetIndex = idx >= 0 ? idx : 0;
+      next[targetIndex] = { amount, comment: 'Auto' };
+      return { ...prev, lines: next };
+    });
+  };
+
+  const closeAbzug = () => setAbzugModal(null);
+
+  const updateAbzugLine = (index, field, value) => {
+    setAbzugModal((prev) => {
+      if (!prev || !prev.lines) return prev;
+      const next = [...prev.lines];
+      next[index] = { ...next[index], [field]: field === 'amount' ? (Number(value) || 0) : value };
+      return { ...prev, lines: next };
+    });
+  };
+
+  const saveAbzug = async () => {
+    if (!abzugModal || !result?.month || !abzugModal.lines) return;
+    const lines = abzugModal.lines.map((l) => ({ amount: Number(l.amount) || 0, comment: String(l.comment ?? '').trim() }));
+    if (lines.some((l) => Number.isNaN(l.amount) || l.amount < 0)) return;
+    setAbzugSaving(true);
+    try {
+      await savePayrollAbzug(result.month, abzugModal.kenjo_employee_id, lines);
+      const totalAbzug = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+      setResult((prev) => ({
+        ...prev,
+        rows: prev.rows.map((r) =>
+          r.kenjo_employee_id === abzugModal.kenjo_employee_id
+            ? {
+                ...r,
+                abzug: Math.round(totalAbzug * 100) / 100,
+                abzug_lines: lines.map((l) => ({ amount: Math.round((Number(l.amount) || 0) * 100) / 100, comment: l.comment })),
+                after_abzug: Math.round((r.total_bonus - totalAbzug) * 100) / 100,
+                verpfl_mehr: (() => {
+                  const after = r.total_bonus - totalAbzug;
+                  const maxV = r.working_days * 14;
+                  return Math.round((after <= maxV ? after : maxV) * 100) / 100;
+                })(),
+                fahrt_geld: (() => {
+                  const after = r.total_bonus - totalAbzug;
+                  const maxV = r.working_days * 14;
+                  return Math.round((after > maxV ? after - maxV : 0) * 100) / 100;
+                })(),
+              }
+            : r
+        ),
+      }));
+      closeAbzug();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setAbzugSaving(false);
+    }
+  };
+
+  const openBonus = (row) => {
+    setBonusModal({
+      kenjo_employee_id: row.kenjo_employee_id,
+      name: row.name,
+      amount: Number(row.bonus) || 0,
+      comment: '',
+    });
+  };
+
+  const closeBonus = () => setBonusModal(null);
+
+  const updateBonusForm = (field, value) => {
+    setBonusModal((prev) => (prev ? { ...prev, [field]: value } : prev));
+  };
+
+  const saveBonus = async () => {
+    if (!bonusModal || !result?.month) return;
+    const amount = Number(bonusModal.amount);
+    if (Number.isNaN(amount) || amount < 0) return;
+    setBonusSaving(true);
+    try {
+      setError('');
+      await savePayrollBonus(result.month, bonusModal.kenjo_employee_id, amount, bonusModal.comment ?? '');
+      setResult((prev) => ({
+        ...prev,
+        rows: prev.rows.map((r) =>
+          r.kenjo_employee_id === bonusModal.kenjo_employee_id
+            ? { ...r, bonus: Math.round(amount * 100) / 100 }
+            : r
+        ),
+      }));
+      closeBonus();
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setBonusSaving(false);
+    }
+  };
+
+  const columns = [
+    { key: 'name', label: t('payroll.columns.name') },
+    { key: 'pn', label: t('payroll.columns.pn') },
+    { key: 'working_days', label: t('payroll.columns.working_days') },
+    { key: 'krank_days', label: t('payroll.columns.krank_days') },
+    { key: 'urlaub_days', label: t('payroll.columns.urlaub_days') },
+    { key: 'total_bonus', label: t('payroll.columns.total_bonus') },
+    { key: 'abzug', label: t('payroll.columns.abzug') },
+    { key: 'verpfl_mehr', label: t('payroll.columns.verpfl_mehr') },
+    { key: 'fahrt_geld', label: t('payroll.columns.fahrt_geld') },
+    { key: 'bonus', label: t('payroll.columns.bonus') },
+    { key: 'eintrittsdatum', label: t('payroll.columns.eintrittsdatum') },
+    { key: 'austrittsdatum', label: t('payroll.columns.austrittsdatum') },
+    { key: 'vorschuss', label: t('payroll.columns.vorschuss') },
+  ];
+
+  const getSortValue = (row, key) => {
+    if (key === 'abzug') {
+      const sum = (row.abzug_lines || []).reduce((s, l) => s + (Number(l?.amount) || 0), 0);
+      return typeof row.abzug === 'number' ? row.abzug : sum;
+    }
+    const v = row[key];
+    if (key === 'eintrittsdatum' || key === 'austrittsdatum') return v ? new Date(v + 'T12:00:00').getTime() : 0;
+    if (typeof v === 'number') return v;
+    return String(v ?? '').toLowerCase();
+  };
+
+  const sortedRows = useMemo(() => {
+    if (!result?.rows || !sortBy) return result?.rows ?? [];
+    const rows = [...result.rows];
+    const mult = sortDir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      const va = getSortValue(a, sortBy);
+      const vb = getSortValue(b, sortBy);
+      if (typeof va === 'number' && typeof vb === 'number') return mult * (va - vb);
+      if (typeof va === 'number') return mult * (vb < va ? 1 : vb > va ? -1 : 0);
+      return mult * String(va).localeCompare(String(vb));
+    });
+    return rows;
+  }, [result?.rows, sortBy, sortDir]);
+
+  const handleSort = (key) => {
+    if (sortBy === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortBy(key);
+      setSortDir('asc');
+    }
+  };
+
+  const addRecordAfterAbzug = Math.round(((Number(addRecordForm.total_bonus) || 0) - (Number(addRecordForm.abzug) || 0)) * 100) / 100;
+  const addRecordMaxVerpfl = (Number(addRecordForm.working_days) || 0) * 14;
+  const addRecordVerpflMehr = Math.round((addRecordAfterAbzug <= addRecordMaxVerpfl ? addRecordAfterAbzug : addRecordMaxVerpfl) * 100) / 100;
+  const addRecordFahrtGeld = Math.round((addRecordAfterAbzug > addRecordMaxVerpfl ? addRecordAfterAbzug - addRecordMaxVerpfl : 0) * 100) / 100;
+
+  return (
+    <section className="card">
+      <h2>{t('payroll.title')}</h2>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>{t('payroll.calculationMonth')}</label>
+          <select
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            style={{ padding: '0.5rem', minWidth: 180, display: 'block', marginBottom: '0.5rem' }}
+          >
+            {monthOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-start' }}>
+            <button type="button" className="btn-primary" onClick={handleLoad} disabled={loading} style={{ width: 'auto', minWidth: 100 }}>
+              {loading ? t('payroll.loading') : t('payroll.load')}
+            </button>
+            <button type="button" className="btn-secondary" onClick={openAddRecord} style={{ width: 'auto', minWidth: 100 }}>
+              {t('payroll.addRecord')}
+            </button>
+            <button type="button" className="btn-secondary" onClick={handleExportAdp} disabled={exportAdpLoading || !result?.rows?.length} style={{ width: 'auto', minWidth: 100 }}>
+              {exportAdpLoading ? t('payroll.exporting') : t('payroll.exportToAdp')}
+            </button>
+            <button type="button" className="btn-secondary" onClick={openShowActive} style={{ width: 'auto', minWidth: 100 }}>
+              {t('payroll.showActive')}
+            </button>
+            <button type="button" className="btn-secondary" onClick={openAdvanceDialog} style={{ width: 'auto', minWidth: 100 }}>
+              {t('payroll.addAdvance')}
+            </button>
+          </div>
+        </div>
+        <div className="payroll-period-calendar-wrap">
+          <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>{t('payroll.periodKpi')}</label>
+          <div className="payroll-range-calendar">
+            <div className="payroll-range-calendar-header">
+              <button
+                type="button"
+                className="payroll-range-calendar-nav"
+                onClick={() => {
+                  if (calendarMonth === 1) {
+                    setCalendarMonth(12);
+                    setCalendarYear((y) => y - 1);
+                  } else {
+                    setCalendarMonth((m) => m - 1);
+                  }
+                }}
+                disabled={loading}
+                aria-label="Previous month"
+              >
+                ‹
+              </button>
+              <span className="payroll-range-calendar-title">
+                {MONTH_NAMES[calendarMonth - 1]} {calendarYear}
+              </span>
+              <button
+                type="button"
+                className="payroll-range-calendar-nav"
+                onClick={() => {
+                  if (calendarMonth === 12) {
+                    setCalendarMonth(1);
+                    setCalendarYear((y) => y + 1);
+                  } else {
+                    setCalendarMonth((m) => m + 1);
+                  }
+                }}
+                disabled={loading}
+                aria-label="Next month"
+              >
+                ›
+              </button>
+            </div>
+            <div className="payroll-range-calendar-weekdays">
+              {WEEKDAYS_SHORT.map((wd) => (
+                <span key={wd} className="payroll-range-calendar-wday">{wd}</span>
+              ))}
+            </div>
+            <div className="payroll-range-calendar-grid">
+              {(() => {
+                const firstDay = new Date(calendarYear, calendarMonth - 1, 1);
+                const lastDate = new Date(calendarYear, calendarMonth, 0).getDate();
+                const startWeekday = (firstDay.getDay() + 6) % 7;
+                const cells = [];
+                for (let i = 0; i < startWeekday; i++) {
+                  cells.push(<span key={`e-${i}`} className="payroll-range-calendar-day payroll-range-calendar-day--empty" />);
+                }
+                for (let d = 1; d <= lastDate; d++) {
+                  const dayKey = `${calendarYear}-${String(calendarMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                  const inRange = fromDate && toDate && dayKey >= fromDate && dayKey <= toDate;
+                  const isStart = dayKey === fromDate;
+                  const isEnd = dayKey === toDate;
+                  cells.push(
+                    <button
+                      key={dayKey}
+                      type="button"
+                      className={`payroll-range-calendar-day ${inRange ? 'payroll-range-calendar-day--range' : ''} ${isStart ? 'payroll-range-calendar-day--start' : ''} ${isEnd ? 'payroll-range-calendar-day--end' : ''}`}
+                      onClick={() => handleCalendarDayClick(dayKey)}
+                      disabled={loading}
+                    >
+                      {d}
+                    </button>
+                  );
+                }
+                return cells;
+              })()}
+            </div>
+            <p className="payroll-range-calendar-hint">
+              {fromDate && toDate
+                ? `${fromDate} — ${toDate}`
+                : fromDate
+                  ? t('payroll.rangeHintFrom').replace('{from}', fromDate)
+                  : t('payroll.rangeHintStart')}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        .payroll-period-calendar-wrap { margin-bottom: 0.5rem; }
+        .payroll-range-calendar {
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 0.75rem;
+          background: var(--bg-card);
+          display: inline-block;
+          color: var(--text);
+        }
+        .payroll-range-calendar-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 0.5rem;
+        }
+        .payroll-range-calendar-nav {
+          background: none;
+          border: none;
+          font-size: 1.25rem;
+          cursor: pointer;
+          padding: 0.25rem 0.5rem;
+          color: var(--text);
+        }
+        .payroll-range-calendar-nav:hover:not(:disabled) { color: #3b82f6; }
+        .payroll-range-calendar-nav:disabled { opacity: 0.5; cursor: not-allowed; }
+        .payroll-range-calendar-title { font-weight: 600; font-size: 0.95rem; }
+        .payroll-range-calendar-weekdays {
+          display: grid;
+          grid-template-columns: repeat(7, 1.75rem);
+          gap: 2px;
+          margin-bottom: 2px;
+          font-size: 0.7rem;
+          color: var(--text-muted);
+        }
+        .payroll-range-calendar-wday { text-align: center; }
+        .payroll-range-calendar-grid {
+          display: grid;
+          grid-template-columns: repeat(7, 1.75rem);
+          gap: 2px;
+        }
+        .payroll-range-calendar-day {
+          width: 1.75rem;
+          height: 1.75rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.8rem;
+          border: none;
+          border-radius: 4px;
+          background: var(--bg-card);
+          cursor: pointer;
+          color: var(--text);
+        }
+        .payroll-range-calendar-day:hover:not(:disabled) { background: rgba(59, 130, 246, 0.25); }
+        .payroll-range-calendar-day:disabled { cursor: not-allowed; opacity: 0.7; }
+        .payroll-range-calendar-day--empty { background: transparent; cursor: default; }
+        .payroll-range-calendar-day--range { background: rgba(59, 130, 246, 0.45); }
+        .payroll-range-calendar-day--start,
+        .payroll-range-calendar-day--end { background: #3b82f6; color: #fff; }
+        .payroll-range-calendar-day--start:hover:not(:disabled),
+        .payroll-range-calendar-day--end:hover:not(:disabled) { background: #1d4ed8; }
+        .payroll-range-calendar-hint { margin: 0.5rem 0 0 0; font-size: 0.8rem; color: var(--text-muted); }
+      `}</style>
+
+      {error && <p className="error-text" style={{ marginBottom: '1rem' }}>{error}</p>}
+
+      {result && result.rows && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', tableLayout: 'fixed', minWidth: 960 }}>
+            <colgroup>
+              <col style={{ width: '8rem' }} />
+              <col style={{ width: '4.5rem' }} />
+              <col style={{ width: '4.5rem' }} />
+              <col style={{ width: '3.5rem', minWidth: '3.5rem' }} />
+              <col style={{ width: '3.5rem', minWidth: '3.5rem' }} />
+              <col style={{ width: '6.5rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '4.5rem' }} />
+            </colgroup>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                {columns.map((col) => (
+                  <th
+                    key={col.key}
+                    style={{
+                      textAlign: ['pn', 'working_days', 'krank_days', 'urlaub_days'].includes(col.key) ? 'right' : 'left',
+                      padding: '0.4rem 0.5rem',
+                      whiteSpace: 'nowrap',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      ...((col.key === 'krank_days' || col.key === 'urlaub_days') ? { minWidth: '3.5rem', width: '3.5rem' } : {}),
+                    }}
+                    onClick={() => handleSort(col.key)}
+                    title={`Sort by ${col.label}`}
+                  >
+                    {col.label}
+                    <span style={{ marginLeft: '0.2rem', opacity: sortBy === col.key ? 1 : 0.5, fontSize: '0.85em' }}>
+                      {sortBy !== col.key ? '↕' : sortDir === 'asc' ? '↑' : '↓'}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map((row, idx) => (
+                <tr key={`${row.kenjo_employee_id}-${idx}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                  {columns.map((col) => {
+                    if (col.key === 'abzug') {
+                      const abzugSum = (row.abzug_lines || []).reduce((s, l) => s + (Number(l?.amount) || 0), 0);
+                      const abzugVal = typeof row.abzug === 'number' ? row.abzug : abzugSum;
+                      return (
+                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                          {formatCurrency(abzugVal)}
+                          <button
+                            type="button"
+                            onClick={() => openAbzug(row)}
+                            title="Edit Abzug"
+                            style={{ marginLeft: '0.25rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}
+                          >
+                            ✎
+                          </button>
+                        </td>
+                      );
+                    }
+                    if (col.key === 'bonus') {
+                      return (
+                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                          {formatCurrency(row.bonus)}
+                          <button
+                            type="button"
+                            onClick={() => openBonus(row)}
+                            title="Edit Bonus"
+                            style={{ marginLeft: '0.25rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}
+                          >
+                            ✎
+                          </button>
+                        </td>
+                      );
+                    }
+                    if (col.key === 'name' && row.kenjo_employee_id) {
+                      return (
+                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <button
+                            type="button"
+                            onClick={() => navigate('/employee', { state: { kenjoEmployeeId: row.kenjo_employee_id } })}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#1976d2', textDecoration: 'underline', font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={row.name ?? 'Open employee profile'}
+                          >
+                            {row.name ?? '—'}
+                          </button>
+                        </td>
+                      );
+                    }
+                    const val = (col.key === 'krank_days' || col.key === 'urlaub_days')
+                      ? (row[col.key] ?? 0)
+                      : row[col.key];
+                    const isCurrency = ['total_bonus', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
+                    const isNumericCol = ['pn', 'working_days', 'krank_days', 'urlaub_days', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
+                    const display =
+                      col.key === 'eintrittsdatum' || col.key === 'austrittsdatum'
+                        ? formatDateDDMMYYYY(val)
+                        : isCurrency
+                          ? formatCurrency(val)
+                          : (col.key === 'krank_days' || col.key === 'urlaub_days')
+                            ? Number(val)
+                            : typeof val === 'number' ? (Number.isInteger(val) ? val : val.toFixed(2)) : val ?? '—';
+                    let cellStyle = { padding: '0.4rem 0.5rem', textAlign: isNumericCol ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+                    let content = display;
+                    if (col.key === 'austrittsdatum' && val) {
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      const d = new Date(val + 'T12:00:00');
+                      d.setHours(0, 0, 0, 0);
+                      if (d < today) {
+                        cellStyle = { ...cellStyle, color: '#b91c1c' };
+                      } else if (d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth()) {
+                        content = <span style={{ backgroundColor: '#fef08a', color: '#854d0e', padding: '0.1em 0.2em' }}>{display}</span>;
+                      }
+                    }
+                    return (
+                      <td key={col.key} style={cellStyle}>
+                        {content}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {abzugModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, minWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 0.5rem' }}>Edit Abzug</h3>
+            <p style={{ margin: '0 0 1rem', color: '#6b7280' }}>{abzugModal.name}</p>
+            <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', fontWeight: 600, color: '#374151' }}>Car usage</p>
+            <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
+              <button type="button" className="btn-secondary" onClick={() => applyCarUsage(10)} style={{ padding: '0.35rem 0.75rem', fontSize: '0.9rem' }}>
+                10
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => applyCarUsage(14)} style={{ padding: '0.35rem 0.75rem', fontSize: '0.9rem' }}>
+                14
+              </button>
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem', fontSize: '0.9rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.5rem' }}>Abzug (€)</th>
+                  <th style={{ textAlign: 'left', padding: '0.35rem 0.5rem' }}>Comment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(abzugModal.lines || []).map((line, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '0.35rem 0.5rem' }}>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.amount === 0 ? '' : line.amount}
+                        onChange={(e) => updateAbzugLine(i, 'amount', e.target.value)}
+                        style={{ width: '100%', padding: '0.4rem', boxSizing: 'border-box' }}
+                      />
+                    </td>
+                    <td style={{ padding: '0.35rem 0.5rem' }}>
+                      <input
+                        type="text"
+                        placeholder="Comment"
+                        value={line.comment}
+                        onChange={(e) => updateAbzugLine(i, 'comment', e.target.value)}
+                        style={{ width: '100%', padding: '0.4rem', boxSizing: 'border-box' }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{ margin: '0 0 1rem', fontWeight: 600, fontSize: '0.95rem' }}>
+              Total Abzug: € {(abzugModal.lines || []).reduce((s, l) => s + (Number(l.amount) || 0), 0).toFixed(2)}
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-secondary" onClick={closeAbzug} disabled={abzugSaving}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary" onClick={saveAbzug} disabled={abzugSaving}>
+                {abzugSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bonusModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, minWidth: 360, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 0.5rem' }}>Edit Bonus</h3>
+            <p style={{ margin: '0 0 1rem', color: '#6b7280' }}>{bonusModal.name}</p>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Amount (€)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={bonusModal.amount === 0 ? '' : bonusModal.amount}
+                onChange={(e) => updateBonusForm('amount', e.target.value)}
+                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Comment</label>
+              <input
+                type="text"
+                value={bonusModal.comment ?? ''}
+                onChange={(e) => updateBonusForm('comment', e.target.value)}
+                placeholder="Comment"
+                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-secondary" onClick={closeBonus} disabled={bonusSaving}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary" onClick={saveBonus} disabled={bonusSaving}>
+                {bonusSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {addRecordOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, minWidth: 380, maxWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 1rem' }}>Add record</h3>
+            {addRecordLoading ? (
+              <p style={{ color: '#666' }}>Loading employees…</p>
+            ) : (
+              <>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Employee</label>
+                  <select
+                    value={addRecordForm.employeeId}
+                    onChange={(e) => updateAddRecordForm('employeeId', e.target.value)}
+                    style={{ width: '100%', padding: '0.5rem' }}
+                  >
+                    <option value="">— Select —</option>
+                    {addRecordEmployeesAvailable.length === 0 && (addRecordEmployees || []).length > 0 ? (
+                      <option value="" disabled>All employees already have a record for this month</option>
+                    ) : null}
+                    {addRecordEmployeesAvailable.map((e) => (
+                      <option key={e._id || e.id} value={e._id || e.id}>
+                        {e.displayName || [e.firstName, e.lastName].filter(Boolean).join(' ') || e._id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Working days</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={addRecordForm.working_days}
+                      onChange={(e) => updateAddRecordForm('working_days', e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Total bonus</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={addRecordForm.total_bonus}
+                      onChange={(e) => updateAddRecordForm('total_bonus', e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                </div>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Abzug</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={addRecordForm.abzug}
+                    onChange={(e) => updateAddRecordForm('abzug', e.target.value)}
+                    style={{ width: '100%', padding: '0.5rem' }}
+                  />
+                </div>
+                <div style={{ marginBottom: '0.75rem', padding: '0.5rem', background: '#f8fafc', borderRadius: 6, fontSize: '0.9rem' }}>
+                  <div style={{ marginBottom: '0.25rem' }}><strong>After Abzug:</strong> {addRecordAfterAbzug}</div>
+                  <div style={{ marginBottom: '0.25rem' }}><strong>Verpfl. mehr.:</strong> {addRecordVerpflMehr}</div>
+                  <div><strong>Fahrt. Geld:</strong> {addRecordFahrtGeld}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Bonus</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={addRecordForm.bonus}
+                      onChange={(e) => updateAddRecordForm('bonus', e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Vorschuss</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={addRecordForm.vorschuss}
+                      onChange={(e) => updateAddRecordForm('vorschuss', e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn-secondary" onClick={closeAddRecord} disabled={addRecordSaving}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={saveAddRecord}
+                    disabled={!addRecordForm.employeeId || addRecordSaving}
+                  >
+                    {addRecordSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showActiveOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 1rem' }}>Active drivers not in payroll</h3>
+            <p style={{ margin: '0 0 1rem', color: '#6b7280', fontSize: '0.9rem' }}>
+              Select drivers and fill values. Click &quot;Add to list&quot; to add them to the payroll table.
+            </p>
+            {activeDriversLoading ? (
+              <p style={{ color: '#666' }}>Loading active drivers…</p>
+            ) : activeDriversList.length === 0 ? (
+              <p style={{ color: '#666' }}>No active drivers outside the payroll list.</p>
+            ) : (
+              <>
+                <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
+                  <table style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem', width: 44 }} />
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Name</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>P.N.</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Working days</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Total bonus</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Abzug</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Verpfl. mehr.</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Fahrt. Geld</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Bonus</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.35rem' }}>Vorschuss</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeDriversList.map((item, idx) => {
+                        const u = item.user;
+                        const name = u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || '—';
+                        const pn = u.employeeNumber || u.employee_number || '';
+                        return (
+                          <tr key={u._id || u.id || idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={!!item.selected}
+                                onChange={(e) => updateActiveDriver(idx, 'selected', e.target.checked)}
+                                aria-label={`Select ${name}`}
+                              />
+                            </td>
+                            <td style={{ padding: '0.35rem' }}>{name}</td>
+                            <td style={{ padding: '0.35rem' }}>{pn}</td>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={item.working_days === 0 ? '' : item.working_days}
+                                onChange={(e) => updateActiveDriver(idx, 'working_days', e.target.value)}
+                                style={{ width: 64, padding: '0.35rem', boxSizing: 'border-box' }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.total_bonus === 0 ? '' : item.total_bonus}
+                                onChange={(e) => updateActiveDriver(idx, 'total_bonus', e.target.value)}
+                                style={{ width: 80, padding: '0.35rem', boxSizing: 'border-box' }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.abzug === 0 ? '' : item.abzug}
+                                onChange={(e) => updateActiveDriver(idx, 'abzug', e.target.value)}
+                                style={{ width: 72, padding: '0.35rem', boxSizing: 'border-box' }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.verpfl_mehr === 0 ? '' : item.verpfl_mehr}
+                                onChange={(e) => updateActiveDriver(idx, 'verpfl_mehr', e.target.value)}
+                                style={{ width: 72, padding: '0.35rem', boxSizing: 'border-box' }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.fahrt_geld === 0 ? '' : item.fahrt_geld}
+                                onChange={(e) => updateActiveDriver(idx, 'fahrt_geld', e.target.value)}
+                                style={{ width: 72, padding: '0.35rem', boxSizing: 'border-box' }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.bonus === 0 ? '' : item.bonus}
+                                onChange={(e) => updateActiveDriver(idx, 'bonus', e.target.value)}
+                                style={{ width: 72, padding: '0.35rem', boxSizing: 'border-box' }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.35rem' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.vorschuss === 0 ? '' : item.vorschuss}
+                                onChange={(e) => updateActiveDriver(idx, 'vorschuss', e.target.value)}
+                                style={{ width: 72, padding: '0.35rem', boxSizing: 'border-box' }}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn-secondary" onClick={closeShowActive}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={addActiveDriversToList}
+                    disabled={activeAddToListSaving || !activeDriversList.some((a) => a.selected)}
+                  >
+                    {activeAddToListSaving ? 'Adding…' : 'Add to list'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showAdvanceDialog && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 520, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 1rem' }}>Add Advance</h3>
+            {advanceError && <p className="error-text" style={{ margin: '0 0 0.5rem' }}>{advanceError}</p>}
+            <p style={{ marginBottom: '0.25rem' }}><strong>Employee</strong></p>
+            <select
+              value={advanceForm.employeeId}
+              onChange={(e) => setAdvanceForm((prev) => ({ ...prev, employeeId: e.target.value }))}
+              style={{ width: '100%', marginBottom: '1rem', padding: '0.5rem' }}
+            >
+              <option value="">— Select —</option>
+              {(addRecordEmployees || []).map((e) => (
+                <option key={e._id || e.id} value={e._id || e.id}>
+                  {e.displayName || [e.firstName, e.lastName].filter(Boolean).join(' ') || e._id}
+                </option>
+              ))}
+            </select>
+            <p style={{ marginBottom: '0.25rem' }}><strong>Month</strong></p>
+            <select
+              value={advanceForm.month}
+              onChange={(e) => setAdvanceForm((prev) => ({ ...prev, month: e.target.value }))}
+              style={{ width: '100%', marginBottom: '1rem', padding: '0.5rem' }}
+            >
+              {advanceMonthOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <p style={{ marginBottom: '0.5rem' }}><strong>Advances for this month</strong></p>
+            <div style={{ marginBottom: '0.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.25rem 0.75rem' }}>
+              <span style={{ fontWeight: 600 }}>Amount</span>
+              <span style={{ fontWeight: 600 }}>Comment</span>
+            </div>
+            {[0, 1, 2].map((i) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Amount"
+                  value={advanceForm.lines[i]?.amount ?? ''}
+                  onChange={(e) => setAdvanceLine(i, 'amount', e.target.value)}
+                  style={{ padding: '0.5rem' }}
+                />
+                <input
+                  type="text"
+                  placeholder="Comment"
+                  value={advanceForm.lines[i]?.code_comment ?? ''}
+                  onChange={(e) => setAdvanceLine(i, 'code_comment', e.target.value)}
+                  style={{ padding: '0.5rem' }}
+                />
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button type="button" className="btn-secondary" onClick={closeAdvanceDialog} disabled={advanceSaving}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitAdvance} disabled={advanceSaving}>
+                {advanceSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}

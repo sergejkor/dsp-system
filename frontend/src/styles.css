@@ -1,0 +1,1348 @@
+html {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+:root {
+  font-family: Arial, sans-serif;
+  --bg-page: #f3f4f6;
+  --bg-card: #ffffff;
+  --text: #111827;
+  --text-muted: #6b7280;
+  --border: #e5e7eb;
+  --sidebar-bg: #111827;
+  --sidebar-text: #d1d5db;
+  --sidebar-text-active: #ffffff;
+  --input-bg: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.08);
+  color: var(--text);
+  background: var(--bg-page);
+}
+
+body.dark {
+  --bg-page: #111827;
+  --bg-card: #1f2937;
+  --text: #f9fafb;
+  --text-muted: #9ca3af;
+  --border: #374151;
+  --sidebar-bg: #0f172a;
+  --sidebar-text: #94a3b8;
+  --sidebar-text-active: #f1f5f9;
+  --input-bg: #374151;
+  --shadow: rgba(0, 0, 0, 0.3);
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text);
+  overflow-x: hidden;
+  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* React mount point must fill viewport so layout below can stretch */
+#root {
+  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.app-shell {
+  --sidebar-width: 240px;
+  max-width: 100%;
+  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Full-height sidebar: fixed to viewport (works regardless of #root / grid quirks) */
+.sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--sidebar-width);
+  z-index: 100;
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text-active);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sidebar nav.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+
+.sidebar .sidebar-nav-bottom {
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.sidebar a {
+  color: var(--sidebar-text);
+  text-decoration: none;
+}
+
+.sidebar a.active {
+  color: var(--sidebar-text-active);
+  font-weight: bold;
+}
+
+.sidebar .sidebar-user {
+  border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+body.dark .sidebar .sidebar-user-email,
+.sidebar .sidebar-user-email {
+  color: var(--sidebar-text);
+}
+
+.sidebar .sidebar-user-btn {
+  color: var(--sidebar-text);
+}
+
+.sidebar .sidebar-user-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.content {
+  margin-left: var(--sidebar-width);
+  padding: 24px;
+  background: var(--bg-page);
+  color: var(--text);
+  min-width: 0;
+  max-width: 100%;
+  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+
+.card {
+  background: var(--bg-card);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 16px var(--shadow);
+  color: var(--text);
+  border: 1px solid var(--border);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Two-column layout for profile and similar pages */
+.grid.two-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem 2rem;
+}
+@media (max-width: 640px) {
+  .grid.two-columns {
+    grid-template-columns: 1fr;
+  }
+}
+.code-box {
+  background: #0f172a;
+  color: #e5e7eb;
+  padding: 16px;
+  border-radius: 12px;
+  overflow: auto;
+}
+.muted {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.muted.small {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+/* Home dashboard (reuses analytics KPI / chart styles) */
+.dashboard-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.dashboard-section-title {
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.75rem;
+  color: var(--text);
+}
+
+.dashboard-two-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 640px) {
+  .dashboard-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* Sync with Kenjo – month dropdown */
+body.dark .sync-kenjo-page .sync-range-calendar-header select {
+  background: #1f2937; /* slightly lighter than page bg for contrast */
+  color: #e5e7eb;
+  border: 1px solid #4b5563;
+}
+
+/* Sync with Kenjo – "Monat" label color */
+body.dark .sync-kenjo-page .sync-range-calendar-header label > span {
+  color: #1d4ed8; /* dark blue */
+  font-weight: 600;
+}
+
+/* Dark mode: inputs and tables */
+body.dark input:not([type="checkbox"]):not([type="radio"]),
+body.dark select,
+body.dark textarea {
+  background: var(--input-bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+body.dark .settings-table th,
+body.dark .settings-table td {
+  border-color: var(--border);
+}
+
+body.dark .settings-nav-link {
+  color: var(--text);
+}
+
+body.dark .settings-nav-link:hover {
+  background: var(--border);
+}
+
+body.dark .settings-nav-link.active {
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.btn-primary {
+  padding: 0.45rem 0.9rem;
+  background: #3b82f6;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  padding: 0.45rem 0.9rem;
+  background: #6b7280;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+/* Scorecard uploads – theme-aware */
+.scorecard-status {
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+.scorecard-status--saved {
+  color: #166534;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+}
+body.dark .scorecard-status--saved {
+  color: #bbf7d0;
+  background: rgba(22, 101, 52, 0.35);
+  border-color: #166534;
+}
+.scorecard-status--failed {
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+}
+body.dark .scorecard-status--failed {
+  color: #fecaca;
+  background: rgba(185, 28, 28, 0.35);
+  border-color: #b91c1c;
+}
+.scorecard-grid {
+  max-width: 720px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.scorecard-grid-header {
+  display: grid;
+  grid-template-columns: 100px 60px 1fr;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: #000;
+}
+.scorecard-grid-header--with-report {
+  grid-template-columns: 100px 60px 120px 1fr;
+}
+.scorecard-row {
+  display: grid;
+  grid-template-columns: 100px 60px 1fr;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  color: #000;
+}
+.scorecard-row--with-report {
+  grid-template-columns: 100px 60px 120px 1fr;
+}
+.scorecard-row:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+.scorecard-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.scorecard-report-btn {
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid #2563eb;
+  color: #000;
+  border-radius: 4px;
+}
+.scorecard-report-btn:hover {
+  background: #2563eb;
+  color: #000;
+}
+.scorecard-week {
+  font-weight: 500;
+  color: #000;
+}
+.scorecard-icon {
+  font-size: 1.25rem;
+  font-weight: bold;
+  line-height: 1;
+}
+.scorecard-icon--ok {
+  color: #22c55e;
+}
+.scorecard-icon--missing {
+  color: #ef4444;
+}
+.scorecard-upload-btn {
+  padding: 4px 10px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--input-bg);
+  color: #000;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  justify-self: start;
+}
+.scorecard-upload-btn:hover:not(:disabled) {
+  background: #3b82f6;
+  color: #000;
+  border-color: #2563eb;
+}
+.scorecard-upload-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  color: #000;
+}
+.scorecard-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.scorecard-modal-fullpage {
+  align-items: stretch;
+  justify-content: stretch;
+}
+.scorecard-modal {
+  background: var(--bg-card);
+  color: var(--text);
+  border-radius: 8px;
+  max-width: 96vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+}
+.scorecard-modal-fullpage-inner {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.scorecard-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-card);
+}
+.scorecard-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.scorecard-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+  color: var(--text-muted);
+}
+.scorecard-modal-close:hover {
+  color: var(--text);
+}
+.scorecard-modal-body {
+  padding: 1rem;
+  overflow: auto;
+  background: var(--bg-card);
+}
+.scorecard-modal-body-fullpage {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 1rem 1rem;
+}
+.scorecard-report-table-wrap {
+  overflow: auto;
+  max-height: 70vh;
+}
+.scorecard-report-table-wrap-fullpage {
+  flex: 1;
+  max-height: none;
+  overflow: auto;
+  min-height: 0;
+}
+.scorecard-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.scorecard-report-table-fullpage {
+  font-size: 0.85rem;
+}
+.scorecard-report-table-fullpage th,
+.scorecard-report-table-fullpage td {
+  padding: 0.3rem 0.5rem;
+  white-space: nowrap;
+}
+.scorecard-report-table th,
+.scorecard-report-table td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  color: #000;
+}
+.scorecard-report-table th {
+  background: var(--bg-card);
+  font-weight: 600;
+}
+.scorecard-report-table tr:hover td {
+  background: rgba(148, 163, 184, 0.12);
+  color: #000;
+}
+
+/* Cortex attendance calendar – theme-aware */
+.calendar-upload-status {
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+.calendar-upload-status--saved {
+  color: #166534;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+}
+body.dark .calendar-upload-status--saved {
+  color: #86efac;
+  background: rgba(22, 101, 52, 0.35);
+  border-color: #166534;
+}
+.calendar-upload-status--failed {
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+}
+body.dark .calendar-upload-status--failed {
+  color: #fca5a5;
+  background: rgba(185, 28, 28, 0.35);
+  border-color: #b91c1c;
+}
+.calendar-grid {
+  max-width: 900px;
+}
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 4px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: var(--text);
+}
+.calendar-weekday {
+  padding: 0.5rem;
+  text-align: center;
+  font-family: inherit;
+}
+.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.calendar-cell {
+  min-height: 90px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+}
+.calendar-cell--empty {
+  background: var(--bg-page);
+  border-color: var(--border);
+}
+.calendar-cell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.calendar-cell-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.calendar-cell-day {
+  font-weight: 600;
+  font-size: 1rem;
+}
+.calendar-cell-status {
+  font-size: 1rem;
+  font-weight: bold;
+  line-height: 1;
+}
+.calendar-cell-status--loaded {
+  color: #22c55e;
+}
+.calendar-cell-status--missing {
+  color: #ef4444;
+}
+.calendar-cell-badge {
+  background: #3b82f6;
+  color: #fff;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+.calendar-cell-upload {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.calendar-cell-upload:hover:not(:disabled) {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #2563eb;
+}
+.calendar-cell-upload:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Time-off (Kenjo) calendar – theme-aware, column/button font */
+.time-off-calendar-grid {
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  font-family: inherit;
+  min-width: 400px;
+  color: var(--text);
+}
+.time-off-calendar-grid th,
+.time-off-calendar-grid td {
+  font-family: inherit;
+}
+.time-off-calendar-grid thead th {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-align: left;
+  background: var(--bg-card);
+}
+.time-off-calendar-grid .time-off-calendar-sticky-name {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg-card);
+  width: 140px;
+  white-space: nowrap;
+}
+.time-off-calendar-grid .time-off-calendar-day-header {
+  padding: 0.25rem;
+  min-width: 24px;
+  width: 24px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.time-off-calendar-grid .time-off-calendar-day-header--weekend {
+  background: rgba(148, 163, 184, 0.25);
+  color: var(--text-muted);
+}
+
+/* Calendar (time-off) page: high-contrast text in dark mode */
+body.dark .time-off-calendar-page .time-off-calendar-grid thead th,
+body.dark .time-off-calendar-page .time-off-calendar-grid .time-off-calendar-day-header,
+body.dark .time-off-calendar-page .time-off-calendar-grid .time-off-calendar-day-header--weekend,
+body.dark .time-off-calendar-page .time-off-calendar-grid .time-off-calendar-sticky-name,
+body.dark .time-off-calendar-page .time-off-calendar-grid .time-off-calendar-total-col {
+  color: #f1f5f9;
+}
+body.dark .time-off-calendar-page .time-off-calendar-grid tbody td {
+  color: #f1f5f9;
+}
+body.dark .time-off-calendar-page .btn-secondary {
+  color: #ffffff;
+}
+body.dark .time-off-calendar-page .muted {
+  color: #cbd5e1;
+}
+
+.time-off-calendar-grid .time-off-calendar-total-col {
+  min-width: 160px;
+  background: var(--bg-page);
+  padding: 0.4rem 0.5rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.time-off-calendar-grid tbody tr {
+  border-bottom: 1px solid var(--border);
+}
+.time-off-calendar-grid tbody td {
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-card);
+}
+.time-off-calendar-grid tbody .time-off-calendar-sticky-name {
+  z-index: 1;
+}
+.time-off-calendar-grid .time-off-calendar-day-cell {
+  padding: 0.2rem;
+  min-width: 24px;
+  width: 24px;
+  text-align: center;
+}
+.time-off-calendar-grid .time-off-calendar-day-cell--weekend {
+  background: rgba(148, 163, 184, 0.12);
+}
+.time-off-list-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.time-off-list-modal {
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 1.5rem;
+  border-radius: 12px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+}
+.time-off-list-modal h3 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  font-family: inherit;
+}
+.time-off-list-modal table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.time-off-list-modal th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  white-space: nowrap;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border);
+}
+.time-off-list-modal td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Analytics page */
+.analytics-page {
+  padding: 1rem 1.5rem;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.analytics-header {
+  margin-bottom: 1rem;
+}
+.analytics-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.analytics-controls {
+  margin-bottom: 1rem;
+}
+.analytics-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.analytics-label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.analytics-select,
+.analytics-input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  min-width: 140px;
+}
+.analytics-btn {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+}
+.analytics-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+.analytics-tab {
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+.analytics-tab:hover {
+  background: var(--border);
+  color: var(--text);
+}
+.analytics-tab--active {
+  background: var(--border);
+  color: var(--text);
+  font-weight: 500;
+}
+.analytics-error {
+  padding: 0.75rem;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+body.dark .analytics-error {
+  background: #450a0a;
+  color: #fca5a5;
+}
+.analytics-loading {
+  color: var(--text-muted);
+  padding: 1rem;
+}
+.analytics-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.analytics-kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 1px 3px var(--shadow);
+}
+.analytics-kpi-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+.analytics-kpi-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.analytics-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+.analytics-chart-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 1px 3px var(--shadow);
+}
+.analytics-chart-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  color: var(--text);
+}
+.analytics-chart-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.analytics-bar-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 40px;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.analytics-bar-label {
+  color: var(--text-muted);
+}
+.analytics-bar-track {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.analytics-bar-fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 4px;
+}
+.analytics-bar-value {
+  text-align: right;
+  color: var(--text);
+}
+.analytics-donut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.analytics-donut-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+}
+.analytics-donut-label {
+  color: var(--text);
+}
+.analytics-donut-value {
+  font-weight: 500;
+  color: var(--text);
+}
+.analytics-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.analytics-table th,
+.analytics-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.analytics-table th {
+  background: var(--border);
+  font-weight: 600;
+  color: var(--text);
+}
+.analytics-table td {
+  color: var(--text);
+}
+.analytics-domain-section {
+  margin-top: 1rem;
+}
+.analytics-domain-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+.analytics-no-data {
+  color: var(--text-muted);
+  padding: 1rem;
+}
+.analytics-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.analytics-modal {
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 1.5rem;
+  border-radius: 12px;
+  min-width: 320px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+}
+.analytics-modal h3 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+.analytics-modal .analytics-input {
+  width: 100%;
+  margin-bottom: 1rem;
+  box-sizing: border-box;
+}
+.analytics-modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+/* Gift Cards page */
+.gift-cards-page {
+  padding: 1rem 1.5rem;
+}
+.gift-cards-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.gift-cards-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+.gift-cards-input,
+.gift-cards-select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  min-width: 140px;
+}
+.gift-cards-select {
+  min-width: 280px;
+}
+.gift-cards-select-multi {
+  min-height: 120px;
+}
+.gift-cards-hint {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+.gift-cards-show-btn {
+  padding: 0.5rem 1rem;
+}
+.gift-cards-error {
+  color: #b91c1c;
+  margin: 0 0 1rem;
+}
+body.dark .gift-cards-error {
+  color: #fca5a5;
+}
+.gift-cards-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  margin-top: 1rem;
+}
+.gift-cards-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.gift-cards-table th,
+.gift-cards-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.gift-cards-table th {
+  background: var(--border);
+  font-weight: 600;
+}
+.gift-cards-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.gift-cards-checkbox-label input {
+  cursor: pointer;
+}
+
+/* Car Planning */
+.car-planning-page {
+  padding: 1rem;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.car-planning-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin: 1rem 0;
+  flex-wrap: wrap;
+}
+.car-planning-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+.car-planning-check-label input {
+  cursor: pointer;
+}
+.car-planning-total {
+  font-weight: 600;
+  color: var(--text);
+}
+.car-planning-toolbar .car-planning-toolbar-btn {
+  margin-left: 0.75rem;
+}
+.car-planning-error {
+  color: #b91c1c;
+  margin: 0 0 0.5rem;
+}
+body.dark .car-planning-error {
+  color: #fca5a5;
+}
+/* Split: fixed columns (no horizontal scroll) + scrollable day columns only */
+.car-planning-split {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  margin: 1rem 0;
+  overflow: hidden;
+}
+.car-planning-fixed-wrap {
+  flex: 0 0 auto;
+  border-right: 2px solid var(--border);
+  background: var(--bg-card);
+  z-index: 1;
+}
+.car-planning-days-scroll-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+}
+.car-planning-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.car-planning-table-fixed {
+  width: auto;
+}
+.car-planning-table-days {
+  width: max-content;
+  min-width: 100%;
+}
+.car-planning-table th,
+.car-planning-table td {
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text);
+  background: var(--bg-card);
+}
+.car-planning-table th {
+  background: var(--border);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.car-planning-th-fixed,
+.car-planning-td-fixed {
+  min-width: 40px;
+  width: 40px;
+  max-width: 40px;
+  text-align: center;
+}
+.car-planning-th-fixed {
+  background: var(--border);
+}
+.car-planning-th-car,
+.car-planning-td-car {
+  min-width: 120px;
+  width: 120px;
+  max-width: 120px;
+}
+.car-planning-th-car {
+  background: var(--border);
+}
+.car-planning-plate-blue {
+  background: #e0f2fe;
+}
+.car-planning-plate-green {
+  background: #dcfce7;
+}
+.car-planning-plate-gray {
+  background: #e5e7eb;
+}
+.car-planning-th-day {
+  white-space: nowrap;
+}
+.car-planning-th-day .car-planning-sort-btn {
+  margin-left: 0.35rem;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.car-planning-th-day .car-planning-sort-btn:hover {
+  background: var(--border);
+}
+.car-planning-sort-icon {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.car-planning-th-newday {
+  min-width: 160px;
+  background: var(--border);
+}
+.car-planning-td-newday {
+  background: var(--bg-card);
+}
+.car-planning-th-scroll-day,
+.car-planning-td-scroll-day {
+  min-width: 128px;
+}
+.car-planning-row-inactive .car-planning-td-car,
+.car-planning-row-inactive .car-planning-td-cell {
+  opacity: 0.6;
+}
+.car-planning-td-cell {
+  min-width: 120px;
+}
+.car-planning-cell-wrap {
+  position: relative;
+  min-width: 120px;
+}
+.car-planning-cell-icons {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 2px;
+}
+.car-planning-cell-icon-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  cursor: pointer;
+  color: #555;
+}
+.car-planning-cell-icon-btn:hover {
+  background: rgba(15,23,42,0.08);
+  border-radius: 999px;
+}
+.car-planning-cell-input {
+  width: 100%;
+  min-width: 90px;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: inherit;
+}
+.car-planning-cell-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.car-planning-cell-input.car-planning-cell-green {
+  background: #86efac;
+  color: #14532d;
+}
+body.dark .car-planning-cell-input.car-planning-cell-green {
+  background: #166534;
+  color: #bbf7d0;
+}
+.car-planning-cell-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 10;
+}
+.car-planning-cell-option {
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.car-planning-cell-option:hover {
+  background: var(--border);
+}
+.car-planning-cell-option-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.car-planning-actions-row {
+  display: none;
+}
+.car-planning-btn-sm {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+}
+.car-planning-report-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.car-planning-report-modal {
+  max-width: 480px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  padding: 1.5rem;
+}
+.car-planning-report-modal h3 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+.car-planning-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+.car-planning-report-table th,
+.car-planning-report-table td {
+  padding: 0.15rem 0.4rem;
+  text-align: left;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.car-planning-report-table th {
+  background: var(--border);
+  font-weight: 600;
+}
+.car-planning-screenshot-status {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}

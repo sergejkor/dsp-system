@@ -1,0 +1,87 @@
+
+import { fetch } from 'wix-fetch';
+
+const API_URL = 'https://script.google.com/macros/s/AKfycbw84oOtiNGuefogcotWdOzbf4oACpjSD9pEv76i954yxdupwmLwPKMCeC_9hzJfEmWQDg/exec';
+
+async function readJsonSafe(res, actionName) {
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`${actionName} returned invalid JSON: ${text}`);
+  }
+  if (!res.ok) {
+    throw new Error(`${actionName} failed: ${res.status}`);
+  }
+  if (json && json.success === false) {
+    throw new Error(json.error || `${actionName} failed`);
+  }
+  if (json && json.ok === false) {
+    throw new Error(json.error || `${actionName} failed`);
+  }
+  return json;
+}
+
+export async function getMonths() {
+  const res = await fetch(`${API_URL}?action=getMonths`, { method: 'get' });
+  return readJsonSafe(res, 'getMonths');
+}
+
+export async function calculateSummaryByDateRange(monthValue, dateFrom, dateTo) {
+  const res = await fetch(
+    `${API_URL}?action=calculateSummaryByDateRange` +
+      `&monthValue=${encodeURIComponent(monthValue)}` +
+      `&dateFrom=${encodeURIComponent(dateFrom)}` +
+      `&dateTo=${encodeURIComponent(dateTo)}`,
+    { method: 'get' }
+  );
+  return readJsonSafe(res, 'calculateSummaryByDateRange');
+}
+
+export async function getManualItems(periodId, employeeId, type) {
+  const res = await fetch(
+    `${API_URL}?action=getManualItems` +
+      `&periodId=${encodeURIComponent(periodId)}` +
+      `&employeeId=${encodeURIComponent(employeeId)}` +
+      `&type=${encodeURIComponent(type)}`,
+    { method: 'get' }
+  );
+  return readJsonSafe(res, 'getManualItems');
+}
+
+export async function saveVorschuss(periodId, employeeId, amount, comment = '') {
+  const res = await fetch(
+    `${API_URL}?action=saveVorschuss` +
+      `&periodId=${encodeURIComponent(periodId)}` +
+      `&employeeId=${encodeURIComponent(employeeId)}` +
+      `&amount=${encodeURIComponent(String(amount))}` +
+      `&comment=${encodeURIComponent(comment)}`,
+    { method: 'get' }
+  );
+  const json = await readJsonSafe(res, 'saveVorschuss');
+  return json.data ?? json;
+}
+
+export async function getVorschuss(periodId, employeeId) {
+  const res = await fetch(
+    `${API_URL}?action=getVorschuss` +
+      `&periodId=${encodeURIComponent(periodId)}` +
+      `&employeeId=${encodeURIComponent(employeeId)}`,
+    { method: 'get' }
+  );
+  const json = await readJsonSafe(res, 'getVorschuss');
+  return json.data ?? json;
+}
+
+export async function saveManualItems(periodId, employeeId, type, items) {
+  const res = await fetch(
+    `${API_URL}?action=saveManualItems` +
+      `&periodId=${encodeURIComponent(periodId)}` +
+      `&employeeId=${encodeURIComponent(employeeId)}` +
+      `&type=${encodeURIComponent(type)}` +
+      `&items=${encodeURIComponent(JSON.stringify(items))}`,
+    { method: 'get' }
+  );
+  return readJsonSafe(res, 'saveManualItems');
+}

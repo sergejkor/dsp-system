@@ -1,0 +1,33 @@
+{
+  "name": "dsp-system-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test src/modules/pave/__tests__/*.test.js",
+    "transfer:sheets": "node scripts/transfer-from-sheets.js",
+    "pave:backfill": "node scripts/pave-backfill.js",
+    "migrate": "node scripts/run-migration.js",
+    "seed:settings": "node scripts/seed-settings.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "fast-xml-parser": "^5.5.5",
+    "googleapis": "^171.4.0",
+    "imapflow": "^1.2.16",
+    "jszip": "^3.10.1",
+    "mailparser": "^3.9.4",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^4.2.1",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.13.0",
+    "playwright": "^1.58.2",
+    "xlsx": "^0.18.5"
+  }
+}
