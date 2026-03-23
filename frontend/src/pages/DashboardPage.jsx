@@ -7,18 +7,17 @@ import { formatKpiValue, kpiLabel } from '../utils/analyticsKpiDisplay.js';
 /** Preferred order for executive KPIs from analytics overview (non-insurance first). */
 const OVERVIEW_KPI_ORDER = [
   'active_drivers',
-  'drivers_worked_today',
-  'routes_completed_today',
+  'drivers_worked_yesterday',
+  'routes_completed_yesterday',
   'route_completion_rate',
   'attendance_rate',
-  'total_payroll_this_month',
-  'total_advances_this_month',
-  'total_deductions_this_month',
+  'total_payroll_last_month',
+  'total_advances_last_month',
+  'total_deductions_last_month',
   'vehicles_in_maintenance',
   'expiring_documents_30_days',
   'new_hires_this_month',
   'terminations_this_month',
-  'safety_incidents_this_week',
 ];
 
 const DAMAGES_KPI_KEYS = [
@@ -32,6 +31,14 @@ function formatTs(iso) {
   if (!iso) return '—';
   const s = String(iso);
   return s.length >= 16 ? s.slice(0, 16).replace('T', ' ') : s;
+}
+
+function formatDateNormal(value) {
+  if (!value) return '—';
+  const s = String(value).slice(0, 10);
+  const [y, m, d] = s.split('-');
+  if (!y || !m || !d) return String(value);
+  return `${d}.${m}.${y}`;
 }
 
 function orderOverviewKpis(kpis) {
@@ -188,7 +195,7 @@ export default function DashboardPage() {
                 <div className="analytics-chart-bars">
                   {routesLast14.map((r) => (
                     <div key={String(r.date)} className="analytics-bar-row">
-                      <span className="analytics-bar-label">{r.date || '—'}</span>
+                      <span className="analytics-bar-label">{formatDateNormal(r.date)}</span>
                       <div className="analytics-bar-track">
                         <div
                           className="analytics-bar-fill"

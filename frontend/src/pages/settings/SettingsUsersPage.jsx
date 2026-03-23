@@ -10,6 +10,7 @@ import {
   deactivateUser,
   reactivateUser,
 } from '../../services/settingsApi';
+import AccessiblePagesReference from './AccessiblePagesReference.jsx';
 import { resetPassword, setLoginEnabled } from '../../services/authApi';
 
 export default function SettingsUsersPage() {
@@ -66,6 +67,7 @@ export default function SettingsUsersPage() {
     <>
       <h3>Users & Access</h3>
       <p className="muted">Manage system users, roles, and access.</p>
+      <AccessiblePagesReference />
       {error && <p className="settings-msg settings-msg--err">{error}</p>}
       {message && <p className="settings-msg settings-msg--ok">{message}</p>}
 

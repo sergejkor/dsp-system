@@ -1,6 +1,6 @@
 import { getToken, setToken, clearToken } from './authStore.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
 
 function getHeaders() {
   const t = getToken();

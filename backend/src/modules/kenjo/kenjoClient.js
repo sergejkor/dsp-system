@@ -211,8 +211,18 @@ export async function getTimeOffRequests(from, to) {
   const fromStr = String(from || '').trim().slice(0, 10);
   const toStr = String(to || '').trim().slice(0, 10);
   if (!fromStr || !toStr) throw new Error('from and to (YYYY-MM-DD) are required');
-  const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr });
-  return normalizeArrayPayload(data);
+  try {
+    const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit: 100 });
+    return normalizeArrayPayload(data);
+  } catch (err) {
+    // Some Kenjo tenants reject `limit`; fallback to strict minimal filters.
+    const msg = String(err?.message || err || '');
+    if (msg.includes('/time-off/requests') && msg.includes('400')) {
+      const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr });
+      return normalizeArrayPayload(data);
+    }
+    throw err;
+  }
 }
 
 /** User-accounts plus work data (transportationId, employeeNumber) for matching Cortex rows. */

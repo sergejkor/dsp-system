@@ -53,20 +53,23 @@ router.put('/:id', async (req, res) => {
     if (!Number.isInteger(id) || id < 1) {
       return res.status(400).json({ error: 'Invalid id' });
     }
-    const { name, phone_number, sim_card_number, pin1, pin2, puk1, puk2 } = req.body || {};
+    const { name, phone_number, sim_card_number, pin1, pin2, puk1, puk2, kenjo_user_id } = req.body || {};
+    const hasKenjoUserId = Object.prototype.hasOwnProperty.call(req.body || {}, 'kenjo_user_id');
     await query(
       `UPDATE o2_telefonica SET
-        name = COALESCE($2, name),
-        phone_number = COALESCE($3, phone_number),
-        sim_card_number = COALESCE($4, sim_card_number),
-        pin1 = COALESCE($5, pin1),
-        pin2 = COALESCE($6, pin2),
-        puk1 = COALESCE($7, puk1),
-        puk2 = COALESCE($8, puk2),
+        kenjo_user_id = CASE WHEN $10 THEN $2 ELSE kenjo_user_id END,
+        name = COALESCE($3, name),
+        phone_number = COALESCE($4, phone_number),
+        sim_card_number = COALESCE($5, sim_card_number),
+        pin1 = COALESCE($6, pin1),
+        pin2 = COALESCE($7, pin2),
+        puk1 = COALESCE($8, puk1),
+        puk2 = COALESCE($9, puk2),
         updated_at = NOW()
        WHERE id = $1`,
       [
         id,
+        kenjo_user_id != null ? String(kenjo_user_id).trim() || null : null,
         name != null ? String(name).trim().slice(0, 255) || null : undefined,
         phone_number != null ? String(phone_number).trim().slice(0, 255) || null : undefined,
         sim_card_number != null ? String(sim_card_number).trim().slice(0, 255) || null : undefined,
@@ -74,6 +77,7 @@ router.put('/:id', async (req, res) => {
         pin2 != null ? String(pin2).trim().slice(0, 50) || null : undefined,
         puk1 != null ? String(puk1).trim().slice(0, 50) || null : undefined,
         puk2 != null ? String(puk2).trim().slice(0, 50) || null : undefined,
+        hasKenjoUserId,
       ]
     );
     const result = await query(`SELECT id, kenjo_user_id, name, phone_number, sim_card_number, pin1, pin2, puk1, puk2 FROM o2_telefonica WHERE id = $1`, [id]);

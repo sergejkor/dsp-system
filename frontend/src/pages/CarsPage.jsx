@@ -18,7 +18,7 @@ import { getPaveSessions } from '../services/paveApi';
 import { getPaveGmailReportsByCar } from '../services/paveGmailApi.js';
 import { formatPaveInspectionDate } from '../utils/paveInspectionDateDisplay.js';
 
-const STATUS_OPTIONS = ['Active', 'Maintenance', 'Out of Service', 'Defleeted', 'Defleeting candidate', 'Defleeting finalized'];
+const STATUS_OPTIONS = ['Active', 'Maintenance', 'Grounded', 'Out of Service', 'Defleeted', 'Defleeting candidate', 'Defleeting finalized'];
 const VEHICLE_TYPES = ['Van', 'Step Van', 'Rental', 'Personal'];
 const FUEL_TYPES = ['Diesel', 'Gasoline', 'Electric'];
 
@@ -28,6 +28,21 @@ function formatDate(d) {
   if (!s) return '—';
   const [y, m, day] = s.split('-');
   return day && m && y ? `${day}.${m}.${y}` : s;
+}
+
+function getLocalToday() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseDateOnlyAsLocal(dateOnly) {
+  if (!dateOnly) return null;
+  const [y, m, d] = String(dateOnly).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
 }
 
 function formatMileage(n) {
@@ -100,8 +115,12 @@ export default function CarsPage() {
   }
 
   function handleExport() {
-    const headers = ['Vehicle ID', 'License Plate', 'VIN', 'Model', 'Year', 'Fuel Type', 'Vehicle Type', 'Status', 'Station', 'Driver', 'Mileage', 'Last Maintenance', 'Next Maintenance', 'Safety Score', 'Incidents', 'Registration Expiry'];
-    const driverName = (c) => (c.driver_first_name || c.driver_last_name) ? [c.driver_first_name, c.driver_last_name].filter(Boolean).join(' ') : '';
+    const headers = ['Vehicle ID', 'License Plate', 'VIN', 'Model', 'Year', 'Fuel Type', 'Vehicle Type', 'Status', 'Station', 'Driver', 'Mileage', 'Last Maintenance', 'Next Maintenance', 'Condition', 'Incidents', 'Registration Expiry'];
+    const driverName = (c) =>
+      c.today_planning_driver ||
+      ((c.driver_first_name || c.driver_last_name)
+        ? [c.driver_first_name, c.driver_last_name].filter(Boolean).join(' ')
+        : '');
     const rows = cars.length
       ? cars.map((c) => [
           c.vehicle_id,
@@ -117,7 +136,7 @@ export default function CarsPage() {
           c.mileage,
           formatDate(c.last_maintenance_date),
           formatDate(c.next_maintenance_date),
-          c.safety_score,
+          c.condition_grade != null ? c.condition_grade : '',
           c.incidents,
           formatDate(c.registration_expiry),
         ])
@@ -135,6 +154,7 @@ export default function CarsPage() {
   const statusColor = (s) => {
     if (s === 'Active') return { color: '#2e7d32' };
     if (s === 'Maintenance') return { color: '#f9a825' };
+    if (s === 'Grounded') return { color: '#c62828' };
     if (s === 'Out of Service') return { color: '#c62828' };
     if (s === 'Decommissioned') return { color: '#757575' };
     return {};
@@ -156,6 +176,8 @@ export default function CarsPage() {
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.outOfService}</span><span className="cars-kpi-label">Out of Service</span></div>
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.withoutDriver}</span><span className="cars-kpi-label">Without Driver</span></div>
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.expiringDocuments}</span><span className="cars-kpi-label">Expiring Documents</span></div>
+          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.defleetingCandidates ?? 0}</span><span className="cars-kpi-label">Defleeting Candidates</span></div>
+          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.groundedCars ?? 0}</span><span className="cars-kpi-label">Grounded Cars</span></div>
         </div>
       )}
 
@@ -199,7 +221,7 @@ export default function CarsPage() {
                 <th>Mileage</th>
                 <th>Last Maintenance</th>
                 <th>Next Maintenance</th>
-                <th>Safety Score</th>
+                <th>Condition</th>
                 <th>Incidents</th>
                 <th>Fuel Type</th>
                 <th>Registration Expiry</th>
@@ -236,7 +258,13 @@ export default function CarsPage() {
                     <td>{c.model || '—'}</td>
                     <td><span style={statusColor(c.status)}>{c.status || '—'}</span></td>
                     <td>
-                      {c.assigned_driver_id ? (
+                      {c.today_planning_driver ? (
+                        c.status === 'Defleeting finalized' ? (
+                          <span className="cars-link cars-link--disabled">{c.today_planning_driver}</span>
+                        ) : (
+                          <span>{c.today_planning_driver}</span>
+                        )
+                      ) : c.assigned_driver_id ? (
                         c.status === 'Defleeting finalized' ? (
                           <span className="cars-link cars-link--disabled">
                             {[c.driver_first_name, c.driver_last_name]
@@ -269,16 +297,16 @@ export default function CarsPage() {
                     <td>{formatDate(c.last_maintenance_date)}</td>
                     <td>
                       {formatDate(c.next_maintenance_date)}
-                      {c.next_maintenance_date && new Date(c.next_maintenance_date) < new Date() && (
+                      {c.next_maintenance_date && parseDateOnlyAsLocal(c.next_maintenance_date) < new Date() && (
                         <span title="Maintenance due" className="cars-warning-icon">⚠</span>
                       )}
                     </td>
-                    <td>{c.safety_score != null ? c.safety_score : '—'}</td>
+                    <td>{c.condition_grade != null ? c.condition_grade : '—'}</td>
                     <td>{c.incidents != null ? c.incidents : '—'}</td>
                     <td>{c.fuel_type || '—'}</td>
                     <td>
                       {formatDate(c.registration_expiry)}
-                      {c.registration_expiry && (() => { const d = new Date(c.registration_expiry); const now = new Date(); const days = Math.ceil((d - now) / (24 * 60 * 60 * 1000)); return days < 30; })() && (
+                      {c.registration_expiry && (() => { const d = parseDateOnlyAsLocal(c.registration_expiry); const now = new Date(); const days = d ? Math.ceil((d - now) / (24 * 60 * 60 * 1000)) : null; return days != null && days < 30; })() && (
                         <span title="Registration expiring within 30 days" className="cars-warning-icon">⚠</span>
                       )}
                     </td>
@@ -640,12 +668,12 @@ function EditCarModal({ carId, onClose, onSaved, onError }) {
                   if (value === 'Defleeting candidate') {
                     setDefleetTempDate(
                       form.planned_defleeting_date ||
-                        new Date().toISOString().slice(0, 10),
+                        getLocalToday(),
                     );
                     setShowDefleetDateDialog(true);
                   }
                   if (value === 'Defleeted') {
-                    setHandoverTempDate(new Date().toISOString().slice(0, 10));
+                    setHandoverTempDate(getLocalToday());
                     setShowHandoverDialog(true);
                   }
                   // When switching away from defleet statuses, clear planned date
@@ -686,7 +714,7 @@ function EditCarModal({ carId, onClose, onSaved, onError }) {
                   type="button"
                   onClick={() => {
                     setForm((prev) => ({ ...prev, status: 'Defleeted' }));
-                    setHandoverTempDate(new Date().toISOString().slice(0, 10));
+                    setHandoverTempDate(getLocalToday());
                     setShowHandoverDialog(true);
                   }}
                 >
@@ -862,7 +890,7 @@ function AssignDriverModal({ carId, kenjoUsers, onClose, onSaved, onError }) {
 }
 
 function MaintenanceModal({ carId, onClose, onSaved, onError }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(getLocalToday());
   const [type, setType] = useState('');
   const [mileage, setMileage] = useState('');
   const [cost, setCost] = useState('');
@@ -922,7 +950,7 @@ function DeleteCarModal({ carId, onClose, onDeleted, onError }) {
   );
 }
 
-const DOCUMENT_TYPES = ['Registration', 'Insurance', 'Lease Agreement'];
+const DOCUMENT_TYPES = ['Registration', 'Insurance', 'Lease Agreement', 'Wartung', 'TÜV'];
 
 function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDriver }) {
   const navigate = useNavigate();
@@ -937,6 +965,7 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
   const [paveImports, setPaveImports] = useState([]);
   const [paveImportsLoading, setPaveImportsLoading] = useState(false);
   const [paveImportsError, setPaveImportsError] = useState('');
+  const [localDocuments, setLocalDocuments] = useState([]);
 
   useEffect(() => {
     if (carId) getPaveSessions({ car_id: carId }).then((list) => setLastPave(list[0] || null)).catch(() => setLastPave(null));
@@ -970,6 +999,10 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
     };
   }, [carId]);
 
+  useEffect(() => {
+    setLocalDocuments(car?.documents || []);
+  }, [car?.documents]);
+
   if (!car && !loading) return null;
 
   const driverName = car ? [car.driver_first_name, car.driver_last_name].filter(Boolean).join(' ') : '';
@@ -996,7 +1029,16 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
     setDocSubmitting(true);
     setDrawerError('');
     try {
-      await uploadCarDocument(carId, docFile, docType, docExpiry || undefined);
+      const uploaded = await uploadCarDocument(carId, docFile, docType, docExpiry || undefined);
+      if (uploaded?.id) {
+        setLocalDocuments((prev) => [
+          {
+            ...uploaded,
+            has_file: true,
+          },
+          ...(prev || []),
+        ]);
+      }
       setDocFile(null);
       setDocExpiry('');
       onRefresh();
@@ -1041,6 +1083,7 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
                   <dt>Year</dt><dd>{car.year || '—'}</dd>
                   <dt>Fuel Type</dt><dd>{car.fuel_type || '—'}</dd>
                   <dt>Status</dt><dd>{car.status || '—'}</dd>
+                  <dt>Defleeting candidate date</dt><dd>{formatDate(car.planned_defleeting_date)}</dd>
                   <dt>Station</dt><dd>{car.station || '—'}</dd>
                   <dt>Mileage</dt><dd>{formatMileage(car.mileage)}</dd>
                 </dl>
@@ -1235,9 +1278,9 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
               <section className="drawer-section">
                 <h4>Documents</h4>
                 {drawerError && <p className="cars-message cars-message--error">{drawerError}</p>}
-                {car.documents?.length ? (
+                {localDocuments?.length ? (
                   <ul className="drawer-docs-list">
-                    {car.documents.map((d) => (
+                    {localDocuments.map((d) => (
                       <li key={d.id} className="drawer-doc-item">
                         <span>{d.document_type}</span>
                         <span className="muted">expiry {formatDate(d.expiry_date)}</span>

@@ -3,7 +3,65 @@ import { query } from '../../db.js';
 const STATUS_ACTIVE = 'Active';
 const STATUS_MAINTENANCE = 'Maintenance';
 const STATUS_OUT_OF_SERVICE = 'Out of Service';
+const STATUS_GROUNDED = 'Grounded';
 const STATUS_DECOMMISSIONED = 'Decommissioned';
+const STATUS_DEFLEETING_CANDIDATE = 'Defleeting candidate';
+
+function toDateOnly(value) {
+  if (!value) return value;
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  if (typeof value === 'string') return value.slice(0, 10);
+  return value;
+}
+
+function normalizeCarDates(car) {
+  if (!car) return car;
+  return {
+    ...car,
+    last_maintenance_date: toDateOnly(car.last_maintenance_date),
+    next_maintenance_date: toDateOnly(car.next_maintenance_date),
+    registration_expiry: toDateOnly(car.registration_expiry),
+    insurance_expiry: toDateOnly(car.insurance_expiry),
+    lease_expiry: toDateOnly(car.lease_expiry),
+    planned_defleeting_date: toDateOnly(car.planned_defleeting_date),
+    created_at: toDateOnly(car.created_at),
+    updated_at: toDateOnly(car.updated_at),
+  };
+}
+
+function normalizeCarDetailsDates(car) {
+  if (!car) return car;
+  const next = normalizeCarDates(car);
+  next.maintenance = (car.maintenance || []).map((row) => ({
+    ...row,
+    date: toDateOnly(row.date),
+    created_at: toDateOnly(row.created_at),
+  }));
+  next.documents = (car.documents || []).map((row) => ({
+    ...row,
+    expiry_date: toDateOnly(row.expiry_date),
+    created_at: toDateOnly(row.created_at),
+  }));
+  next.driver_assignments = (car.driver_assignments || []).map((row) => ({
+    ...row,
+    assigned_at: toDateOnly(row.assigned_at),
+    unassigned_at: toDateOnly(row.unassigned_at),
+  }));
+  next.comments = (car.comments || []).map((row) => ({
+    ...row,
+    created_at: toDateOnly(row.created_at),
+  }));
+  next.planning_history = (car.planning_history || []).map((row) => ({
+    ...row,
+    plan_date: toDateOnly(row.plan_date),
+  }));
+  return next;
+}
 
 /**
  * Build WHERE clause and params for cars list (search + filters).
@@ -56,14 +114,45 @@ async function getCars(filters = {}) {
             c.last_maintenance_date, c.next_maintenance_date, c.next_maintenance_mileage,
             c.safety_score, c.incidents, c.registration_expiry, c.insurance_expiry, c.lease_expiry,
             c.created_at, c.updated_at,
-            k.first_name AS driver_first_name, k.last_name AS driver_last_name
+            k.first_name AS driver_first_name, k.last_name AS driver_last_name,
+            p_today.driver_identifier AS today_planning_driver,
+            pr_latest.total_grade AS condition_grade
      FROM cars c
      LEFT JOIN kenjo_employees k ON k.kenjo_user_id = c.assigned_driver_id
+     LEFT JOIN LATERAL (
+       SELECT p.driver_identifier
+       FROM car_planning p
+       WHERE p.car_id = c.id
+         AND p.plan_date = CURRENT_DATE
+         AND p.driver_identifier IS NOT NULL
+         AND TRIM(p.driver_identifier) <> ''
+       ORDER BY p.updated_at DESC NULLS LAST, p.id DESC
+       LIMIT 1
+     ) p_today ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT pr.total_grade
+       FROM pave_reports pr
+       WHERE (
+         -- Preferred match: VIN last 4 alphanumeric chars.
+         (
+           LENGTH(REGEXP_REPLACE(UPPER(COALESCE(c.vin, '')), '[^A-Z0-9]', '', 'g')) >= 4
+           AND RIGHT(REGEXP_REPLACE(UPPER(COALESCE(pr.vin_display, '')), '[^A-Z0-9]', '', 'g'), 4) =
+               RIGHT(REGEXP_REPLACE(UPPER(COALESCE(c.vin, '')), '[^A-Z0-9]', '', 'g'), 4)
+         )
+         OR (
+           NULLIF(TRIM(COALESCE(c.license_plate, '')), '') IS NOT NULL
+           AND NULLIF(TRIM(COALESCE(pr.plate_number, '')), '') IS NOT NULL
+           AND UPPER(TRIM(pr.plate_number)) = UPPER(TRIM(c.license_plate))
+         )
+       )
+       ORDER BY COALESCE(pr.inspection_date, pr.report_date, pr.created_at) DESC NULLS LAST, pr.id DESC
+       LIMIT 1
+     ) pr_latest ON TRUE
      WHERE 1=1 ${where}
      ORDER BY c.vehicle_id`,
     params
   );
-  return res.rows || [];
+  return (res.rows || []).map(normalizeCarDates);
 }
 
 /**
@@ -76,16 +165,20 @@ async function getCarsKpis() {
       COUNT(*) FILTER (WHERE status = $1)::int AS active_vehicles,
       COUNT(*) FILTER (WHERE status = $2)::int AS in_maintenance,
       COUNT(*) FILTER (WHERE status = $3)::int AS out_of_service,
+      COUNT(*) FILTER (WHERE LOWER(TRIM(COALESCE(status, ''))) = LOWER($4))::int AS defleeting_candidates,
+      COUNT(*) FILTER (WHERE LOWER(TRIM(COALESCE(status, ''))) = LOWER($5))::int AS grounded_cars,
       COUNT(*) FILTER (WHERE assigned_driver_id IS NULL OR assigned_driver_id = '')::int AS without_driver,
       COUNT(*) FILTER (WHERE registration_expiry IS NOT NULL AND registration_expiry <= CURRENT_DATE + INTERVAL '30 days')::int AS expiring_documents
     FROM cars
-  `, [STATUS_ACTIVE, STATUS_MAINTENANCE, STATUS_OUT_OF_SERVICE]);
+  `, [STATUS_ACTIVE, STATUS_MAINTENANCE, STATUS_OUT_OF_SERVICE, STATUS_DEFLEETING_CANDIDATE, STATUS_GROUNDED]);
   const row = res.rows[0] || {};
   return {
     totalVehicles: row.total_vehicles ?? 0,
     activeVehicles: row.active_vehicles ?? 0,
     inMaintenance: row.in_maintenance ?? 0,
     outOfService: row.out_of_service ?? 0,
+    defleetingCandidates: row.defleeting_candidates ?? 0,
+    groundedCars: row.grounded_cars ?? 0,
     withoutDriver: row.without_driver ?? 0,
     expiringDocuments: row.expiring_documents ?? 0,
   };
@@ -147,7 +240,7 @@ async function getCarById(id) {
   car.driver_assignments = assignments.rows || [];
   car.comments = comments.rows || [];
   car.planning_history = planning.rows || [];
-  return car;
+  return normalizeCarDetailsDates(car);
 }
 
 /**
@@ -211,7 +304,7 @@ async function createCar(data) {
       data.lease_expiry || null,
     ]
   );
-  return res.rows[0];
+  return normalizeCarDates(res.rows[0]);
 }
 
 /**
@@ -231,13 +324,13 @@ async function updateCar(id, data) {
       idx++;
     }
   }
-  if (fields.length === 0) return (await query('SELECT * FROM cars WHERE id = $1', [id])).rows[0];
+  if (fields.length === 0) return normalizeCarDates((await query('SELECT * FROM cars WHERE id = $1', [id])).rows[0]);
   values.push(id);
   const res = await query(
     `UPDATE cars SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING *`,
     values
   );
-  return res.rows[0];
+  return normalizeCarDates(res.rows[0]);
 }
 
 /**

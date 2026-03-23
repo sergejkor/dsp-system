@@ -3,8 +3,9 @@ import html2canvas from 'html2canvas';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getCars, getDrivers, getPlanningData, savePlanningData, getReport, addCar } from '../services/carPlanningApi';
 
-/** Days after today included in the scrollable day columns (saved to DB). */
-const CAR_PLANNING_FUTURE_DAYS = 14;
+/** Day window around today included in planning columns (saved to DB). */
+const CAR_PLANNING_PAST_DAYS = 60;
+const CAR_PLANNING_FUTURE_DAYS = 5;
 
 const FULL_WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -13,15 +14,6 @@ function weekdayKeyFromYmd(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(y, m - 1, d);
   return FULL_WEEKDAY_KEYS[dt.getDay()] || 'mon';
-}
-
-function getMonday(d) {
-  const date = new Date(d);
-  date.setHours(0, 0, 0, 0);
-  const day = date.getDay();
-  const diff = date.getDate() - (day === 0 ? 7 : day) + 1;
-  date.setDate(diff);
-  return date;
 }
 
 function toYYYYMMDD(date) {
@@ -276,6 +268,7 @@ export default function CarPlanningPage() {
   const reportRef = useRef(null);
   const carPlanningFixedTableRef = useRef(null);
   const carPlanningDaysTableRef = useRef(null);
+  const carPlanningDaysScrollWrapRef = useRef(null);
   const [screenshotStatus, setScreenshotStatus] = useState('');
 
   const runSyncCarPlanningHeights = useCallback(() => {
@@ -285,12 +278,13 @@ export default function CarPlanningPage() {
   const { newDayDate, scrollDates, allPlanningDates } = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const monday = getMonday(today);
     const nd = toYYYYMMDD(today);
+    const start = new Date(today);
+    start.setDate(start.getDate() - CAR_PLANNING_PAST_DAYS);
     const end = new Date(today);
     end.setDate(end.getDate() + CAR_PLANNING_FUTURE_DAYS);
     const scroll = [];
-    for (let cur = new Date(monday.getTime()); cur.getTime() <= end.getTime(); cur.setDate(cur.getDate() + 1)) {
+    for (let cur = new Date(start.getTime()); cur.getTime() <= end.getTime(); cur.setDate(cur.getDate() + 1)) {
       const ymd = toYYYYMMDD(new Date(cur.getTime()));
       if (ymd !== nd) scroll.push(ymd);
     }
@@ -449,6 +443,12 @@ export default function CarPlanningPage() {
     if (days) ro.observe(days);
     return () => ro.disconnect();
   }, [sortedCars, scrollDates, slots, drivers, runSyncCarPlanningHeights]);
+
+  useLayoutEffect(() => {
+    const el = carPlanningDaysScrollWrapRef.current;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+  }, [scrollDates, sortedCars.length, slots]);
 
   const setSlot = (carId, date, driverIdentifier, abfahrtskontrolle) => {
     const key = `${carId}_${date}`;
@@ -637,7 +637,7 @@ export default function CarPlanningPage() {
             </tbody>
           </table>
         </div>
-        <div className="car-planning-days-scroll-wrap">
+        <div ref={carPlanningDaysScrollWrapRef} className="car-planning-days-scroll-wrap">
           <table ref={carPlanningDaysTableRef} className="car-planning-table car-planning-table-days">
             <thead>
               <tr>

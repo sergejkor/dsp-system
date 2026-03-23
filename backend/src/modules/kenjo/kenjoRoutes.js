@@ -348,16 +348,33 @@ router.post('/sync-time-off', async (_req, res) => {
       if (id) nameById.set(id, u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || id);
     });
 
+    const monthParam = String(_req.query.month || '').trim().slice(0, 7);
+    const hasMonthParam = /^\d{4}-\d{2}$/.test(monthParam);
     const now = new Date();
-    const startYear = now.getFullYear() - 2;
-    const endYear = now.getFullYear() + 1;
+    const ranges = [];
+    if (hasMonthParam) {
+      const [yy, mm] = monthParam.split('-').map(Number);
+      ranges.push({ startYear: yy, endYear: yy, startMonth: mm, endMonth: mm });
+    } else {
+      ranges.push({ startYear: now.getFullYear() - 2, endYear: now.getFullYear() + 1, startMonth: 1, endMonth: 12 });
+    }
     let total = 0;
-
-    for (let y = startYear; y <= endYear; y++) {
-      for (let month = 1; month <= 12; month++) {
+    for (const range of ranges) {
+      for (let y = range.startYear; y <= range.endYear; y++) {
+        const monthStart = y === range.startYear ? range.startMonth : 1;
+        const monthEnd = y === range.endYear ? range.endMonth : 12;
+        for (let month = monthStart; month <= monthEnd; month++) {
         const firstDay = `${y}-${String(month).padStart(2, '0')}-01`;
         const lastDate = new Date(y, month, 0).getDate();
         const to = `${y}-${String(month).padStart(2, '0')}-${String(lastDate).padStart(2, '0')}`;
+
+        // Keep month data fully fresh: remove existing rows overlapping this month,
+        // then reinsert what Kenjo currently returns for the same range.
+        await query(
+          `DELETE FROM kenjo_time_off
+           WHERE start_date <= $2::date AND end_date >= $1::date`,
+          [firstDay, to],
+        );
 
         const list = await getTimeOffRequests(firstDay, to);
         for (const item of list || []) {
@@ -406,10 +423,11 @@ router.post('/sync-time-off', async (_req, res) => {
           );
           total++;
         }
+        }
       }
     }
 
-    res.json({ ok: true, synced: total });
+    res.json({ ok: true, synced: total, month: hasMonthParam ? monthParam : null });
   } catch (error) {
     console.error('Kenjo POST /sync-time-off error', error);
     res.status(500).json({ error: String(error?.message || error) });

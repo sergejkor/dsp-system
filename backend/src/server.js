@@ -26,8 +26,23 @@ import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
 const app = express();
 const port = Number(process.env.PORT || 3001);
 
+const defaultAllowedOrigins = [
+  'https://dsp-system.alfamile.com',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((v) => v.trim())
+  .filter(Boolean);
+const finalAllowedOrigins = allowedOrigins.length ? allowedOrigins : defaultAllowedOrigins;
+
 const corsOptions = {
-  origin: true,
+  origin(origin, callback) {
+    // Allow non-browser tools (no Origin header) and explicit allowed origins.
+    if (!origin || finalAllowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

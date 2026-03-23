@@ -1,6 +1,6 @@
 import { getAuthHeaders } from './authStore.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
 
 function authOpts(opts = {}) {
   return { ...opts, headers: { ...getAuthHeaders(), ...(opts.headers || {}) } };
@@ -171,8 +171,10 @@ export async function createContract(kenjoEmployeeId, startDate, endDate) {
 }
 
 /** Sync time-off from Kenjo into DB (last 2 years + next year). */
-export async function syncTimeOff() {
-  const response = await fetch(`${API_BASE}/api/kenjo/sync-time-off`, authOpts({ method: 'POST' }));
+export async function syncTimeOff(month) {
+  const params = new URLSearchParams();
+  if (month && /^\d{4}-\d{2}$/.test(String(month))) params.set('month', String(month));
+  const response = await fetch(`${API_BASE}/api/kenjo/sync-time-off${params.toString() ? `?${params}` : ''}`, authOpts({ method: 'POST' }));
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || response.statusText || 'Sync time-off failed');

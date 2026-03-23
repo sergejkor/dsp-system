@@ -63,7 +63,7 @@ export default function O2TelefonicaPage() {
   }, []);
 
   useEffect(() => {
-    if (!addOpen) return;
+    if (!addOpen && !editRow) return;
     setEmployeesLoading(true);
     getKenjoUsers()
       .then((arr) => {
@@ -72,7 +72,7 @@ export default function O2TelefonicaPage() {
       })
       .catch(() => setEmployeesList([]))
       .finally(() => setEmployeesLoading(false));
-  }, [addOpen]);
+  }, [addOpen, editRow]);
 
   useEffect(() => {
     if (!menuOpenId) return;
@@ -240,8 +240,10 @@ export default function O2TelefonicaPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setMenuOpenId(null);
+                                const existingKenjoId = row.kenjo_user_id ? String(row.kenjo_user_id) : '';
                                 setEditRow({
                                   ...row,
+                                  selectedEmployeeId: existingKenjoId || OTHER_VALUE,
                                 });
                               }}
                               style={{
@@ -358,6 +360,16 @@ export default function O2TelefonicaPage() {
             onSubmit={async (e) => {
               e.preventDefault();
               if (!editRow) return;
+              const selectedEmployeeId = editRow.selectedEmployeeId || '';
+              const selectedEmp = employeesList.find((u) => String(u._id || u.id) === selectedEmployeeId);
+              const derivedName =
+                selectedEmployeeId === OTHER_VALUE
+                  ? (editRow.name || '').trim()
+                  : (selectedEmp?.displayName || [selectedEmp?.firstName, selectedEmp?.lastName].filter(Boolean).join(' ') || '').trim();
+              if (!derivedName) {
+                alert(selectedEmployeeId === OTHER_VALUE ? 'Enter name or select an employee.' : 'Select an employee.');
+                return;
+              }
               if (!editRow.phone_number?.trim() || !editRow.sim_card_number?.trim()) {
                 alert('Phone number and SIM card number are required.');
                 return;
@@ -365,7 +377,8 @@ export default function O2TelefonicaPage() {
               setEditSaving(true);
               try {
                 const payload = {
-                  name: editRow.name,
+                  name: derivedName,
+                  kenjo_user_id: selectedEmployeeId === OTHER_VALUE ? null : selectedEmployeeId || null,
                   phone_number: editRow.phone_number,
                   sim_card_number: editRow.sim_card_number,
                   pin1: editRow.pin1,
@@ -388,12 +401,43 @@ export default function O2TelefonicaPage() {
             <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Edit entry</h3>
             <div style={{ marginBottom: '0.75rem' }}>
               <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Name</label>
-              <input
-                type="text"
-                value={editRow.name || ''}
-                onChange={(e) => setEditRow((r) => ({ ...r, name: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
-              />
+              {employeesLoading ? (
+                <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>Loading employees…</p>
+              ) : (
+                <>
+                  <select
+                    value={editRow.selectedEmployeeId || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === OTHER_VALUE) {
+                        setEditRow((r) => ({ ...r, selectedEmployeeId: OTHER_VALUE, kenjo_user_id: '', name: r.name || '' }));
+                      } else {
+                        const emp = employeesList.find((u) => String(u._id || u.id) === val);
+                        const displayName = emp ? (emp.displayName || [emp.firstName, emp.lastName].filter(Boolean).join(' ') || '') : '';
+                        setEditRow((r) => ({ ...r, selectedEmployeeId: val, kenjo_user_id: val || '', name: displayName }));
+                      }
+                    }}
+                    style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box', marginBottom: editRow.selectedEmployeeId === OTHER_VALUE ? '0.5rem' : 0 }}
+                  >
+                    <option value="">— Select —</option>
+                    {(employeesList || []).map((u) => (
+                      <option key={u._id || u.id} value={u._id || u.id}>
+                        {u.displayName || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || u._id}
+                      </option>
+                    ))}
+                    <option value={OTHER_VALUE}>Not assigned number</option>
+                  </select>
+                  {editRow.selectedEmployeeId === OTHER_VALUE && (
+                    <input
+                      type="text"
+                      placeholder="Enter name manually"
+                      value={editRow.name || ''}
+                      onChange={(e) => setEditRow((r) => ({ ...r, name: e.target.value }))}
+                      style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box', marginTop: '0.5rem' }}
+                    />
+                  )}
+                </>
+              )}
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
               <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Phone number *</label>

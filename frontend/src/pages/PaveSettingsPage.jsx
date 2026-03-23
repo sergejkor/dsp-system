@@ -46,7 +46,7 @@ export default function PaveSettingsPage() {
       {message && <p style={{ color: '#2e7d32' }}>{message}</p>}
 
       <h3>Webhook endpoint</h3>
-      <p>Configure PAVE to send webhooks to: <code>{import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/pave/webhook</code></p>
+      <p>Configure PAVE to send webhooks to: <code>{import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com'}/api/pave/webhook</code></p>
 
       <h3>Create callback</h3>
       <form onSubmit={handleCreate} style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-end', marginBottom: '1rem' }}>

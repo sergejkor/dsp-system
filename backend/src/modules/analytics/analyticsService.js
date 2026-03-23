@@ -151,6 +151,12 @@ export async function getOverview(params = {}) {
 
   const monthStr = start.slice(0, 7);
   const today = new Date().toISOString().slice(0, 10);
+  const yesterdayDate = new Date();
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterday = yesterdayDate.toISOString().slice(0, 10);
+  const lastMonthDate = new Date();
+  lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+  const lastMonthStr = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
 
   // Parallel KPI queries
   const [
@@ -164,30 +170,29 @@ export async function getOverview(params = {}) {
     expiringDocsRes,
     newHiresRes,
     terminationsRes,
-    paveCountRes,
   ] = await Promise.all([
     query(
       `SELECT COUNT(*)::int AS cnt FROM kenjo_employees WHERE is_active = true`
     ),
     query(
       `SELECT COUNT(DISTINCT transporter_id)::int AS cnt FROM daily_upload_rows WHERE day_key = $1 AND transporter_id IS NOT NULL AND transporter_id != ''`,
-      [today]
+      [yesterday]
     ),
     query(
       `SELECT COUNT(*)::int AS cnt FROM daily_upload_rows WHERE day_key = $1`,
-      [today]
+      [yesterday]
     ),
     query(
       `SELECT COALESCE(SUM(total_bonus), 0)::numeric AS total FROM payroll_manual_entries WHERE period_id = $1`,
-      [monthStr]
+      [lastMonthStr]
     ),
     query(
       `SELECT COALESCE(SUM(amount), 0)::numeric AS total FROM vorschuss WHERE month = $1`,
-      [monthStr]
+      [lastMonthStr]
     ),
     query(
       `SELECT COALESCE(SUM(amount), 0)::numeric AS total FROM payroll_abzug_items WHERE period_id = $1`,
-      [monthStr]
+      [lastMonthStr]
     ),
     query(`
       SELECT
@@ -210,10 +215,6 @@ export async function getOverview(params = {}) {
       `SELECT COUNT(*)::int AS cnt FROM employee_terminations WHERE termination_date >= $1 AND termination_date <= $2`,
       [start, end]
     ),
-    query(
-      `SELECT COUNT(*)::int AS cnt FROM pave_sessions WHERE created_at >= $1::date AND created_at < ($2::date + 1)`,
-      [start, end]
-    ),
   ]);
 
   const activeDrivers = activeDriversRes.rows[0]?.cnt ?? 0;
@@ -227,7 +228,6 @@ export async function getOverview(params = {}) {
   const expiringDocuments = expiringDocsRes.rows[0]?.cnt ?? 0;
   const newHires = newHiresRes.rows[0]?.cnt ?? 0;
   const terminations = terminationsRes.rows[0]?.cnt ?? 0;
-  const safetyIncidentsThisWeek = paveCountRes.rows[0]?.cnt ?? 0;
 
   // Route completion rate: from daily_upload_rows with status COMPLETE if we have it
   let routeCompletionRate = 0;
@@ -261,14 +261,13 @@ export async function getOverview(params = {}) {
 
   const kpis = [
     { key: 'active_drivers', value: activeDrivers, label: 'Active Drivers', format: 'number' },
-    { key: 'drivers_worked_today', value: driversWorkedToday, label: 'Drivers Worked Today', format: 'number' },
-    { key: 'routes_completed_today', value: routesCompletedToday, label: 'Routes Completed Today', format: 'number' },
+    { key: 'drivers_worked_yesterday', value: driversWorkedToday, label: 'Drivers Worked Yesterday', format: 'number' },
+    { key: 'routes_completed_yesterday', value: routesCompletedToday, label: 'Routes Completed Yesterday', format: 'number' },
     { key: 'route_completion_rate', value: routeCompletionRate, label: 'Route Completion Rate', format: 'percent' },
     { key: 'attendance_rate', value: attendanceRate, label: 'Attendance Rate', format: 'percent' },
-    { key: 'total_payroll_this_month', value: totalPayroll, label: 'Total Payroll This Month', format: 'currency' },
-    { key: 'total_advances_this_month', value: totalAdvances, label: 'Total Advances This Month', format: 'currency' },
-    { key: 'total_deductions_this_month', value: totalDeductions, label: 'Total Deductions This Month', format: 'currency' },
-    { key: 'safety_incidents_this_week', value: safetyIncidentsThisWeek, label: 'Safety Incidents This Week', format: 'number' },
+    { key: 'total_payroll_last_month', value: totalPayroll, label: 'Total Payroll Last Month', format: 'currency' },
+    { key: 'total_advances_last_month', value: totalAdvances, label: 'Total Advances Last Month', format: 'currency' },
+    { key: 'total_deductions_last_month', value: totalDeductions, label: 'Total Deductions Last Month', format: 'currency' },
     { key: 'vehicles_in_maintenance', value: vehiclesInMaintenance, label: 'Vehicles in Maintenance', format: 'number' },
     { key: 'expiring_documents_30_days', value: expiringDocuments, label: 'Expiring Documents in 30 Days', format: 'number' },
     { key: 'new_hires_this_month', value: newHires, label: 'New Hires This Month', format: 'number' },

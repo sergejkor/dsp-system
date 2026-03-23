@@ -70,7 +70,7 @@ function AppLayout() {
         <SidebarUser />
         <nav className="sidebar-nav">
           <NavLink to="/dashboard">{t('nav.dashboard')}</NavLink>
-          <NavLink to="/">{t('nav.employeeList')}</NavLink>
+          <NavLink to="/kenjo-sync">{t('nav.employeeList')}</NavLink>
           <NavLink to="/payroll">{t('nav.payroll')}</NavLink>
           <NavLink to="/calendar">{t('nav.cortexUploads')}</NavLink>
           <NavLink to="/scorecard-uploads">{t('nav.scorecardUploads')}</NavLink>
@@ -83,8 +83,8 @@ function AppLayout() {
           <NavLink to="/gift-cards">{t('nav.giftCards')}</NavLink>
           <NavLink to="/car-planning">{t('nav.carPlanning')}</NavLink>
           <NavLink to="/fines">{t('nav.fines')}</NavLink>
-          <NavLink to="/damages">Damages</NavLink>
-          <NavLink to="/insurance">Insurance</NavLink>
+          <NavLink to="/damages">{t('nav.damages')}</NavLink>
+          <NavLink to="/insurance">{t('nav.insurance')}</NavLink>
           <div className="sidebar-nav-bottom">
             <NavLink to="/settings">{t('nav.settings')}</NavLink>
           </div>
@@ -93,7 +93,7 @@ function AppLayout() {
       <main className="content">
         <Routes>
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/" element={<KenjoSyncPage />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/kenjo-sync" element={<KenjoSyncPage />} />
             <Route path="/employee" element={<EmployeeProfilePage />} />
             <Route path="/payroll" element={<PayrollPage />} />

@@ -45,6 +45,25 @@ const PERMISSIONS = [
   { code: 'view_audit_logs', label: 'View Audit Logs', category: 'security' },
   { code: 'export_settings', label: 'Export Settings', category: 'settings' },
   { code: 'restore_defaults', label: 'Restore Defaults', category: 'settings' },
+
+  // Main app navigation (sidebar) — one permission per route; re-seed updates labels/paths
+  { code: 'page_dashboard', label: 'Dashboard', category: 'pages', description: '/dashboard' },
+  { code: 'page_employees', label: 'Employee list (Kenjo)', category: 'pages', description: '/' },
+  { code: 'page_payroll', label: 'Payroll', category: 'pages', description: '/payroll' },
+  { code: 'page_cortex_uploads', label: 'Cortex attendance uploads', category: 'pages', description: '/calendar' },
+  { code: 'page_scorecard_uploads', label: 'Scorecard uploads', category: 'pages', description: '/scorecard-uploads' },
+  { code: 'page_kenjo_calendar', label: 'Kenjo calendar', category: 'pages', description: '/kenjo-calendar' },
+  { code: 'page_sync_kenjo', label: 'Sync with Kenjo', category: 'pages', description: '/sync-kenjo' },
+  { code: 'page_o2_telefonica', label: 'O2 Telefonica', category: 'pages', description: '/o2-telefonica' },
+  { code: 'page_cars', label: 'Cars', category: 'pages', description: '/cars' },
+  { code: 'page_pave', label: 'PAVE inspections', category: 'pages', description: '/pave' },
+  { code: 'page_analytics', label: 'Analytics', category: 'pages', description: '/analytics' },
+  { code: 'page_gift_cards', label: 'Gift cards', category: 'pages', description: '/gift-cards' },
+  { code: 'page_car_planning', label: 'Car planning', category: 'pages', description: '/car-planning' },
+  { code: 'page_fines', label: 'Fines', category: 'pages', description: '/fines' },
+  { code: 'page_damages', label: 'Damages', category: 'pages', description: '/damages' },
+  { code: 'page_insurance', label: 'Insurance', category: 'pages', description: '/insurance' },
+  { code: 'page_settings', label: 'Settings', category: 'pages', description: '/settings' },
 ];
 
 const SETTINGS_GROUPS = [
@@ -127,8 +146,8 @@ async function run() {
     for (const p of PERMISSIONS) {
       await query(
         `INSERT INTO settings_permissions (code, label, category, description) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (code) DO UPDATE SET label = $2, category = $3, description = $4, updated_at = NOW()`,
-        [p.code, p.label, p.category, null]
+         ON CONFLICT (code) DO UPDATE SET label = EXCLUDED.label, category = EXCLUDED.category, description = EXCLUDED.description, updated_at = NOW()`,
+        [p.code, p.label, p.category, p.description ?? null]
       );
     }
     console.log('Seeded permissions');

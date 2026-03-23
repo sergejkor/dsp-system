@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { getRoles, getRole, getPermissions, createRole, updateRole, setRolePermissions } from '../../services/settingsApi';
+import AccessiblePagesReference from './AccessiblePagesReference.jsx';
 
 export default function SettingsRolesPage() {
   const [roles, setRoles] = useState([]);
@@ -33,6 +34,7 @@ export default function SettingsRolesPage() {
     <>
       <h3>Roles & Permissions</h3>
       <p className="muted">Manage roles and assign permissions. Permissions are enforced on the backend.</p>
+      <AccessiblePagesReference />
       {error && <p className="settings-msg settings-msg--err">{error}</p>}
       {message && <p className="settings-msg settings-msg--ok">{message}</p>}
 
@@ -98,6 +100,7 @@ export default function SettingsRolesPage() {
           role={modal.role}
           permissions={permissions}
           byCategory={byCategory}
+          categoryOrder={categoryOrder}
           onClose={() => setModal(null)}
           onSaved={() => { setMessage('Permissions saved'); setModal(null); load(); }}
           onError={setError}
@@ -165,7 +168,7 @@ function RoleFormModal({ role, onClose, onSaved, onError }) {
   );
 }
 
-function RolePermissionsModal({ role, permissions, byCategory, onClose, onSaved, onError }) {
+function RolePermissionsModal({ role, permissions, byCategory, categoryOrder, onClose, onSaved, onError }) {
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -217,24 +220,28 @@ function RolePermissionsModal({ role, permissions, byCategory, onClose, onSaved,
           <button type="button" className="settings-modal-close" onClick={onClose}>×</button>
         </div>
         <div className="settings-modal-body">
-          {Object.entries(byCategory).map(([cat, perms]) => (
-            <div key={cat} className="settings-perm-category">
-              <div className="settings-perm-cat-header">
-                <strong>{cat}</strong>
-                <button type="button" className="settings-act" onClick={() => toggleCategory(perms)}>
-                  {perms.every((p) => selected.has(p.id)) ? 'Clear all' : 'Select all'}
-                </button>
+          {(categoryOrder || Object.keys(byCategory).sort()).map((cat) => {
+            const perms = byCategory[cat];
+            if (!perms?.length) return null;
+            return (
+              <div key={cat} className="settings-perm-category">
+                <div className="settings-perm-cat-header">
+                  <strong>{cat}</strong>
+                  <button type="button" className="settings-act" onClick={() => toggleCategory(perms)}>
+                    {perms.every((p) => selected.has(p.id)) ? 'Clear all' : 'Select all'}
+                  </button>
+                </div>
+                <div className="settings-perm-list">
+                  {perms.map((p) => (
+                    <label key={p.id} className="settings-perm-item">
+                      <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
+                      <span>{p.label || p.code}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
-              <div className="settings-perm-list">
-                {perms.map((p) => (
-                  <label key={p.id} className="settings-perm-item">
-                    <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
-                    <span>{p.label || p.code}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
+            );
+          })}
           <div className="settings-modal-footer">
             <button type="button" onClick={onClose}>Cancel</button>
             <button type="button" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Save permissions'}</button>

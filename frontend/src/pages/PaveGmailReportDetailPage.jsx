@@ -4,7 +4,7 @@ import { getAuthHeaders } from '../services/authStore.js';
 import { downloadPaveGmailReportFile, getPavePortalCredentials } from '../services/paveGmailApi.js';
 import { formatPaveInspectionDate, paveInspectionDateHint } from '../utils/paveInspectionDateDisplay.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
 
 function fmtDate(d) {
   return formatPaveInspectionDate(d);

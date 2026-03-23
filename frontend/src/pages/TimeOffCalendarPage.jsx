@@ -62,7 +62,7 @@ export default function TimeOffCalendarPage() {
     const initialMonth = month;
     setSyncing(true);
     setError('');
-    syncTimeOff()
+    syncTimeOff(initialMonth)
       .then(() => getTimeOff(initialMonth))
       .then((data) => setRows(Array.isArray(data) ? data : []))
       .catch((e) => setError(String(e?.message || e)))
@@ -73,7 +73,8 @@ export default function TimeOffCalendarPage() {
     if (!month) return;
     setLoading(true);
     setError('');
-    getTimeOff(month)
+    syncTimeOff(month)
+      .then(() => getTimeOff(month))
       .then((data) => setRows(Array.isArray(data) ? data : []))
       .catch((e) => {
         setError(String(e?.message || e));
@@ -81,6 +82,21 @@ export default function TimeOffCalendarPage() {
       })
       .finally(() => setLoading(false));
   }, [month]);
+
+  async function handleRefreshFromKenjo() {
+    if (!month) return;
+    setSyncing(true);
+    setError('');
+    try {
+      await syncTimeOff(month);
+      const data = await getTimeOff(month);
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const [year, monthNum] = useMemo(() => {
     if (!month || month.length < 7) return [now.getFullYear(), 1];
@@ -171,6 +187,15 @@ export default function TimeOffCalendarPage() {
           </select>
         </div>
         <div style={{ alignSelf: 'flex-end' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={handleRefreshFromKenjo}
+            disabled={syncing || loading}
+            style={{ marginRight: '0.5rem' }}
+          >
+            {syncing ? 'Refreshing…' : 'Refresh from Kenjo'}
+          </button>
           <button
             type="button"
             className="btn-secondary"
