@@ -21,6 +21,8 @@ import carPlanningRoutes from './modules/carPlanning/carPlanningRoutes.js';
 import finesRoutes from './modules/fines/finesRoutes.js';
 import damagesRoutes from './modules/damages/damagesRoutes.js';
 import dashboardRoutes from './modules/dashboard/dashboardRoutes.js';
+import financeRoutes from './modules/finance/financeRoutes.js';
+import { getFinanceHealthInfo } from './modules/finance/financeService.js';
 import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
 
 const app = express();
@@ -52,7 +54,17 @@ app.options('*', cors(corsOptions));
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'dsp-system-backend' });
+  let finance;
+  try {
+    finance = getFinanceHealthInfo();
+  } catch (e) {
+    finance = { error: e?.message || 'finance_health_failed' };
+  }
+  res.json({
+    ok: true,
+    service: 'dsp-system-backend',
+    finance,
+  });
 });
 
 app.use('/api/auth', authRoutes);
@@ -81,6 +93,7 @@ app.use('/api/fines', finesRoutes);
 app.use('/api/damages', damagesRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/insurance', insuranceRoutes);
+app.use('/api/finance', financeRoutes);
 
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
