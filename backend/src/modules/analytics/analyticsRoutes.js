@@ -125,6 +125,7 @@ domainKeys.forEach((domain) => {
         limit: req.query.limit ? Number(req.query.limit) : 100,
         payrollMonth: req.query.payrollMonth,
         insuranceYear: req.query.insuranceYear,
+        question: req.query.question,
       };
       const data = await analyticsService.getDomainData(domain, params);
       res.json(data);
