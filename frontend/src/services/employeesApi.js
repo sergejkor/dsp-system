@@ -1,6 +1,6 @@
 import { getAuthHeaders } from './authStore.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
+import { API_BASE } from '../config/apiBase.js';
 
 function authOpts(opts = {}) {
   return { ...opts, headers: { ...getAuthHeaders(), ...(opts.headers || {}) } };
@@ -29,4 +29,63 @@ export async function getEmployee(employeeId) {
   const response = await fetch(`${API_BASE}/api/employees/${encodeURIComponent(employeeId)}`, authOpts());
   if (!response.ok) throw new Error('Employee load failed');
   return response.json();
+}
+
+export async function getEmployeeDocuments(employeeRef) {
+  const response = await fetch(`${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents`, authOpts());
+  if (!response.ok) throw new Error('Employee documents load failed');
+  return response.json();
+}
+
+export async function uploadEmployeeDocument(employeeRef, file, documentType) {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('document_type', documentType);
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents`,
+    authOpts({ method: 'POST', body: form, headers: getAuthHeaders() })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee document upload failed');
+  return out;
+}
+
+export async function downloadEmployeeDocument(employeeRef, docId, fileName) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents/${encodeURIComponent(docId)}/download`,
+    authOpts()
+  );
+  if (!response.ok) throw new Error('Employee document download failed');
+  const blob = await response.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName || `employee-document-${docId}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+export async function viewEmployeeDocument(employeeRef, docId) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents/${encodeURIComponent(docId)}/download`,
+    authOpts()
+  );
+  if (!response.ok) throw new Error('Employee document view failed');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!win) {
+    URL.revokeObjectURL(url);
+    throw new Error('Popup was blocked while opening the document');
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+}
+
+export async function deleteEmployeeDocument(employeeRef, docId) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents/${encodeURIComponent(docId)}`,
+    authOpts({ method: 'DELETE' })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee document delete failed');
+  return out;
 }

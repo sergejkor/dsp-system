@@ -4,6 +4,7 @@ import authService from './authService.js';
 import authMiddleware from './authMiddleware.js';
 import usersSettingsService from '../settings/usersSettingsService.js';
 import auditLogService from '../settings/auditLogService.js';
+import accessControlService from '../settings/accessControlService.js';
 
 const router = Router();
 
@@ -74,16 +75,18 @@ router.get('/me', authMiddleware.loadAuth, authMiddleware.requireAuth, async (re
   try {
     const u = await authService.getUserWithRole(req.user.id);
     if (!u) return res.status(404).json({ error: 'User not found' });
+    const permissions = await accessControlService.getUserEffectivePermissions(u.id);
     res.json({
       id: u.id,
       email: u.email,
       first_name: u.first_name,
-      last_name: u.full_name,
+      last_name: u.last_name,
       full_name: u.full_name,
       role_id: u.role_id,
       role_code: u.role_code,
       role_name: u.role_name,
       status: u.status,
+      permissions,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -1,4 +1,5 @@
 import authService from './authService.js';
+import accessControlService from '../settings/accessControlService.js';
 
 /**
  * Resolve Bearer token from Authorization header or from cookie (auth_token).
@@ -59,6 +60,65 @@ export function requireSuperAdmin(req, res, next) {
   next();
 }
 
+export function requirePermission(permissionCode) {
+  return async (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
+    }
+    if (!permissionCode) {
+      return next();
+    }
+    if (req.user.role_code === 'super_admin') {
+      return next();
+    }
+    try {
+      const has = await accessControlService.userHasPermission(req.user.id, permissionCode);
+      if (!has) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          code: 'FORBIDDEN',
+          required: permissionCode,
+        });
+      }
+      return next();
+    } catch (e) {
+      return next(e);
+    }
+  };
+}
+
+export function requireAnyPermission(permissionCodes = []) {
+  return async (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
+    }
+    const wanted = (permissionCodes || []).filter(Boolean);
+    if (!wanted.length || req.user.role_code === 'super_admin') {
+      return next();
+    }
+    try {
+      const permissions = await accessControlService.getUserEffectivePermissions(req.user.id);
+      if (wanted.some((code) => permissions.includes(code))) {
+        return next();
+      }
+      return res.status(403).json({
+        error: 'Forbidden',
+        code: 'FORBIDDEN',
+        required_any: wanted,
+      });
+    } catch (e) {
+      return next(e);
+    }
+  };
+}
+
 export { getTokenFromRequest };
 
-export default { loadAuth, requireAuth, requireSuperAdmin, getTokenFromRequest };
+export default {
+  loadAuth,
+  requireAuth,
+  requireSuperAdmin,
+  requirePermission,
+  requireAnyPermission,
+  getTokenFromRequest,
+};

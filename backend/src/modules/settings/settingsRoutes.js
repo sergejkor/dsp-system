@@ -420,6 +420,8 @@ router.get('/audit', requirePermission('view_audit_logs'), async (req, res) => {
   }
 });
 
+router.get('/health', (_req, res) => res.json({ ok: true, module: 'settings' }));
+
 // ---- Settings by group key (must be after /lookups, /features, /integrations, /security, /audit) ----
 router.get('/:groupKey', requirePermission('view_settings'), async (req, res) => {
   try {
@@ -451,7 +453,5 @@ router.post('/:groupKey/reset', requirePermission('restore_defaults'), async (re
     res.status(500).json({ error: e.message });
   }
 });
-
-router.get('/health', (_req, res) => res.json({ ok: true, module: 'settings' }));
 
 export default router;

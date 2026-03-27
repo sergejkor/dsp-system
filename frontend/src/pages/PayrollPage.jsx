@@ -1,6 +1,14 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { calculatePayroll, exportPayrollToAdp, savePayrollAbzug, savePayrollBonus, savePayrollManualEntry } from '../services/payrollApi';
+import {
+  calculatePayroll,
+  exportPayrollToAdp,
+  savePayrollAbzug,
+  savePayrollBonus,
+  savePayrollManualEntry,
+  previewPayslipImport,
+  importPayslipBatch,
+} from '../services/payrollApi';
 import { getKenjoUsers } from '../services/kenjoApi';
 import { saveAdvances } from '../services/advancesApi';
 import { useAppSettings } from '../context/AppSettingsContext';
@@ -20,6 +28,29 @@ function formatCurrency(num) {
   const n = Number(num);
   if (Number.isNaN(n)) return '—';
   return `${n.toFixed(2).replace('.', ',')} €`;
+}
+
+/** Prefer name matches at the top of the payslip import employee dropdown. */
+function payslipEmployeeSelectOptions(employeeOptions, matchIds, legacyRowOptions) {
+  const all =
+    employeeOptions && employeeOptions.length
+      ? employeeOptions
+      : legacyRowOptions || [];
+  const pref = new Set(matchIds || []);
+  if (!pref.size) return all;
+  const head = [];
+  const tail = [];
+  for (const o of all) {
+    (pref.has(o.id) ? head : tail).push(o);
+  }
+  return [...head, ...tail];
+}
+
+function formatPayslipDocumentLabel(item) {
+  if (item?.pageIndex && item?.pageCount) {
+    return `${item.pageIndex}/${item.pageCount}`;
+  }
+  return '1/1';
 }
 
 export default function PayrollPage() {
@@ -71,6 +102,11 @@ export default function PayrollPage() {
   });
   const [advanceSaving, setAdvanceSaving] = useState(false);
   const [advanceError, setAdvanceError] = useState('');
+  const [showPayslipImport, setShowPayslipImport] = useState(false);
+  const [payslipPreview, setPayslipPreview] = useState(null);
+  const [payslipLoading, setPayslipLoading] = useState(false);
+  const [payslipImporting, setPayslipImporting] = useState(false);
+  const [payslipNotice, setPayslipNotice] = useState('');
 
   useEffect(() => {
     const [y, m] = month.split('-').map(Number);
@@ -279,6 +315,34 @@ export default function PayrollPage() {
       setAdvanceSaving(false);
     }
   };
+
+  const openPayslipImport = () => {
+    setShowPayslipImport(true);
+    setPayslipPreview(null);
+    setPayslipNotice('');
+    setError('');
+  };
+
+  const closePayslipImport = () => {
+    if (payslipImporting) return;
+    setShowPayslipImport(false);
+  };
+
+  const updatePayslipItem = (fileId, patch) => {
+    setPayslipPreview((prev) => {
+      if (!prev?.items) return prev;
+      return {
+        ...prev,
+        items: prev.items.map((it) => (it.fileId === fileId ? { ...it, ...patch } : it)),
+      };
+    });
+  };
+
+  const canImportPayslips = useMemo(() => {
+    const items = payslipPreview?.items || [];
+    if (!items.length) return false;
+    return items.every((it) => it.action === 'delete' || !!it.employeeRef);
+  }, [payslipPreview]);
 
   const addActiveDriversToList = async () => {
     const selected = activeDriversList.filter((a) => a.selected);
@@ -646,6 +710,9 @@ export default function PayrollPage() {
             </button>
             <button type="button" className="btn-secondary" onClick={openAdvanceDialog} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.addAdvance')}
+            </button>
+            <button type="button" className="btn-secondary" onClick={openPayslipImport} style={{ width: 'auto', minWidth: 100 }}>
+              Import
             </button>
           </div>
         </div>
@@ -1339,6 +1406,180 @@ export default function PayrollPage() {
               <button type="button" className="btn-secondary" onClick={closeAdvanceDialog} disabled={advanceSaving}>Cancel</button>
               <button type="button" className="btn-primary" onClick={submitAdvance} disabled={advanceSaving}>
                 {advanceSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPayslipImport && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.25rem', borderRadius: 12, width: '92vw', maxWidth: 900, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 0.75rem' }}>Import salary payslips (PDF)</h3>
+            <p style={{ margin: '0 0 0.75rem', color: '#6b7280' }}>
+              Upload one or more PDF payslips. If a file has several pages (batch PDF), each page is listed separately and
+              saved as its own document. Names are auto-detected per page and matched to the employee database.
+            </p>
+            {payslipNotice && <p style={{ margin: '0 0 0.5rem', color: '#065f46' }}>{payslipNotice}</p>}
+            <div
+              style={{
+                border: '2px dashed #d1d5db',
+                borderRadius: 10,
+                padding: '1rem',
+                marginBottom: '0.75rem',
+                background: '#f9fafb',
+              }}
+            >
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                multiple
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (!files.length) return;
+                  setPayslipLoading(true);
+                  setError('');
+                  setPayslipNotice('');
+                  try {
+                const preview = await previewPayslipImport(files);
+                const sortedItems = (preview.items || []).slice().sort((a, b) => {
+                  const aConflict = a?.matchedEmployeeRef ? 0 : 1;
+                  const bConflict = b?.matchedEmployeeRef ? 0 : 1;
+                  if (aConflict !== bConflict) return bConflict - aConflict;
+                  const aPage = Number(a?.pageIndex || 0);
+                  const bPage = Number(b?.pageIndex || 0);
+                  return aPage - bPage;
+                });
+                setPayslipPreview({
+                  batchId: preview.batchId,
+                  employeeOptions: preview.employeeOptions || [],
+                  items: sortedItems.map((it) => ({
+                    ...it,
+                    employeeRef: it.matchedEmployeeRef || '',
+                    action: 'import',
+                  })),
+                });
+                  } catch (err) {
+                    setError(String(err?.message || err));
+                  } finally {
+                    setPayslipLoading(false);
+                  }
+                }}
+              />
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: '#6b7280' }}>
+                Drag file(s) here or choose from computer.
+              </p>
+            </div>
+
+            {payslipLoading && <p style={{ margin: '0 0 0.75rem' }}>Analyzing PDFs…</p>}
+
+            {payslipPreview?.items?.length > 0 && (
+              <div style={{ overflowX: 'auto', marginBottom: '0.75rem' }}>
+                <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>File</th>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>PDF block</th>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Detected name</th>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Employee</th>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Status</th>
+                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payslipPreview.items.map((it) => (
+                      <tr key={it.fileId} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>{formatPayslipDocumentLabel(it)}</td>
+                        <td style={{ padding: '0.5rem', whiteSpace: 'pre-line', fontSize: '0.82rem', color: '#111827', minWidth: 220 }}>
+                          {it.previewText || '—'}
+                        </td>
+                        <td style={{ padding: '0.5rem' }}>{it.detectedName || '—'}</td>
+                        <td style={{ padding: '0.5rem' }}>
+                          <select
+                            value={it.employeeRef || ''}
+                            onChange={(e) => updatePayslipItem(it.fileId, { employeeRef: e.target.value })}
+                            disabled={it.action === 'delete'}
+                            style={{ minWidth: 220 }}
+                          >
+                            <option value="">— Select employee —</option>
+                            {payslipEmployeeSelectOptions(payslipPreview?.employeeOptions, it.matchIds, it.options).map((opt) => (
+                              <option key={opt.id} value={opt.id}>{opt.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ padding: '0.5rem' }}>
+                          <span
+                            aria-label={it.action === 'delete' ? 'deleted' : it.employeeRef ? 'matched' : 'conflict'}
+                            title={it.action === 'delete' ? 'Will be deleted' : it.employeeRef ? 'Matched' : 'Conflict'}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: 24,
+                              height: 24,
+                              fontSize: '1rem',
+                              fontWeight: 700,
+                              color: it.action === 'delete' ? '#6b7280' : it.employeeRef ? '#16a34a' : '#dc2626',
+                            }}
+                          >
+                            {it.action === 'delete' ? '−' : it.employeeRef ? '✓' : '✗'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.5rem' }}>
+                          {it.action === 'delete' ? (
+                            <button type="button" className="btn-secondary" onClick={() => updatePayslipItem(it.fileId, { action: 'import' })}>
+                              Undo delete
+                            </button>
+                          ) : (
+                            <button type="button" className="btn-secondary" onClick={() => updatePayslipItem(it.fileId, { action: 'delete' })}>
+                              Delete
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button type="button" className="btn-secondary" onClick={closePayslipImport} disabled={payslipImporting}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={!canImportPayslips || payslipImporting}
+                onClick={async () => {
+                  if (!payslipPreview?.batchId) return;
+                  setPayslipImporting(true);
+                  setError('');
+                  setPayslipNotice('');
+                  try {
+                    const out = await importPayslipBatch(
+                      payslipPreview.batchId,
+                      payslipPreview.items.map((it) => ({
+                        fileId: it.fileId,
+                        employeeRef: it.employeeRef || null,
+                        action: it.action || 'import',
+                      }))
+                    );
+                    if ((out?.conflicts || []).length > 0) {
+                      setError(`Imported ${out.imported || 0}, conflicts: ${(out.conflicts || []).length}`);
+                    } else {
+                      setShowPayslipImport(false);
+                      setPayslipPreview(null);
+                      setPayslipNotice('');
+                    }
+                  } catch (err) {
+                    setError(String(err?.message || err));
+                  } finally {
+                    setPayslipImporting(false);
+                  }
+                }}
+              >
+                {payslipImporting ? 'Importing…' : 'Import'}
               </button>
             </div>
           </div>

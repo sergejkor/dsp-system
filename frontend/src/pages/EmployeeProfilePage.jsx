@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useSearchParams, Link } from 'react-router-dom';
 import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmployeeInKenjo } from '../services/kenjoApi';
-import { getEmployee } from '../services/employeesApi';
+import {
+  getEmployee,
+  getEmployeeDocuments,
+  uploadEmployeeDocument,
+  viewEmployeeDocument,
+  downloadEmployeeDocument,
+  deleteEmployeeDocument,
+} from '../services/employeesApi';
 import { saveAdvances } from '../services/advancesApi';
 import { getEmployeeKpi, saveEmployeeKpiComment } from '../services/payrollApi';
 import { getPaveSessions } from '../services/paveApi';
@@ -27,6 +34,8 @@ const TERMINATION_REASONS = [
   { group: '7. Workplace Misconduct', options: ['Fighting or aggressive behavior', 'Harassment or discrimination', 'Threatening coworkers or customers', 'Alcohol or drug use while on duty'] },
   { group: '8. Failure to Meet Job Requirements', options: ['Invalid or suspended driver\'s license', 'Failure to complete required training', 'Failure to comply with Amazon DSP or Amazon Logistics requirements'] },
 ];
+
+const EMPLOYEE_DOC_TYPES = ['Dokumente', 'Lohnabrechnung', 'Vertrag', 'Abmahnung', 'AMZL', 'Zertifikat'];
 
 export default function EmployeeProfilePage() {
   const location = useLocation();
@@ -61,6 +70,14 @@ export default function EmployeeProfilePage() {
   const [kpiCommentText, setKpiCommentText] = useState('');
   const [kpiCommentSaving, setKpiCommentSaving] = useState(false);
   const [paveSessions, setPaveSessions] = useState([]);
+  const [employeeDocs, setEmployeeDocs] = useState([]);
+  const [employeeDocsLoading, setEmployeeDocsLoading] = useState(false);
+  const [employeeDocFiles, setEmployeeDocFiles] = useState([]);
+  const [employeeDocType, setEmployeeDocType] = useState(EMPLOYEE_DOC_TYPES[0]);
+  const [employeeDocUploading, setEmployeeDocUploading] = useState(false);
+  const [employeeDocError, setEmployeeDocError] = useState('');
+  const [showEmployeeDocsList, setShowEmployeeDocsList] = useState(false);
+  const [employeeDocsFilterType, setEmployeeDocsFilterType] = useState('');
 
   useEffect(() => {
     if (!kenjoEmployeeId && !localEmployeeId) return;
@@ -139,6 +156,23 @@ export default function EmployeeProfilePage() {
     if (!kenjoEmployeeId) return;
     getPaveSessions({ driver_id: kenjoEmployeeId }).then(setPaveSessions).catch(() => setPaveSessions([]));
   }, [kenjoEmployeeId]);
+
+  const employeeDocRef = String(kenjoEmployeeId || localEmployee?.employee_id || localEmployeeId || '').trim();
+
+  useEffect(() => {
+    if (!employeeDocRef) return;
+    setEmployeeDocsLoading(true);
+    setEmployeeDocError('');
+    getEmployeeDocuments(employeeDocRef)
+      .then((rows) => setEmployeeDocs(Array.isArray(rows) ? rows : []))
+      .catch((e) => setEmployeeDocError(String(e?.message || e)))
+      .finally(() => setEmployeeDocsLoading(false));
+  }, [employeeDocRef]);
+
+  const filteredEmployeeDocs =
+    employeeDocsFilterType && employeeDocsFilterType.trim()
+      ? employeeDocs.filter((d) => String(d?.document_type || '') === employeeDocsFilterType)
+      : employeeDocs;
 
 
   if (!kenjoEmployeeId && !localEmployeeId) {
@@ -810,6 +844,146 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
+      <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f5f5f5', borderRadius: 8 }}>
+        <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Employee documents</h3>
+        {employeeDocError && <p className="error-text" style={{ margin: '0 0 0.5rem' }}>{employeeDocError}</p>}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            // #region agent log
+            fetch('http://127.0.0.1:7400/ingest/9746dfd7-4235-4773-8200-b09630016922',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'54b2a9'},body:JSON.stringify({sessionId:'54b2a9',runId:'pre-fix',hypothesisId:'H5',location:'frontend/src/pages/EmployeeProfilePage.jsx:employeeDocs:onSubmit',message:'employee_upload_form_submit',data:{employeeDocRef:String(employeeDocRef||''),employeeDocType:String(employeeDocType||''),fileCount:employeeDocFiles.length,fileNames:employeeDocFiles.map((f)=>f?.name||null)},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
+            if (!employeeDocRef) {
+              setEmployeeDocError('Employee reference is missing.');
+              return;
+            }
+            if (!employeeDocFiles.length) {
+              setEmployeeDocError('Please choose at least one file.');
+              return;
+            }
+            setEmployeeDocUploading(true);
+            setEmployeeDocError('');
+            try {
+              for (const file of employeeDocFiles) {
+                // Upload selected files with the same chosen document type.
+                await uploadEmployeeDocument(employeeDocRef, file, employeeDocType);
+              }
+              const refreshed = await getEmployeeDocuments(employeeDocRef);
+              setEmployeeDocs(Array.isArray(refreshed) ? refreshed : []);
+              setEmployeeDocFiles([]);
+              setEmployeeDocType(EMPLOYEE_DOC_TYPES[0]);
+            } catch (err) {
+              setEmployeeDocError(String(err?.message || err));
+            } finally {
+              setEmployeeDocUploading(false);
+            }
+          }}
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem', alignItems: 'end', marginBottom: '0.75rem' }}
+        >
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+            <span>Type of document</span>
+            <select value={employeeDocType} onChange={(e) => setEmployeeDocType(e.target.value)}>
+              {EMPLOYEE_DOC_TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+            <span>Files</span>
+            <input
+              type="file"
+              multiple
+              onChange={(e) => setEmployeeDocFiles(Array.from(e.target.files || []))}
+            />
+          </label>
+          <button type="submit" className="btn-primary" disabled={employeeDocUploading}>
+            {employeeDocUploading ? 'Uploading…' : 'Upload files'}
+          </button>
+        </form>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setShowEmployeeDocsList((v) => !v)}
+          >
+            {showEmployeeDocsList ? 'Hide docs' : 'Show docs'}
+          </button>
+          {showEmployeeDocsList && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <span>Type</span>
+              <select
+                value={employeeDocsFilterType}
+                onChange={(e) => setEmployeeDocsFilterType(e.target.value)}
+              >
+                <option value="">All</option>
+                {EMPLOYEE_DOC_TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+        {showEmployeeDocsList && (
+          employeeDocsLoading ? (
+            <p style={{ margin: 0, color: '#666' }}>Loading documents…</p>
+          ) : filteredEmployeeDocs.length === 0 ? (
+            <p style={{ margin: 0, color: '#666' }}>No documents uploaded for selected type.</p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                    <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Type</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>File name</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Uploaded</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEmployeeDocs.map((doc) => (
+                    <tr key={doc.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.5rem 0.75rem' }}>{doc.document_type || '—'}</td>
+                      <td style={{ padding: '0.5rem 0.75rem' }}>{doc.file_name || '—'}</td>
+                      <td style={{ padding: '0.5rem 0.75rem' }}>{doc.created_at ? new Date(doc.created_at).toLocaleString() : '—'}</td>
+                      <td style={{ padding: '0.5rem 0.75rem' }}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => viewEmployeeDocument(employeeDocRef, doc.id).catch((err) => setEmployeeDocError(String(err?.message || err)))}
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ marginLeft: '0.5rem' }}
+                          onClick={() => downloadEmployeeDocument(employeeDocRef, doc.id, doc.file_name)}
+                        >
+                          Download
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ marginLeft: '0.5rem' }}
+                          onClick={async () => {
+                            if (!window.confirm('Delete this document?')) return;
+                            try {
+                              setEmployeeDocError('');
+                              await deleteEmployeeDocument(employeeDocRef, doc.id);
+                              setEmployeeDocs((prev) => prev.filter((x) => x.id !== doc.id));
+                            } catch (err) {
+                              setEmployeeDocError(String(err?.message || err));
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </div>
+
       <div className="grid two-columns">
         <div>
           {renderText('Status', isActive ? 'Active' : 'Inactive')}
@@ -845,6 +1019,7 @@ export default function EmployeeProfilePage() {
             personal?.mobile || home?.personalMobile,
             (v) => onNestedChange('personal', 'mobile', v),
           )}
+          {renderText('Work Mobile', work?.workMobile)}
           {renderText('Language', account?.language)}
           {renderText('Job Title', jobTitle, (v) => onNestedChange('work', 'jobTitle', v))}
           {renderText('Weekly hours', work?.weeklyHours, (v) => onNestedChange('work', 'weeklyHours', v))}

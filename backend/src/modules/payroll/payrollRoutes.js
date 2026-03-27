@@ -1,8 +1,13 @@
 import { Router } from 'express';
+import multer from 'multer';
 import * as payrollService from './payrollService.js';
 import { exportPayrollToAdp } from './payrollExportAdp.js';
+import authMiddleware from '../auth/authMiddleware.js';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+router.use(authMiddleware.requirePermission('page_payroll'));
 
 router.get('/health', (_req, res) => res.json({ ok: true, module: 'payroll' }));
 
@@ -116,6 +121,55 @@ router.post('/export-adp', async (req, res) => {
     res.send(buffer);
   } catch (error) {
     console.error('POST /payroll/export-adp error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+function isLikelyPdfFile(f) {
+  const mt = String(f?.mimetype || '').toLowerCase();
+  if (mt.includes('pdf')) return true;
+  const name = String(f?.originalname || '').toLowerCase();
+  return name.endsWith('.pdf');
+}
+
+function runMulterArray(req, res, fieldName, maxCount) {
+  return new Promise((resolve, reject) => {
+    upload.array(fieldName, maxCount)(req, res, (error) => {
+      if (!error) return resolve();
+      return reject(error);
+    });
+  });
+}
+
+router.post('/payslips/preview', async (req, res) => {
+  try {
+    await runMulterArray(req, res, 'files', 500);
+    const files = (req.files || []).filter(isLikelyPdfFile);
+    if (!files.length) return res.status(400).json({ error: 'Upload at least one PDF file' });
+    const out = await payrollService.previewPayslipImport(files);
+    res.json(out);
+  } catch (error) {
+    console.error('POST /payroll/payslips/preview error', error);
+    if (error instanceof multer.MulterError) {
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'PDF file is too large. Maximum upload size is 50 MB.' });
+      }
+      return res.status(400).json({ error: error.message || 'Upload failed' });
+    }
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.post('/payslips/import', async (req, res) => {
+  try {
+    const { batchId, resolutions } = req.body || {};
+    if (!batchId || !Array.isArray(resolutions)) {
+      return res.status(400).json({ error: 'batchId and resolutions are required' });
+    }
+    const out = await payrollService.importPayslipBatch(batchId, resolutions);
+    res.json(out);
+  } catch (error) {
+    console.error('POST /payroll/payslips/import error', error);
     res.status(500).json({ error: String(error?.message || error) });
   }
 });

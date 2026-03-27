@@ -1,5 +1,9 @@
 import { query } from '../../db.js';
 import { getKenjoUsersList, getKenjoAttendances } from '../kenjo/kenjoClient.js';
+import settingsService from '../settings/settingsService.js';
+import { PDFDocument } from 'pdf-lib';
+import { PDFParse } from 'pdf-parse';
+import employeeService from '../employees/employeeService.js';
 
 /**
  * Get ISO year and week number for a date string YYYY-MM-DD.
@@ -88,6 +92,25 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const monthEnd = `${monthStr}-${String(lastDay).padStart(2, '0')}`;
   const weeksInPeriod = getWeeksInRange(from, to);
   const numWeeks = weeksInPeriod.length;
+
+  // Formula settings (defaults match current hardcoded logic).
+  let payrollFormula = {
+    fantastic_threshold: 93,
+    great_threshold: 85,
+    fair_threshold: 85,
+    fantastic_plus_bonus_eur: 17,
+    fantastic_bonus_eur: 5,
+  };
+  try {
+    const p = await settingsService.getByGroupKey('payroll');
+    payrollFormula = {
+      fantastic_threshold: Number(p?.payroll_fantastic_threshold?.value ?? 93),
+      great_threshold: Number(p?.payroll_great_threshold?.value ?? 85),
+      fair_threshold: Number(p?.payroll_fair_threshold?.value ?? 85),
+      fantastic_plus_bonus_eur: Number(p?.payroll_fantastic_plus_bonus_eur?.value ?? 17),
+      fantastic_bonus_eur: Number(p?.payroll_fantastic_bonus_eur?.value ?? 5),
+    };
+  } catch (_) {}
 
   const weekPlaceholders = weeksInPeriod.length > 0
     ? weeksInPeriod.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ')
@@ -309,7 +332,11 @@ export async function calculatePayroll(month, fromDate, toDate) {
       const kpiByPn = kpiByKey.get(kpiKeyByPn) ?? 0;
       const kpiByTrans = kpiByKey.get(kpiKeyByTrans) ?? 0;
       const kpiFromKpiData = kpiByKenjo || kpiByPn || kpiByTrans || 0;
-      const rate = kpiFromKpiData > 93 ? 17 : kpiFromKpiData > 85 ? 5 : 0;
+      let rate = 0;
+      if (kpiFromKpiData > payrollFormula.fantastic_threshold) rate = payrollFormula.fantastic_plus_bonus_eur;
+      else if (kpiFromKpiData > payrollFormula.great_threshold) rate = payrollFormula.fantastic_bonus_eur;
+      else if (kpiFromKpiData < payrollFormula.fair_threshold) rate = 0;
+      else rate = 0;
       if (daysInWeek === 0 && rate > 0 && workingDays > 0 && numWeeks > 0) {
         daysInWeek = Math.max(1, Math.round((workingDays / numWeeks) * 100) / 100);
       }
@@ -620,4 +647,410 @@ export async function saveKpiComment(employeeId, year, week, comment) {
     [empId, y, w, text]
   );
   return { ok: true };
+}
+
+const PAYSLIP_BATCH_TTL_MS = 30 * 60 * 1000;
+const payslipImportBatches = new Map();
+
+function normalizeName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function uniqueStrings(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function detectNameFromPdfText(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 40);
+  for (const line of lines) {
+    if (line.length < 4 || line.length > 80) continue;
+    if (/\d/.test(line)) continue;
+    if (!/[A-Za-z]/.test(line)) continue;
+    if (/lohn|abrechnung|monat|jahr|employee|gehalt|salary/i.test(line)) continue;
+    const words = line.split(/\s+/);
+    if (words.length < 2 || words.length > 5) continue;
+    return line;
+  }
+  return '';
+}
+
+function isLikelyCompanyLine(line) {
+  return /\b(gmbh|ug|ag|kg|ohg|mbh|ltd|llc|inc|logistik|logistics|transport|transporte|delivery|alfamile|amazon)\b/i.test(String(line || ''));
+}
+
+function isLikelyStreetLine(line) {
+  return /\b(\d{1,4}[a-z]?\s*$|str\.?$|strasse\b|straße\b|weg\b|allee\b|platz\b|gasse\b|ring\b|ufer\b)/i.test(String(line || ''));
+}
+
+function isLikelyPostalCityLine(line) {
+  return /\b\d{5}\b/.test(String(line || ''));
+}
+
+function isLikelyPersonNameLine(line) {
+  const value = String(line || '').trim();
+  if (!value || value.length < 4 || value.length > 80) return false;
+  if (/\d/.test(value)) return false;
+  if (isLikelyCompanyLine(value)) return false;
+  if (/lohn|abrechnung|monat|jahr|salary|gehalt|nettobezug|brutto/i.test(value)) return false;
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return false;
+  return words.every((word) => /^[A-Za-zÄÖÜäöüß'`.-]+$/.test(word));
+}
+
+function normalizeDetectedName(line) {
+  const value = String(line || '')
+    .replace(/^(frau|herr)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return isLikelyPersonNameLine(value) ? value : '';
+}
+
+function extractRecipientBlock(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 80);
+  if (!lines.length) return { block: '', detectedName: '' };
+
+  const titleIdx = lines.findIndex((l) => /^(frau|herr)\b/i.test(l));
+  if (titleIdx >= 0) {
+    const start = Math.max(0, titleIdx - 1);
+    const end = Math.min(lines.length, titleIdx + 5);
+    const block = lines.slice(start, end).join('\n');
+    const sameLineName = normalizeDetectedName(lines[titleIdx]);
+    if (sameLineName) {
+      return { block, detectedName: sameLineName };
+    }
+    const nextCandidates = [lines[titleIdx + 1], lines[titleIdx + 2]];
+    const nextLineName = nextCandidates.map(normalizeDetectedName).find(Boolean) || '';
+    return { block, detectedName: nextLineName };
+  }
+
+  for (let i = 1; i < lines.length; i += 1) {
+    if (!isLikelyStreetLine(lines[i])) continue;
+    const nameCandidates = [lines[i - 1], lines[i - 2]].map(normalizeDetectedName).filter(Boolean);
+    if (!nameCandidates.length) continue;
+    const blockStart = Math.max(0, i - 2);
+    let blockEnd = Math.min(lines.length, i + 3);
+    if (lines[i + 1] && isLikelyPostalCityLine(lines[i + 1])) {
+      blockEnd = Math.min(lines.length, i + 4);
+    }
+    return {
+      block: lines.slice(blockStart, blockEnd).join('\n'),
+      detectedName: nameCandidates[0],
+    };
+  }
+
+  const fallbackName = lines.map(normalizeDetectedName).find(Boolean) || detectNameFromPdfText(lines.join('\n'));
+  const fallbackIndex = fallbackName ? lines.findIndex((line) => normalizeDetectedName(line) === fallbackName) : -1;
+  if (fallbackIndex >= 0) {
+    const start = Math.max(0, fallbackIndex);
+    const end = Math.min(lines.length, fallbackIndex + 4);
+    return { block: lines.slice(start, end).join('\n'), detectedName: fallbackName };
+  }
+
+  const block = lines.slice(0, 5).join('\n');
+  return { block, detectedName: fallbackName };
+}
+
+/**
+ * Split a PDF into one buffer per page so batch payslip files yield one import row (and one saved doc) per employee page.
+ */
+async function splitPdfToPageBuffers(buffer) {
+  try {
+    const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
+    const n = src.getPageCount();
+    if (!Number.isFinite(n) || n <= 0) return [buffer];
+    if (n === 1) return [buffer];
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const doc = await PDFDocument.create();
+      const [copied] = await doc.copyPages(src, [i]);
+      doc.addPage(copied);
+      const bytes = await doc.save();
+      out.push(Buffer.from(bytes));
+    }
+    return out;
+  } catch {
+    return [buffer];
+  }
+}
+
+async function parsePayslipPageBuffer(pageBuffer) {
+  let detectedName = '';
+  let previewText = '';
+  let parser;
+  try {
+    parser = new PDFParse({ data: pageBuffer });
+    const parsed = await parser.getText();
+    const extracted = extractRecipientBlock(parsed?.text || '');
+    detectedName = extracted.detectedName || '';
+    previewText = extracted.block || '';
+  } catch {
+    detectedName = '';
+    previewText = '';
+  } finally {
+    if (parser) {
+      try {
+        await parser.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return { detectedName, previewText };
+}
+
+async function getEmployeeNamePool() {
+  const [kenjoRes, employeesRes] = await Promise.all([
+    query(
+      `SELECT kenjo_user_id, first_name, last_name, display_name
+       FROM kenjo_employees
+       WHERE kenjo_user_id IS NOT NULL AND kenjo_user_id != ''`
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT id::text AS id_text, employee_id, kenjo_user_id, first_name, last_name, display_name
+       FROM employees`
+    ).catch(() => ({ rows: [] })),
+  ]);
+
+  const byId = new Map();
+
+  function upsertEntry(id, names = [], priority = 0) {
+    const canonicalId = String(id || '').trim();
+    if (!canonicalId) return;
+    const cleanNames = uniqueStrings(names);
+    if (!cleanNames.length) return;
+    const existing = byId.get(canonicalId) || {
+      id: canonicalId,
+      name: cleanNames[0],
+      normalizedNames: [],
+      priority,
+    };
+    if (!existing.name || cleanNames[0].length > existing.name.length) {
+      existing.name = cleanNames[0];
+    }
+    existing.priority = Math.max(existing.priority || 0, priority || 0);
+    existing.normalizedNames = uniqueStrings([
+      ...(existing.normalizedNames || []),
+      ...cleanNames.map((name) => normalizeName(name)).filter(Boolean),
+    ]);
+    byId.set(canonicalId, existing);
+  }
+
+  for (const row of kenjoRes.rows || []) {
+    const full = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+    upsertEntry(row.kenjo_user_id, [full, row.display_name, row.kenjo_user_id], 2);
+  }
+
+  for (const row of employeesRes.rows || []) {
+    const full = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+    const canonicalId = row.kenjo_user_id || row.employee_id || row.id_text;
+    upsertEntry(canonicalId, [
+      row.display_name,
+      full,
+      row.employee_id,
+      row.kenjo_user_id,
+      row.id_text,
+    ], 1);
+  }
+
+  const byName = new Map();
+  for (const entry of byId.values()) {
+    const nameKey =
+      normalizeName(entry.name) ||
+      (Array.isArray(entry.normalizedNames) ? entry.normalizedNames[0] : '') ||
+      entry.id;
+    if (!nameKey) continue;
+    const existing = byName.get(nameKey);
+    if (!existing) {
+      byName.set(nameKey, { ...entry });
+      continue;
+    }
+    const winner =
+      (entry.priority || 0) > (existing.priority || 0)
+        ? { ...entry }
+        : { ...existing };
+    winner.name =
+      String(entry.name || '').length > String(existing.name || '').length
+        ? entry.name
+        : existing.name;
+    winner.normalizedNames = uniqueStrings([
+      ...(existing.normalizedNames || []),
+      ...(entry.normalizedNames || []),
+    ]);
+    winner.priority = Math.max(existing.priority || 0, entry.priority || 0);
+    byName.set(nameKey, winner);
+  }
+
+  return [...byName.values()].filter((entry) => entry.id && entry.name);
+}
+
+function findEmployeeMatches(detectedName, pool) {
+  const n = normalizeName(detectedName);
+  if (!n) return [];
+  const parts = n.split(' ').filter(Boolean);
+  const scored = [];
+  for (const employee of pool || []) {
+    const candidates = Array.isArray(employee.normalizedNames)
+      ? employee.normalizedNames
+      : [employee.normalized].filter(Boolean);
+    let bestScore = 0;
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      let score = 0;
+      if (candidate === n) score = 100;
+      else if (` ${candidate} ` === ` ${n} `) score = 98;
+      else {
+        const candidateParts = candidate.split(' ').filter(Boolean);
+        const sharedParts = parts.filter((part) => candidateParts.includes(part));
+        const sharedCount = sharedParts.length;
+        const detectedLast = parts.length >= 2 ? parts[parts.length - 1] : '';
+        const candidateLast = candidateParts.length >= 2 ? candidateParts[candidateParts.length - 1] : '';
+        const lastNameMatches = detectedLast && candidateLast && detectedLast === candidateLast;
+        const detectedFirstNames = parts.slice(0, -1);
+        const candidateFirstNames = candidateParts.slice(0, -1);
+        const sharedFirstNameCount = detectedFirstNames.filter((part) => candidateFirstNames.includes(part)).length;
+
+        if (parts.length >= 2 && sharedCount === parts.length && candidateParts.length === parts.length) {
+          score = 95;
+        } else if (lastNameMatches && sharedFirstNameCount >= 1) {
+          // Softer rule for double first names in payslips:
+          // surname plus at least one first-name token is usually enough to identify the employee.
+          score = 92 + Math.min(sharedFirstNameCount, 2);
+        } else if (parts.length >= 2 && sharedCount === parts.length) {
+          score = 88;
+        } else if (sharedCount >= 2) {
+          score = 70 + sharedCount * 4;
+        } else if (sharedCount === 1 && parts.length === 1) {
+          score = 60;
+        } else if (candidate.includes(n) || n.includes(candidate)) {
+          score = 55;
+        }
+      }
+      if (score > bestScore) bestScore = score;
+    }
+    if (bestScore > 0) {
+      scored.push({ ...employee, score: bestScore });
+    }
+  }
+  scored.sort((a, b) => {
+    if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+    return String(a.name || '').localeCompare(String(b.name || ''));
+  });
+  return scored;
+}
+
+function chooseAutoMatch(matches) {
+  if (!Array.isArray(matches) || !matches.length) return null;
+  const [best, second] = matches;
+  if (!best) return null;
+  if ((best.score || 0) >= 100) return best;
+  if ((best.score || 0) >= 95 && (!second || (best.score - (second.score || 0)) >= 3)) return best;
+  if ((best.score || 0) >= 88 && (!second || (best.score - (second.score || 0)) >= 8)) return best;
+  return null;
+}
+
+export async function previewPayslipImport(files) {
+  const employeePool = await getEmployeeNamePool();
+  /** Sent once per preview — avoids huge JSON when many pages × full employee list (proxy / memory limits). */
+  const employeeOptions = employeePool.map((m) => ({ id: m.id, name: m.name }));
+  const batchId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const docs = [];
+  const items = [];
+  let docSeq = 0;
+  for (let i = 0; i < (files || []).length; i++) {
+    const f = files[i];
+    if (!f?.buffer?.length) continue;
+    const baseFileName = f.originalname || `payslip-${i + 1}.pdf`;
+    const pageBuffers = await splitPdfToPageBuffers(f.buffer);
+    for (let p = 0; p < pageBuffers.length; p++) {
+      const fileId = `${batchId}_${docSeq}`;
+      docSeq += 1;
+      const pageLabel =
+        pageBuffers.length > 1 ? `Dokument ${p + 1} von ${pageBuffers.length}` : 'Dokument';
+      const pageBuffer = pageBuffers[p];
+      const { detectedName, previewText } = await parsePayslipPageBuffer(pageBuffer);
+      const matches = findEmployeeMatches(detectedName, employeePool);
+      const autoMatch = chooseAutoMatch(matches);
+      docs.push({
+        fileId,
+        fileName: pageBuffers.length > 1 ? `${baseFileName} (page ${p + 1}/${pageBuffers.length})` : baseFileName,
+        mimeType: f.mimetype || 'application/pdf',
+        fileContent: pageBuffer,
+        matchedEmployeeRef: autoMatch?.id || null,
+      });
+      items.push({
+        fileId,
+        fileName: pageLabel,
+        pageIndex: pageBuffers.length > 1 ? p + 1 : null,
+        pageCount: pageBuffers.length > 1 ? pageBuffers.length : null,
+        detectedName: detectedName || null,
+        previewText: previewText || null,
+        matchedEmployeeRef: autoMatch?.id || null,
+        matchedEmployeeName: autoMatch?.name || null,
+        conflict: !autoMatch,
+        matchIds: matches.map((m) => m.id),
+      });
+    }
+  }
+  payslipImportBatches.set(batchId, {
+    createdAt: Date.now(),
+    docs,
+  });
+  for (const [id, b] of payslipImportBatches.entries()) {
+    if (Date.now() - (b.createdAt || 0) > PAYSLIP_BATCH_TTL_MS) payslipImportBatches.delete(id);
+  }
+  if (!items.length) {
+    throw new Error('No PDF pages could be processed. Check the file is a valid PDF.');
+  }
+  return { batchId, employeeOptions, items };
+}
+
+export async function importPayslipBatch(batchId, resolutions) {
+  const batch = payslipImportBatches.get(String(batchId || '').trim());
+  if (!batch) throw new Error('Import batch expired. Please upload files again.');
+  const byFileId = new Map((batch.docs || []).map((d) => [d.fileId, d]));
+  let imported = 0;
+  const conflicts = [];
+  for (const r of (resolutions || [])) {
+    const fileId = String(r?.fileId || '').trim();
+    const action = String(r?.action || 'import').trim();
+    const employeeRef = String(r?.employeeRef || '').trim();
+    const doc = byFileId.get(fileId);
+    if (!doc) continue;
+    if (action === 'delete') continue;
+    if (!employeeRef) {
+      conflicts.push({ fileId, fileName: doc.fileName, error: 'Employee not selected' });
+      continue;
+    }
+    await employeeService.addEmployeeDocument(employeeRef, {
+      documentType: 'Lohnabrechnung',
+      fileName: doc.fileName,
+      mimeType: doc.mimeType,
+      fileContent: doc.fileContent,
+    });
+    imported++;
+  }
+  payslipImportBatches.delete(String(batchId || '').trim());
+  return { ok: true, imported, conflicts };
 }
