@@ -22,8 +22,11 @@ import finesRoutes from './modules/fines/finesRoutes.js';
 import damagesRoutes from './modules/damages/damagesRoutes.js';
 import dashboardRoutes from './modules/dashboard/dashboardRoutes.js';
 import financeRoutes from './modules/finance/financeRoutes.js';
+import publicIntakePublicRoutes from './modules/publicIntake/publicIntakePublicRoutes.js';
+import publicIntakeAdminRoutes from './modules/publicIntake/publicIntakeAdminRoutes.js';
 import { getFinanceHealthInfo } from './modules/finance/financeService.js';
 import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
+import { startKenjoSyncScheduler } from './modules/kenjo/kenjoSyncScheduler.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
@@ -39,10 +42,18 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .filter(Boolean);
 const finalAllowedOrigins = allowedOrigins.length ? allowedOrigins : defaultAllowedOrigins;
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (finalAllowedOrigins.includes(origin)) return true;
+  if (/^https:\/\/([a-z0-9-]+\.)*alfamile\.com$/i.test(origin)) return true;
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
+  return false;
+}
+
 const corsOptions = {
   origin(origin, callback) {
     // Allow non-browser tools (no Origin header) and explicit allowed origins.
-    if (!origin || finalAllowedOrigins.includes(origin)) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true,
@@ -68,6 +79,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/public', publicIntakePublicRoutes);
 app.use('/api', authMiddleware.loadAuth);
 app.use('/api', (req, res, next) => {
   if (req.originalUrl === '/api/health') return next();
@@ -94,8 +106,10 @@ app.use('/api/damages', damagesRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/insurance', insuranceRoutes);
 app.use('/api/finance', financeRoutes);
+app.use('/api/intake', publicIntakeAdminRoutes);
 
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
   startPaveSyncScheduler();
+  startKenjoSyncScheduler();
 });

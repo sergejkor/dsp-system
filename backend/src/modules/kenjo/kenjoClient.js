@@ -54,6 +54,21 @@ async function kenjoPut(path, body) {
   }
 }
 
+async function kenjoDelete(path) {
+  const authHeader = await getAuthHeader();
+  const resp = await fetch(`${BASE_URL}${path}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: authHeader,
+    },
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Kenjo DELETE ${path} failed ${resp.status}: ${text}`);
+  }
+  return null;
+}
+
 async function kenjoPost(path, body) {
   const authHeader = await getAuthHeader();
 
@@ -200,6 +215,11 @@ function buildManagerMap(workItems, personalItems) {
 
 export async function getKenjoUserAccounts() {
   return kenjoGet('/user-accounts');
+}
+
+export async function getKenjoCompanies() {
+  const data = await kenjoGet('/companies');
+  return normalizeArrayPayload(data);
 }
 
 /**
@@ -608,11 +628,21 @@ export async function updateEmployeeFinancials(employeeId, body) {
   return kenjoPut(`/employees/${id}/financials`, body);
 }
 
+export async function createKenjoEmployee(body) {
+  return kenjoPost('/employees', body);
+}
+
 export async function updateKenjoAttendance(attendanceId, { startTime, endTime }) {
   const body = {};
   if (startTime != null) body.startTime = startTime;
   if (endTime != null) body.endTime = endTime;
   return kenjoPut(`/attendances/${attendanceId}`, body);
+}
+
+export async function deleteKenjoAttendance(attendanceId) {
+  const id = String(attendanceId || '').trim();
+  if (!id) throw new Error('attendanceId is required');
+  return kenjoDelete(`/attendances/${encodeURIComponent(id)}`);
 }
 
 export async function deactivateEmployee(employeeId) {
@@ -625,9 +655,12 @@ const kenjoClient = {
   kenjoGet,
   kenjoPut,
   getKenjoUserAccounts,
+  getKenjoCompanies,
   getKenjoEmployeeByIdReadable,
   getKenjoAttendances,
+  createKenjoEmployee,
   updateKenjoAttendance,
+  deleteKenjoAttendance,
 };
 
 export default kenjoClient;
