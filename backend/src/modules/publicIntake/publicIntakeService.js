@@ -28,6 +28,26 @@ function dateOnlyOrNull(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
 }
 
+function kenjoDateTimeOrNull(value) {
+  const date = dateOnlyOrNull(value);
+  return date ? `${date}T00:00:00.000Z` : null;
+}
+
+function normalizeKenjoLanguage(value) {
+  const normalized = stringOrNull(value, 64);
+  if (!normalized) return 'de';
+
+  const key = normalized
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (['de', 'deutsch', 'german', 'deutschland'].includes(key)) return 'de';
+  if (['en', 'english', 'englisch'].includes(key)) return 'en';
+  if (['es', 'spanish', 'espanol', 'español', 'spanisch'].includes(key)) return 'es';
+  return 'de';
+}
+
 function numberOrNull(value) {
   if (value == null || value === '') return null;
   const num = Number(value);
@@ -868,7 +888,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   const createBody = {
     account: compactObject({
       email: stringOrNull(email, 255),
-      language: stringOrNull(account.language, 16) || 'de',
+      language: normalizeKenjoLanguage(account.language),
     }),
     personal: compactObject({
       firstName: stringOrNull(firstName, 255),
@@ -877,10 +897,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     work: compactObject({
       companyId,
       weeklyHours: numberOrNull(work.weeklyHours) ?? 40,
-      startDate: dateOnlyOrNull(work.startDate),
-      jobTitle: stringOrNull(work.jobTitle, 255),
-      transportationId: stringOrNull(work.transportationId, 255),
-      employeeNumber: stringOrNull(work.employeeNumber, 255),
+      startDate: kenjoDateTimeOrNull(work.startDate),
     }),
   };
 
@@ -934,9 +951,9 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     birthDate: dateOnlyOrNull(personal.birthDate || personal.birthdate),
   });
   await runKenjoSectionUpdate('work', updateEmployeeWork, {
-    startDate: dateOnlyOrNull(work.startDate),
-    contractEnd: dateOnlyOrNull(work.contractEnd),
-    probationUntil: dateOnlyOrNull(work.probationUntil),
+    startDate: kenjoDateTimeOrNull(work.startDate),
+    contractEnd: kenjoDateTimeOrNull(work.contractEnd),
+    probationUntil: kenjoDateTimeOrNull(work.probationUntil),
     jobTitle: stringOrNull(work.jobTitle, 255),
     transportationId: stringOrNull(work.transportationId, 255),
     employeeNumber: stringOrNull(work.employeeNumber, 255),
