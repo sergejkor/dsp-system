@@ -1,12 +1,7 @@
+import nodemailer from 'nodemailer';
 import settingsService from '../settings/settingsService.js';
 
-function requireEnv(name) {
-  const value = process.env[name];
-  if (value == null || String(value).trim() === '') {
-    throw new Error(`Missing env var: ${name}`);
-  }
-  return String(value).trim();
-}
+let transporterPromise = null;
 
 function stringOrNull(value) {
   if (value == null) return null;
@@ -21,41 +16,13 @@ function parseEmailList(...values) {
     .filter((value, index, list) => value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && list.indexOf(value) === index);
 }
 
-async function getAppAccessToken() {
-  const tenantId = requireEnv('MICROSOFT_TENANT_ID');
-  const clientId = requireEnv('MICROSOFT_CLIENT_ID');
-  const clientSecret = requireEnv('MICROSOFT_CLIENT_SECRET');
-
-  const body = new URLSearchParams();
-  body.set('grant_type', 'client_credentials');
-  body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
-  body.set('scope', 'https://graph.microsoft.com/.default');
-
-  const res = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data?.access_token) {
-    throw new Error(
-      `Microsoft token acquisition failed: ${res.status} ${data?.error_description || data?.error || 'no access_token'}`
-    );
-  }
-
-  return data.access_token;
-}
-
 async function buildRecipients() {
   const dbValue = await settingsService.getSetting('personalfragebogen', 'notification_emails').catch(() => null);
   return parseEmailList(
     dbValue,
     process.env.PERSONALFRAGEBOGEN_NOTIFY_EMAILS,
     process.env.PERSONAL_QUESTIONNAIRE_NOTIFY_EMAILS,
-    process.env.PUBLIC_INTAKE_NOTIFY_EMAILS,
-    process.env.MICROSOFT_GRAPH_USER_EMAIL
+    process.env.PUBLIC_INTAKE_NOTIFY_EMAILS
   );
 }
 
@@ -99,42 +66,68 @@ async function getNotificationTemplates() {
   };
 }
 
-export async function sendPersonalQuestionnaireNotification({ submissionId, summary, createdAt }) {
-  const senderEmail = stringOrNull(process.env.MICROSOFT_GRAPH_USER_EMAIL);
-  const recipients = await buildRecipients();
-  if (!senderEmail || !recipients.length) return { skipped: true, reason: 'notification email not configured' };
+function getSmtpConfig() {
+  const host = stringOrNull(process.env.SMTP_HOST) || 'smtp.goneo.de';
+  const port = Number(process.env.SMTP_PORT || 465);
+  const secureRaw = stringOrNull(process.env.SMTP_SECURE);
+  const secure = secureRaw == null ? port === 465 : !['false', '0', 'no'].includes(secureRaw.toLowerCase());
+  const user = stringOrNull(process.env.SMTP_USER);
+  const pass = stringOrNull(process.env.SMTP_PASS);
+  const from = stringOrNull(process.env.SMTP_FROM) || user;
 
-  const accessToken = await getAppAccessToken();
+  return { host, port, secure, user, pass, from };
+}
+
+async function getTransporter() {
+  if (!transporterPromise) {
+    transporterPromise = (async () => {
+      const config = getSmtpConfig();
+      if (!config.user || !config.pass || !config.from) {
+        throw new Error('SMTP is not configured. Set SMTP_USER, SMTP_PASS and optionally SMTP_FROM in backend/.env');
+      }
+
+      const transporter = nodemailer.createTransport({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: {
+          user: config.user,
+          pass: config.pass,
+        },
+      });
+
+      await transporter.verify();
+      return transporter;
+    })().catch((error) => {
+      transporterPromise = null;
+      throw error;
+    });
+  }
+  return transporterPromise;
+}
+
+export async function sendPersonalQuestionnaireNotification({ submissionId, summary, createdAt }) {
+  const recipients = await buildRecipients();
+  if (!recipients.length) return { skipped: true, reason: 'notification email not configured' };
+
+  const transporter = await getTransporter();
   const templates = await getNotificationTemplates();
   const context = buildTemplateContext({ submissionId, summary, createdAt });
   const subject = renderTemplate(templates.subject, context);
   const bodyText = renderTemplate(templates.body, context);
+  const { from } = getSmtpConfig();
 
-  const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(senderEmail)}/sendMail`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      message: {
-        subject,
-        body: {
-          contentType: 'Text',
-          content: bodyText,
-        },
-        toRecipients: recipients.map((email) => ({
-          emailAddress: { address: email },
-        })),
-      },
-      saveToSentItems: true,
-    }),
+  const info = await transporter.sendMail({
+    from,
+    to: recipients.join(', '),
+    subject,
+    text: bodyText,
   });
 
-  if (!res.ok) {
-    const message = await res.text().catch(() => '');
-    throw new Error(`Graph sendMail failed: ${res.status} ${message}`.trim());
-  }
-
-  return { skipped: false, recipients };
+  return {
+    skipped: false,
+    recipients,
+    messageId: info?.messageId || null,
+  };
 }
+
