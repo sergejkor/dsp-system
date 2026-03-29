@@ -1170,11 +1170,6 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     { transporterId: 'DBX9' },
   ]);
 
-  await runKenjoSectionUpdateWithFallbacks(warnings, 'work probation', updateEmployeeWork, kenjoEmployeeId, [
-    { probationUntil: kenjoDateTimeOrNull(work.probationUntil) },
-    { probationEnd: kenjoDateTimeOrNull(work.probationUntil) },
-  ]);
-
   await runKenjoSectionUpdateWithFallbacks(warnings, 'address', updateEmployeeAddresses, kenjoEmployeeId, [
     {
       street: stringOrNull(address.street || address.streetName, 255),
