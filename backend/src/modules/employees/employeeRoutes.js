@@ -3,8 +3,17 @@ import multer from 'multer';
 import employeeService from './employeeService.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const ALLOWED_DOC_TYPES = new Set(['Dokumente', 'Lohnabrechnung', 'Vertrag', 'Abmahnung', 'AMZL', 'Zertifikat']);
+
+function runSingleUpload(req, res, fieldName) {
+  return new Promise((resolve, reject) => {
+    upload.single(fieldName)(req, res, (error) => {
+      if (!error) return resolve();
+      return reject(error);
+    });
+  });
+}
 
 router.get('/health', (_req, res) => res.json({ ok: true, module: 'employees' }));
 
@@ -33,6 +42,38 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+router.get('/:id/contract-extensions', async (req, res) => {
+  try {
+    const rows = await employeeService.listEmployeeContractExtensions(req.params.id);
+    res.json(rows);
+  } catch (error) {
+    console.error('GET /api/employees/:id/contract-extensions error', error);
+    res.status(500).json({ error: 'Failed to load contract extensions' });
+  }
+});
+
+router.post('/:id/contract-extensions', async (req, res) => {
+  try {
+    const row = await employeeService.addEmployeeContractExtension(req.params.id, {
+      startDate: req.body?.startDate,
+      endDate: req.body?.endDate,
+    });
+    res.status(201).json(row);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_ref is required' ||
+      message === 'Valid start and end dates are required' ||
+      message === 'End date must be on or after start date' ||
+      message === 'Only two contract extensions can be added'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('POST /api/employees/:id/contract-extensions error', error);
+    res.status(500).json({ error: 'Failed to save contract extension' });
+  }
+});
+
 router.get('/:id/documents', async (req, res) => {
   try {
     const rows = await employeeService.listEmployeeDocuments(req.params.id);
@@ -43,8 +84,9 @@ router.get('/:id/documents', async (req, res) => {
   }
 });
 
-router.post('/:id/documents', upload.single('file'), async (req, res) => {
+router.post('/:id/documents', async (req, res) => {
   try {
+    await runSingleUpload(req, res, 'file');
     const employeeRef = String(req.params.id || '').trim();
     const documentType = String(req.body?.document_type || '').trim();
     if (!employeeRef) return res.status(400).json({ error: 'Employee id is required' });
@@ -61,6 +103,12 @@ router.post('/:id/documents', upload.single('file'), async (req, res) => {
     res.status(201).json(row);
   } catch (error) {
     console.error('POST /api/employees/:id/documents error', error);
+    if (error instanceof multer.MulterError) {
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'Document file is too large. Maximum upload size is 50 MB.' });
+      }
+      return res.status(400).json({ error: error.message || 'Upload failed' });
+    }
     res.status(500).json({ error: 'Failed to upload employee document' });
   }
 });
@@ -77,6 +125,34 @@ router.get('/:id/documents/:docId/download', async (req, res) => {
   } catch (error) {
     console.error('GET /api/employees/:id/documents/:docId/download error', error);
     res.status(500).json({ error: 'Failed to download employee document' });
+  }
+});
+
+router.delete('/:id/documents/:docId/import-source', async (req, res) => {
+  try {
+    const out = await employeeService.deleteImportedSourceDocuments(req.params.id, req.params.docId);
+    if (out?.notFound) return res.status(404).json({ error: 'Document not found' });
+    if (out?.noImportSource) {
+      return res.status(400).json({ error: 'This document is not linked to an import source yet' });
+    }
+    res.json({ ok: true, deleted: out.deleted || 0, import_source_key: out.importSourceKey || null, import_source_name: out.importSourceName || null });
+  } catch (error) {
+    console.error('DELETE /api/employees/:id/documents/:docId/import-source error', error);
+    res.status(500).json({ error: 'Failed to delete imported source documents' });
+  }
+});
+
+router.delete('/:id/documents', async (req, res) => {
+  try {
+    const docIds = Array.isArray(req.body?.docIds) ? req.body.docIds : [];
+    if (!docIds.length) {
+      return res.status(400).json({ error: 'docIds array is required' });
+    }
+    const deleted = await employeeService.deleteEmployeeDocumentsBulk(req.params.id, docIds);
+    res.json({ ok: true, deleted });
+  } catch (error) {
+    console.error('DELETE /api/employees/:id/documents error', error);
+    res.status(500).json({ error: 'Failed to delete employee documents' });
   }
 });
 

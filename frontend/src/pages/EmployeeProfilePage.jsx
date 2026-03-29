@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useSearchParams, Link } from 'react-router-dom';
 import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmployeeInKenjo } from '../services/kenjoApi';
 import {
   getEmployee,
+  getEmployeeContractExtensions,
   getEmployeeDocuments,
+  addEmployeeContractExtension,
   uploadEmployeeDocument,
   viewEmployeeDocument,
   downloadEmployeeDocument,
@@ -12,6 +14,7 @@ import {
 import { saveAdvances } from '../services/advancesApi';
 import { getEmployeeKpi, saveEmployeeKpiComment } from '../services/payrollApi';
 import { getPaveSessions } from '../services/paveApi';
+import { useAppSettings } from '../context/AppSettingsContext';
 
 /** KPI rating: <50 POOR, <70 FAIR, <85 GREAT, <93 FANTASTIC, >=93 FANTASTIC PLUS */
 function getKpiRatingLabel(kpi) {
@@ -38,6 +41,7 @@ const TERMINATION_REASONS = [
 const EMPLOYEE_DOC_TYPES = ['Dokumente', 'Lohnabrechnung', 'Vertrag', 'Abmahnung', 'AMZL', 'Zertifikat'];
 
 export default function EmployeeProfilePage() {
+  const { language } = useAppSettings();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const kenjoEmployeeId = location.state?.kenjoEmployeeId ?? searchParams.get('kenjo_employee_id');
@@ -78,6 +82,15 @@ export default function EmployeeProfilePage() {
   const [employeeDocError, setEmployeeDocError] = useState('');
   const [showEmployeeDocsList, setShowEmployeeDocsList] = useState(false);
   const [employeeDocsFilterType, setEmployeeDocsFilterType] = useState('');
+  const [contractExtensions, setContractExtensions] = useState([]);
+  const [contractExtensionsLoading, setContractExtensionsLoading] = useState(false);
+  const [contractExtensionError, setContractExtensionError] = useState('');
+  const [showContractExtensionForm, setShowContractExtensionForm] = useState(false);
+  const [contractExtensionDraft, setContractExtensionDraft] = useState({ startDate: '', endDate: '' });
+  const [contractExtensionSaving, setContractExtensionSaving] = useState(false);
+  const [contractExtensionModal, setContractExtensionModal] = useState(null);
+  const [contractFileUploading, setContractFileUploading] = useState(false);
+  const contractFileInputRef = useRef(null);
 
   useEffect(() => {
     if (!kenjoEmployeeId && !localEmployeeId) return;
@@ -158,6 +171,42 @@ export default function EmployeeProfilePage() {
   }, [kenjoEmployeeId]);
 
   const employeeDocRef = String(kenjoEmployeeId || localEmployee?.employee_id || localEmployeeId || '').trim();
+  const contractUi =
+    language === 'de'
+      ? {
+          extendButton: 'Vertrag verlaengern',
+          loading: 'Vertragsverlaengerungen werden geladen...',
+          reminderTitle: 'Hinweis',
+          reminderMessage: 'Bitte nicht vergessen, dass der naechste Vertrag unbefristet sein wird.',
+          missingEmployeeRef: 'Mitarbeiterreferenz fehlt.',
+          chooseDates: 'Bitte waehlen Sie beide Daten aus.',
+          extensionLabel: (n) => `Verlaengerung ${n}`,
+          from: 'Von',
+          to: 'Bis',
+          cancel: 'Abbrechen',
+          save: 'Speichern',
+          saving: 'Speichert...',
+          uploadNewContract: 'Neuen Vertrag hochladen',
+          uploadingContract: 'Laedt hoch...',
+          uploadSuccess: 'Der neue Vertrag wurde unter Dokumenttyp "Vertrag" gespeichert.',
+        }
+      : {
+          extendButton: 'Extend contract',
+          loading: 'Loading contract extensions...',
+          reminderTitle: 'Reminder',
+          reminderMessage: 'Please do not forget that the next contract will be unlimited.',
+          missingEmployeeRef: 'Employee reference is missing.',
+          chooseDates: 'Please choose both dates.',
+          extensionLabel: (n) => `Extension ${n}`,
+          from: 'From',
+          to: 'To',
+          cancel: 'Cancel',
+          save: 'Save',
+          saving: 'Saving...',
+          uploadNewContract: 'Upload new contract',
+          uploadingContract: 'Uploading...',
+          uploadSuccess: 'The new contract was saved under document type "Vertrag".',
+        };
 
   useEffect(() => {
     if (!employeeDocRef) return;
@@ -167,6 +216,16 @@ export default function EmployeeProfilePage() {
       .then((rows) => setEmployeeDocs(Array.isArray(rows) ? rows : []))
       .catch((e) => setEmployeeDocError(String(e?.message || e)))
       .finally(() => setEmployeeDocsLoading(false));
+  }, [employeeDocRef]);
+
+  useEffect(() => {
+    if (!employeeDocRef) return;
+    setContractExtensionsLoading(true);
+    setContractExtensionError('');
+    getEmployeeContractExtensions(employeeDocRef)
+      .then((rows) => setContractExtensions(Array.isArray(rows) ? rows : []))
+      .catch((e) => setContractExtensionError(String(e?.message || e)))
+      .finally(() => setContractExtensionsLoading(false));
   }, [employeeDocRef]);
 
   const filteredEmployeeDocs =
@@ -389,6 +448,83 @@ export default function EmployeeProfilePage() {
     }
   };
 
+  const closeContractExtensionModal = () => {
+    setContractExtensionModal(null);
+  };
+
+  const openContractExtensionForm = () => {
+    if (contractExtensions.length >= 2) return;
+    setContractExtensionError('');
+    setShowContractExtensionForm(true);
+    setContractExtensionDraft({ startDate: '', endDate: '' });
+    if (contractExtensions.length === 1) {
+      setContractExtensionModal({
+        title: contractUi.reminderTitle,
+        message: contractUi.reminderMessage,
+      });
+    }
+  };
+
+  const saveContractExtension = async () => {
+    if (!employeeDocRef) {
+      setContractExtensionError(contractUi.missingEmployeeRef);
+      return;
+    }
+    if (!contractExtensionDraft.startDate || !contractExtensionDraft.endDate) {
+      setContractExtensionError(contractUi.chooseDates);
+      return;
+    }
+    setContractExtensionSaving(true);
+    setContractExtensionError('');
+    try {
+      const created = await addEmployeeContractExtension(employeeDocRef, contractExtensionDraft);
+      setContractExtensions((prev) =>
+        [...prev, created].sort((a, b) => Number(a?.extension_index || 0) - Number(b?.extension_index || 0))
+      );
+      setShowContractExtensionForm(false);
+      setContractExtensionDraft({ startDate: '', endDate: '' });
+    } catch (e) {
+      setContractExtensionError(String(e?.message || e));
+    } finally {
+      setContractExtensionSaving(false);
+    }
+  };
+
+  const handleUploadNewContractClick = () => {
+    if (!employeeDocRef) {
+      setContractExtensionError(contractUi.missingEmployeeRef);
+      return;
+    }
+    contractFileInputRef.current?.click();
+  };
+
+  const handleContractFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!employeeDocRef) {
+      setContractExtensionError(contractUi.missingEmployeeRef);
+      return;
+    }
+    setContractFileUploading(true);
+    setContractExtensionError('');
+    setEmployeeDocError('');
+    try {
+      await uploadEmployeeDocument(employeeDocRef, file, 'Vertrag');
+      const refreshed = await getEmployeeDocuments(employeeDocRef);
+      setEmployeeDocs(Array.isArray(refreshed) ? refreshed : []);
+      setShowEmployeeDocsList(true);
+      setContractExtensionModal({
+        title: contractUi.save,
+        message: contractUi.uploadSuccess,
+      });
+    } catch (e) {
+      setContractExtensionError(String(e?.message || e));
+    } finally {
+      setContractFileUploading(false);
+    }
+  };
+
   const monthOptions = (() => {
     const list = [];
     const now = new Date();
@@ -509,6 +645,20 @@ export default function EmployeeProfilePage() {
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
               <button type="button" className="btn-secondary" onClick={closeDeactivateConfirm}>No</button>
               <button type="button" className="btn-primary" onClick={onDeactivateConfirmYes}>Yes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {contractExtensionModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 460, width: 'calc(100% - 2rem)', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 0.75rem' }}>{contractExtensionModal.title}</h3>
+            <p style={{ margin: '0 0 1rem', whiteSpace: 'pre-wrap' }}>{contractExtensionModal.message}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-primary" onClick={closeContractExtensionModal}>
+                OK
+              </button>
             </div>
           </div>
         </div>
@@ -1026,7 +1176,110 @@ export default function EmployeeProfilePage() {
           {renderText('Probation until', formatDate(work?.probationUntil), (v) =>
             onNestedChange('work', 'probationUntil', v),
           )}
-          {renderText('Contract end', formatDate(work?.contractEnd), (v) => onNestedChange('work', 'contractEnd', v))}
+          <div style={{ marginBottom: '1rem' }}>
+            {renderText('Contract end', formatDate(work?.contractEnd), (v) => onNestedChange('work', 'contractEnd', v))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '-0.35rem', marginBottom: contractExtensions.length || showContractExtensionForm || contractExtensionError ? '0.5rem' : 0 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={openContractExtensionForm}
+                disabled={contractExtensions.length >= 2 || contractExtensionSaving}
+              >
+                {contractUi.extendButton}
+              </button>
+              <span style={{ color: '#666', fontSize: '0.9rem' }}>
+                {contractExtensions.length}/2
+              </span>
+            </div>
+            {contractExtensionsLoading ? (
+              <p style={{ margin: '0.25rem 0 0', color: '#666' }}>{contractUi.loading}</p>
+            ) : null}
+            {contractExtensionError ? (
+              <p className="error-text" style={{ margin: '0.25rem 0 0' }}>{contractExtensionError}</p>
+            ) : null}
+            {contractExtensions.map((row) => (
+              <div
+                key={row.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'auto 1fr',
+                  gap: '0.35rem 0.75rem',
+                  padding: '0.65rem 0.8rem',
+                  border: '1px solid #d8dde6',
+                  borderRadius: 10,
+                  background: '#f8fafc',
+                  marginTop: '0.5rem',
+                }}
+              >
+                <strong>{contractUi.extensionLabel(row.extension_index)}</strong>
+                <span>{formatDate(row.start_date)} - {formatDate(row.end_date)}</span>
+              </div>
+            ))}
+            {showContractExtensionForm && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr auto',
+                  gap: '0.5rem',
+                  alignItems: 'end',
+                  padding: '0.75rem',
+                  border: '1px solid #d8dde6',
+                  borderRadius: 10,
+                  background: '#f8fafc',
+                  marginTop: '0.5rem',
+                }}
+              >
+                <input
+                  ref={contractFileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                  style={{ display: 'none' }}
+                  onChange={handleContractFileChange}
+                />
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <span>{contractUi.from}</span>
+                  <input
+                    type="date"
+                    value={contractExtensionDraft.startDate}
+                    onChange={(e) => setContractExtensionDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <span>{contractUi.to}</span>
+                  <input
+                    type="date"
+                    value={contractExtensionDraft.endDate}
+                    onChange={(e) => setContractExtensionDraft((prev) => ({ ...prev, endDate: e.target.value }))}
+                  />
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setShowContractExtensionForm(false);
+                      setContractExtensionDraft({ startDate: '', endDate: '' });
+                      setContractExtensionError('');
+                    }}
+                    disabled={contractExtensionSaving}
+                  >
+                    {contractUi.cancel}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleUploadNewContractClick}
+                    disabled={contractFileUploading}
+                  >
+                    {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadNewContract}
+                  </button>
+                  <button type="button" className="btn-primary" onClick={saveContractExtension} disabled={contractExtensionSaving}>
+                    {contractExtensionSaving ? contractUi.saving : contractUi.save}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           {renderText(
             'Manager',
             work?.managerName || employee?.manager?.displayName,

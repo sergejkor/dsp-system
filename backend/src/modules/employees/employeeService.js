@@ -1,6 +1,7 @@
 import { query } from '../../db.js';
 
 let docsTableReady = false;
+let contractExtensionsTableReady = false;
 
 async function ensureEmployeeDocumentsTable() {
   if (docsTableReady) return;
@@ -12,11 +13,36 @@ async function ensureEmployeeDocumentsTable() {
       file_name TEXT NOT NULL,
       mime_type VARCHAR(255),
       file_content BYTEA NOT NULL,
+      import_group_id VARCHAR(128),
+      import_source_key VARCHAR(128),
+      import_source_name TEXT,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     )
   `);
+  await query(`ALTER TABLE employee_documents ADD COLUMN IF NOT EXISTS import_group_id VARCHAR(128)`);
+  await query(`ALTER TABLE employee_documents ADD COLUMN IF NOT EXISTS import_source_key VARCHAR(128)`);
+  await query(`ALTER TABLE employee_documents ADD COLUMN IF NOT EXISTS import_source_name TEXT`);
   await query(`CREATE INDEX IF NOT EXISTS idx_employee_documents_ref ON employee_documents (employee_ref, created_at DESC)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_employee_documents_source_key ON employee_documents (import_source_key)`);
   docsTableReady = true;
+}
+
+async function ensureEmployeeContractExtensionsTable() {
+  if (contractExtensionsTableReady) return;
+  await query(`
+    CREATE TABLE IF NOT EXISTS employee_contract_extensions (
+      id SERIAL PRIMARY KEY,
+      employee_ref VARCHAR(128) NOT NULL,
+      extension_index INTEGER NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      UNIQUE (employee_ref, extension_index)
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_employee_contract_extensions_ref ON employee_contract_extensions (employee_ref, extension_index ASC)`);
+  contractExtensionsTableReady = true;
 }
 
 async function listEmployees({ search, onlyActive } = {}) {
@@ -126,7 +152,7 @@ async function listEmployeeDocuments(employeeRef) {
   const refs = await resolveEmployeeRefs(employeeRef);
   if (!refs.length) return [];
   const res = await query(
-    `SELECT id, employee_ref, document_type, file_name, mime_type, created_at
+    `SELECT id, employee_ref, document_type, file_name, mime_type, import_group_id, import_source_key, import_source_name, created_at
      FROM employee_documents
      WHERE employee_ref = ANY($1::text[])
      ORDER BY created_at DESC, id DESC`,
@@ -135,15 +161,80 @@ async function listEmployeeDocuments(employeeRef) {
   return res.rows || [];
 }
 
-async function addEmployeeDocument(employeeRef, { documentType, fileName, mimeType, fileContent }) {
+function normalizeDateOnly(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const iso = raw.includes('T') ? raw.slice(0, 10) : raw;
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
+}
+
+async function listEmployeeContractExtensions(employeeRef) {
+  await ensureEmployeeContractExtensionsTable();
+  const refs = await resolveEmployeeRefs(employeeRef);
+  if (!refs.length) return [];
+  const res = await query(
+    `SELECT id, employee_ref, extension_index, start_date, end_date, created_at, updated_at
+     FROM employee_contract_extensions
+     WHERE employee_ref = ANY($1::text[])
+     ORDER BY extension_index ASC, created_at ASC, id ASC`,
+    [refs]
+  );
+  return res.rows || [];
+}
+
+async function addEmployeeContractExtension(employeeRef, { startDate, endDate }) {
+  await ensureEmployeeContractExtensionsTable();
+  const ref = String(employeeRef || '').trim();
+  if (!ref) throw new Error('employee_ref is required');
+  const normalizedStartDate = normalizeDateOnly(startDate);
+  const normalizedEndDate = normalizeDateOnly(endDate);
+  if (!normalizedStartDate || !normalizedEndDate) {
+    throw new Error('Valid start and end dates are required');
+  }
+  if (normalizedStartDate > normalizedEndDate) {
+    throw new Error('End date must be on or after start date');
+  }
+  const refs = await resolveEmployeeRefs(ref);
+  const allRefs = [...new Set([ref, ...refs])];
+  const existing = await query(
+    `SELECT id, extension_index
+     FROM employee_contract_extensions
+     WHERE employee_ref = ANY($1::text[])
+     ORDER BY extension_index ASC, id ASC`,
+    [allRefs]
+  );
+  const usedIndexes = new Set((existing.rows || []).map((row) => Number(row.extension_index)).filter(Number.isFinite));
+  const nextIndex = usedIndexes.has(1) ? (usedIndexes.has(2) ? null : 2) : 1;
+  if (!nextIndex) {
+    throw new Error('Only two contract extensions can be added');
+  }
+  const res = await query(
+    `INSERT INTO employee_contract_extensions (employee_ref, extension_index, start_date, end_date, updated_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     RETURNING id, employee_ref, extension_index, start_date, end_date, created_at, updated_at`,
+    [ref, nextIndex, normalizedStartDate, normalizedEndDate]
+  );
+  return res.rows[0] || null;
+}
+
+async function addEmployeeDocument(employeeRef, { documentType, fileName, mimeType, fileContent, importGroupId, importSourceKey, importSourceName }) {
   await ensureEmployeeDocumentsTable();
   const ref = String(employeeRef || '').trim();
   if (!ref) throw new Error('employee_ref is required');
   const res = await query(
-    `INSERT INTO employee_documents (employee_ref, document_type, file_name, mime_type, file_content)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, employee_ref, document_type, file_name, mime_type, created_at`,
-    [ref, String(documentType || '').trim(), String(fileName || 'document.bin').trim(), mimeType || null, fileContent]
+    `INSERT INTO employee_documents (employee_ref, document_type, file_name, mime_type, file_content, import_group_id, import_source_key, import_source_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, employee_ref, document_type, file_name, mime_type, import_group_id, import_source_key, import_source_name, created_at`,
+    [
+      ref,
+      String(documentType || '').trim(),
+      String(fileName || 'document.bin').trim(),
+      mimeType || null,
+      fileContent,
+      String(importGroupId || '').trim() || null,
+      String(importSourceKey || '').trim() || null,
+      String(importSourceName || '').trim() || null,
+    ]
   );
   return res.rows[0];
 }
@@ -154,7 +245,7 @@ async function getEmployeeDocument(employeeRef, docId) {
   const id = Number(docId);
   if (!refs.length || !Number.isFinite(id)) return null;
   const res = await query(
-    `SELECT id, employee_ref, document_type, file_name, mime_type, file_content, created_at
+    `SELECT id, employee_ref, document_type, file_name, mime_type, file_content, import_group_id, import_source_key, import_source_name, created_at
      FROM employee_documents
      WHERE employee_ref = ANY($1::text[]) AND id = $2
      LIMIT 1`,
@@ -176,13 +267,67 @@ async function deleteEmployeeDocument(employeeRef, docId) {
   return (res.rowCount || 0) > 0;
 }
 
+async function deleteEmployeeDocumentsBulk(employeeRef, docIds) {
+  await ensureEmployeeDocumentsTable();
+  const refs = await resolveEmployeeRefs(employeeRef);
+  const ids = Array.isArray(docIds)
+    ? [...new Set(docIds.map((value) => Number(value)).filter((value) => Number.isFinite(value)))]
+    : [];
+  if (!refs.length || !ids.length) return 0;
+  const res = await query(
+    `DELETE FROM employee_documents
+     WHERE employee_ref = ANY($1::text[]) AND id = ANY($2::int[])`,
+    [refs, ids]
+  );
+  return Number(res.rowCount || 0);
+}
+
+async function deleteImportedSourceDocuments(employeeRef, docId) {
+  await ensureEmployeeDocumentsTable();
+  const refs = await resolveEmployeeRefs(employeeRef);
+  const id = Number(docId);
+  if (!refs.length || !Number.isFinite(id)) {
+    return { deleted: 0, importSourceKey: null, importSourceName: null };
+  }
+
+  const doc = await getEmployeeDocument(employeeRef, id);
+  if (!doc) {
+    return { deleted: 0, importSourceKey: null, importSourceName: null, notFound: true };
+  }
+
+  const importSourceKey = String(doc.import_source_key || '').trim();
+  if (!importSourceKey) {
+    return {
+      deleted: 0,
+      importSourceKey: null,
+      importSourceName: String(doc.import_source_name || '').trim() || null,
+      noImportSource: true,
+    };
+  }
+
+  const res = await query(
+    `DELETE FROM employee_documents
+     WHERE import_source_key = $1`,
+    [importSourceKey]
+  );
+  return {
+    deleted: Number(res.rowCount || 0),
+    importSourceKey,
+    importSourceName: String(doc.import_source_name || '').trim() || null,
+  };
+}
+
 const employeeService = {
   listEmployees,
   getEmployeeById,
   listEmployeeDocuments,
+  listEmployeeContractExtensions,
+  addEmployeeContractExtension,
   addEmployeeDocument,
   getEmployeeDocument,
   deleteEmployeeDocument,
+  deleteEmployeeDocumentsBulk,
+  deleteImportedSourceDocuments,
 };
 
 export default employeeService;

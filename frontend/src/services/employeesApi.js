@@ -31,6 +31,32 @@ export async function getEmployee(employeeId) {
   return response.json();
 }
 
+export async function getEmployeeContractExtensions(employeeRef) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contract-extensions`,
+    authOpts()
+  );
+  if (!response.ok) throw new Error('Employee contract extensions load failed');
+  return response.json();
+}
+
+export async function addEmployeeContractExtension(employeeRef, payload) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contract-extensions`,
+    authOpts({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startDate: payload?.startDate || '',
+        endDate: payload?.endDate || '',
+      }),
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee contract extension save failed');
+  return out;
+}
+
 export async function getEmployeeDocuments(employeeRef) {
   const response = await fetch(`${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents`, authOpts());
   if (!response.ok) throw new Error('Employee documents load failed');
@@ -41,10 +67,15 @@ export async function uploadEmployeeDocument(employeeRef, file, documentType) {
   const form = new FormData();
   form.append('file', file);
   form.append('document_type', documentType);
-  const response = await fetch(
-    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents`,
-    authOpts({ method: 'POST', body: form, headers: getAuthHeaders() })
-  );
+  let response;
+  try {
+    response = await fetch(
+      `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents`,
+      authOpts({ method: 'POST', body: form })
+    );
+  } catch (error) {
+    throw new Error('Document upload request failed');
+  }
   const out = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(out.error || 'Employee document upload failed');
   return out;
@@ -87,5 +118,29 @@ export async function deleteEmployeeDocument(employeeRef, docId) {
   );
   const out = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(out.error || 'Employee document delete failed');
+  return out;
+}
+
+export async function deleteEmployeeDocumentsBulk(employeeRef, docIds) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents`,
+    authOpts({
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docIds: Array.isArray(docIds) ? docIds : [] }),
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee documents bulk delete failed');
+  return out;
+}
+
+export async function deleteImportedSourceDocuments(employeeRef, docId) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents/${encodeURIComponent(docId)}/import-source`,
+    authOpts({ method: 'DELETE' })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Imported source delete failed');
   return out;
 }
