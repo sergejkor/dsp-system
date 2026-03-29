@@ -902,6 +902,45 @@ async function resolveKenjoEmployeeIdByEmail(email) {
   return null;
 }
 
+async function resolveManagerKenjoIdByName(managerName) {
+  const normalized = stringOrNull(managerName, 255);
+  if (!normalized) return null;
+  const trimmed = normalized.trim();
+  const compact = trimmed.toLowerCase().replace(/\s+/g, ' ');
+
+  const localRes = await query(
+    `SELECT kenjo_user_id, display_name, first_name, last_name
+     FROM employees
+     WHERE is_active = true
+       AND kenjo_user_id IS NOT NULL
+       AND (
+         LOWER(TRIM(COALESCE(display_name, ''))) = $1
+         OR LOWER(TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))) = $1
+       )
+     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+     LIMIT 1`,
+    [compact]
+  ).catch(() => ({ rows: [] }));
+
+  const localId = stringOrNull(localRes.rows?.[0]?.kenjo_user_id, 255);
+  if (localId) return localId;
+
+  const kenjoRes = await query(
+    `SELECT kenjo_user_id, display_name, first_name, last_name
+     FROM kenjo_employees
+     WHERE is_active = true
+       AND (
+         LOWER(TRIM(COALESCE(display_name, ''))) = $1
+         OR LOWER(TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))) = $1
+       )
+     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+     LIMIT 1`,
+    [compact]
+  ).catch(() => ({ rows: [] }));
+
+  return stringOrNull(kenjoRes.rows?.[0]?.kenjo_user_id, 255);
+}
+
 async function runKenjoSectionUpdateWithFallbacks(warnings, label, fn, employeeId, bodies) {
   const attempts = Array.isArray(bodies)
     ? bodies
@@ -961,7 +1000,7 @@ async function upsertLocalEmployeeFromSubmission(submission, kenjoEmployeeId) {
       stringOrNull(home.phone || home.mobilePhone || home.personalMobile || personal.mobile, 255),
       dateOnlyOrNull(work.startDate),
       dateOnlyOrNull(work.contractEnd),
-      stringOrNull(work.transportationId, 255),
+      stringOrNull(work.transportationId, 255) || 'DBX9',
       stringOrNull(kenjoEmployeeId, 255),
       false,
     ]
@@ -986,7 +1025,7 @@ async function upsertLocalEmployeeFromSubmission(submission, kenjoEmployeeId) {
     [
       employeeRef,
       stringOrNull(work.employeeNumber || payload.externalId, 255),
-      stringOrNull(work.transportationId, 255),
+      stringOrNull(work.transportationId, 255) || 'DBX9',
       stringOrNull(payload.firstName || personal.firstName, 255),
       stringOrNull(payload.lastName || personal.lastName, 255),
       stringOrNull(displayName, 255),
@@ -1093,6 +1132,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   const normalizedNationality = normalizeKenjoCountryCode(personal.nationality);
   const normalizedCountry = normalizeKenjoCountryCode(address.country);
   const normalizedMaritalStatus = normalizeKenjoMaritalStatus(home.maritalStatus);
+  const managerKenjoId = await resolveManagerKenjoIdByName(work.managerName);
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'personal', updateEmployeePersonals, kenjoEmployeeId, [
     {
@@ -1115,6 +1155,24 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     {
       startDate: kenjoDateTimeOrNull(work.startDate),
       contractEnd: kenjoDateTimeOrNull(work.contractEnd),
+      probationEnd: kenjoDateTimeOrNull(work.probationUntil),
+      jobTitle: stringOrNull(work.jobTitle, 255),
+      weeklyHours: numberOrNull(work.weeklyHours),
+      reportsToId: managerKenjoId,
+      transportationId: 'DBX9',
+    },
+    {
+      startDate: kenjoDateTimeOrNull(work.startDate),
+      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
+      probationEnd: kenjoDateTimeOrNull(work.probationUntil),
+      jobTitle: stringOrNull(work.jobTitle, 255),
+      weeklyHours: numberOrNull(work.weeklyHours),
+      reportsToId: managerKenjoId,
+    },
+    {
+      startDate: kenjoDateTimeOrNull(work.startDate),
+      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
+      probationEnd: kenjoDateTimeOrNull(work.probationUntil),
       jobTitle: stringOrNull(work.jobTitle, 255),
       weeklyHours: numberOrNull(work.weeklyHours),
     },
@@ -1140,6 +1198,10 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     {
       personalMobile: stringOrNull(home.personalMobile || home.mobilePhone, 255),
       maritalStatus: normalizedMaritalStatus,
+    },
+    {
+      personalMobile: stringOrNull(home.personalMobile || home.mobilePhone, 255),
+      maritalStatus: stringOrNull(home.maritalStatus, 64),
     },
     {
       personalMobile: stringOrNull(home.personalMobile || home.mobilePhone, 255),
