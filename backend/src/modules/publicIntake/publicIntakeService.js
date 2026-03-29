@@ -1085,6 +1085,9 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   }
 
   const companyId = await resolveKenjoCompanyId();
+  const managerKenjoId =
+    stringOrNull(work.managerKenjoId, 255) ||
+    await resolveManagerKenjoIdByName(work.managerName);
   const createBody = {
     account: compactObject({
       email: stringOrNull(email, 255),
@@ -1099,6 +1102,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
       companyId,
       weeklyHours: numberOrNull(work.weeklyHours) ?? 40,
       startDate: kenjoDateTimeOrNull(work.startDate),
+      reportsToId: managerKenjoId,
     }),
   };
 
@@ -1134,9 +1138,6 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   const normalizedNationality = normalizeKenjoCountryCode(personal.nationality);
   const normalizedCountry = normalizeKenjoCountryCode(address.country);
   const normalizedMaritalStatus = normalizeKenjoMaritalStatus(home.maritalStatus);
-  const managerKenjoId =
-    stringOrNull(work.managerKenjoId, 255) ||
-    await resolveManagerKenjoIdByName(work.managerName);
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'personal', updateEmployeePersonals, kenjoEmployeeId, [
     {
