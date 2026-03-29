@@ -3,6 +3,7 @@ import employeeService from '../employees/employeeService.js';
 import {
   createKenjoEmployee,
   getKenjoCompanies,
+  getKenjoOffices,
   getKenjoUserAccounts,
   updateEmployeeAccounts,
   updateEmployeeAddresses,
@@ -15,6 +16,7 @@ import { sendPersonalQuestionnaireNotification } from './publicIntakeNotificatio
 
 let tablesReady = false;
 let kenjoCompanyIdCache = null;
+let kenjoDbx9OfficeIdCache = null;
 
 function stringOrNull(value, maxLen = 5000) {
   if (value == null) return null;
@@ -145,6 +147,64 @@ function normalizeKenjoCountryCode(value) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
   return getKenjoRegionNameToCodeMap().get(cleaned) || null;
+}
+
+const KENJO_NATIONALITY_BY_CODE = {
+  AF: 'Afghan', AL: 'Albanian', DZ: 'Algerian', US: 'American', AD: 'Andorran', AO: 'Angolan', AR: 'Argentine',
+  AM: 'Armenian', AU: 'Australian', AT: 'Austrian', AZ: 'Azerbaijani', BS: 'Bahamian', BH: 'Bahraini',
+  BD: 'Bangladeshi', BB: 'Barbadian', BY: 'Belarusian', BE: 'Belgian', BZ: 'Belizean', BJ: 'Beninese',
+  BT: 'Bhutanese', BO: 'Bolivian', BA: 'Bosnian', BW: 'Botswanan', BR: 'Brazilian', GB: 'British',
+  BN: 'Bruneian', BG: 'Bulgarian', BF: 'Burkinabe', MM: 'Burmese', BI: 'Burundian', KH: 'Cambodian',
+  CM: 'Cameroonian', CA: 'Canadian', CV: 'Cape Verdean', CF: 'Central African', TD: 'Chadian', CL: 'Chilean',
+  CN: 'Chinese', CO: 'Colombian', KM: 'Comorian', CG: 'Congolese', CR: 'Costa Rican', HR: 'Croatian',
+  CU: 'Cuban', CY: 'Cypriot', CZ: 'Czech', DK: 'Danish', DJ: 'Djiboutian', DO: 'Dominican', NL: 'Dutch',
+  TL: 'East Timorese', EC: 'Ecuadorian', EG: 'Egyptian', AE: 'Emirati', GQ: 'Equatorial Guinean',
+  ER: 'Eritrean', EE: 'Estonian', ET: 'Ethiopian', FJ: 'Fijian', PH: 'Filipino', FI: 'Finnish',
+  FR: 'French', GA: 'Gabonese', GM: 'Gambian', GE: 'Georgian', DE: 'German', GH: 'Ghanaian', GR: 'Greek',
+  GD: 'Grenadian', GT: 'Guatemalan', GN: 'Guinean', GY: 'Guyanese', HT: 'Haitian', HN: 'Honduran',
+  HU: 'Hungarian', IS: 'Icelandic', IN: 'Indian', ID: 'Indonesian', IR: 'Iranian', IQ: 'Iraqi', IE: 'Irish',
+  IL: 'Israeli', IT: 'Italian', CI: 'Ivorian', JM: 'Jamaican', JP: 'Japanese', JO: 'Jordanian', KZ: 'Kazakh',
+  KE: 'Kenyan', KW: 'Kuwaiti', KG: 'Kyrgyz', LA: 'Lao', LV: 'Latvian', LB: 'Lebanese', LR: 'Liberian',
+  LY: 'Libyan', LI: 'Liechtensteiner', LT: 'Lithuanian', LU: 'Luxembourgish', MG: 'Malagasy', MW: 'Malawian',
+  MY: 'Malaysian', MV: 'Maldivian', ML: 'Malian', MT: 'Maltese', MR: 'Mauritanian', MU: 'Mauritian',
+  MX: 'Mexican', MD: 'Moldovan', MC: 'Monegasque', MN: 'Mongolian', ME: 'Montenegrin', MA: 'Moroccan',
+  MZ: 'Mozambican', NA: 'Namibian', NP: 'Nepalese', NZ: 'New Zealander', NI: 'Nicaraguan', NE: 'Nigerien',
+  NG: 'Nigerian', KP: 'North Korean', MK: 'North Macedonian', NO: 'Norwegian', OM: 'Omani', PK: 'Pakistani',
+  PS: 'Palestinian', PA: 'Panamanian', PG: 'Papua New Guinean', PY: 'Paraguayan', PE: 'Peruvian',
+  PL: 'Polish', PT: 'Portuguese', QA: 'Qatari', RO: 'Romanian', RU: 'Russian', RW: 'Rwandan',
+  LC: 'Saint Lucian', SV: 'Salvadoran', WS: 'Samoan', SA: 'Saudi', SN: 'Senegalese', RS: 'Serbian',
+  SC: 'Seychellois', SL: 'Sierra Leonean', SG: 'Singaporean', SK: 'Slovak', SI: 'Slovenian', SO: 'Somali',
+  ZA: 'South African', KR: 'South Korean', ES: 'Spanish', LK: 'Sri Lankan', SD: 'Sudanese', SR: 'Surinamese',
+  SE: 'Swedish', CH: 'Swiss', SY: 'Syrian', TW: 'Taiwanese', TJ: 'Tajik', TZ: 'Tanzanian', TH: 'Thai',
+  TG: 'Togolese', TO: 'Tongan', TT: 'Trinidadian', TN: 'Tunisian', TR: 'Turkish', TM: 'Turkmen',
+  UG: 'Ugandan', UA: 'Ukrainian', UY: 'Uruguayan', UZ: 'Uzbek', VE: 'Venezuelan', VN: 'Vietnamese',
+  YE: 'Yemeni', ZM: 'Zambian', ZW: 'Zimbabwean',
+};
+
+function normalizeKenjoGenderForTenant(value) {
+  const normalized = stringOrNull(value, 64);
+  if (!normalized) return null;
+  const key = normalized
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (['female', 'woman', 'weiblich'].includes(key)) return 'Female';
+  if (['male', 'man'].includes(key) || key.includes('nnlich')) return 'Male';
+  if (['nicht binar', 'nichtbinary', 'non-binary', 'non binary', 'nonbinary'].includes(key)) return 'Non-Binary';
+  return null;
+}
+
+function normalizeKenjoNationality(value) {
+  const normalized = stringOrNull(value, 128);
+  if (!normalized) return null;
+  const cleaned = normalized
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (cleaned === 'schottland' || cleaned === 'scotland') return 'Scottish';
+  if (cleaned === 'wales') return 'Welsh';
+  const code = getKenjoRegionNameToCodeMap().get(cleaned);
+  return (code && KENJO_NATIONALITY_BY_CODE[code]) || normalized;
 }
 
 function numberOrNull(value) {
@@ -846,6 +906,18 @@ async function resolveKenjoCompanyId() {
   return kenjoCompanyIdCache;
 }
 
+async function resolveKenjoDbx9OfficeId() {
+  if (kenjoDbx9OfficeIdCache) return kenjoDbx9OfficeIdCache;
+  const offices = await getKenjoOffices().catch(() => []);
+  const match = (Array.isArray(offices) ? offices : []).find((office) => {
+    const name = String(office?.name || '').trim().toLowerCase();
+    const code = String(office?.code || '').trim().toLowerCase();
+    return name.includes('dbx9') || code === 'dbx9';
+  });
+  kenjoDbx9OfficeIdCache = stringOrNull(match?._id || match?.id, 255);
+  return kenjoDbx9OfficeIdCache;
+}
+
 function extractKenjoEmployeeId(response) {
   const candidates = [
     response?._id,
@@ -1111,6 +1183,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   }
 
   const companyId = await resolveKenjoCompanyId();
+  const deliveryStationOfficeId = await resolveKenjoDbx9OfficeId();
   const managerKenjoId =
     stringOrNull(work.managerKenjoId, 255) ||
     await resolveManagerKenjoIdByName(work.managerName);
@@ -1126,6 +1199,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     }),
     work: compactObject({
       companyId,
+      officeId: deliveryStationOfficeId,
       weeklyHours: numberOrNull(work.weeklyHours) ?? 40,
       startDate: kenjoDateTimeOrNull(work.startDate),
       reportsToId: managerKenjoId,
@@ -1160,8 +1234,8 @@ export async function saveAndSendPersonalQuestionnaire(id) {
 
   const warnings = [];
 
-  const normalizedGender = normalizeKenjoGender(personal.gender);
-  const normalizedNationality = normalizeKenjoCountryCode(personal.nationality);
+  const normalizedGender = normalizeKenjoGenderForTenant(personal.gender);
+  const normalizedNationality = normalizeKenjoNationality(personal.nationality);
   const normalizedCountry = normalizeKenjoCountryCode(address.country);
   const normalizedMaritalStatus = normalizeKenjoMaritalStatus(home.maritalStatus);
 
@@ -1193,6 +1267,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
       startDate: kenjoDateTimeOrNull(work.startDate),
       contractEnd: kenjoDateTimeOrNull(work.contractEnd),
       jobTitle: stringOrNull(work.jobTitle, 255),
+      employeeNumber: stringOrNull(work.employeeNumber || payload.externalId, 255),
       weeklyHours: numberOrNull(work.weeklyHours),
     },
   ]);
@@ -1203,8 +1278,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   ]);
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'work delivery station', updateEmployeeWork, kenjoEmployeeId, [
-    { transportationId: 'DBX9' },
-    { transporterId: 'DBX9' },
+    { officeId: deliveryStationOfficeId },
   ]);
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'address', updateEmployeeAddresses, kenjoEmployeeId, [

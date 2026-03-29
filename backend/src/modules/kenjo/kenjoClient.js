@@ -222,6 +222,11 @@ export async function getKenjoCompanies() {
   return normalizeArrayPayload(data);
 }
 
+export async function getKenjoOffices() {
+  const data = await kenjoGet('/offices');
+  return normalizeArrayPayload(data);
+}
+
 /**
  * Get time-off requests from Kenjo for a date range (max 92 days).
  * @param {string} from - YYYY-MM-DD
@@ -662,6 +667,7 @@ const kenjoClient = {
   kenjoPut,
   getKenjoUserAccounts,
   getKenjoCompanies,
+  getKenjoOffices,
   getKenjoEmployeeByIdReadable,
   updateEmployeeAccounts,
   getKenjoAttendances,
