@@ -1262,13 +1262,28 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     },
   ]);
 
-  await runKenjoSectionUpdateWithFallbacks(warnings, 'work', updateEmployeeWork, kenjoEmployeeId, [
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work dates', updateEmployeeWork, kenjoEmployeeId, [
     {
       startDate: kenjoDateTimeOrNull(work.startDate),
       contractEnd: kenjoDateTimeOrNull(work.contractEnd),
+    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work title', updateEmployeeWork, kenjoEmployeeId, [
+    {
       jobTitle: stringOrNull(work.jobTitle, 255),
-      employeeNumber: stringOrNull(work.employeeNumber || payload.externalId, 255),
+    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work weekly hours', updateEmployeeWork, kenjoEmployeeId, [
+    {
       weeklyHours: numberOrNull(work.weeklyHours),
+    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work employee number', updateEmployeeWork, kenjoEmployeeId, [
+    {
+      employeeNumber: stringOrNull(work.employeeNumber || payload.externalId, 255),
     },
   ]);
 
