@@ -153,6 +153,7 @@ async function ensurePublicIntakeTables() {
   await query(`ALTER TABLE personal_questionnaire_submissions ADD COLUMN IF NOT EXISTS last_error TEXT`);
   await query(`ALTER TABLE personal_questionnaire_submissions ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`);
   await query(`ALTER TABLE personal_questionnaire_submissions ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP WITH TIME ZONE`);
+  await query(`ALTER TABLE personal_questionnaire_submissions ADD COLUMN IF NOT EXISTS notification_read_at TIMESTAMP WITH TIME ZONE`);
   await query(`ALTER TABLE personal_questionnaire_submissions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`);
   await query(`ALTER TABLE personal_questionnaire_submissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`);
   await query(`CREATE INDEX IF NOT EXISTS idx_personal_questionnaire_status ON personal_questionnaire_submissions (status, created_at DESC)`);
@@ -219,18 +220,20 @@ async function ensurePublicIntakeTables() {
   tablesReady = true;
 }
 
-async function insertFiles(tableName, fkColumn, fkValue, files, sourceKind) {
+async function insertFiles(tableName, fkColumn, fkValue, files, sourceKind, customNames = []) {
   const safeFiles = sanitizeFileList(files);
   if (!safeFiles.length) return;
 
-  for (const file of safeFiles) {
+  for (const [index, file] of safeFiles.entries()) {
+    const desiredName = stringOrNull(customNames[index], 1000);
+    const finalFileName = desiredName || String(file.originalname || 'document.bin').trim().slice(0, 1000);
     await query(
       `INSERT INTO ${tableName} (${fkColumn}, source_kind, file_name, mime_type, file_content)
        VALUES ($1, $2, $3, $4, $5)`,
       [
         fkValue,
         String(sourceKind || 'public').trim() || 'public',
-        String(file.originalname || 'document.bin').trim().slice(0, 1000),
+        finalFileName,
         stringOrNull(file.mimetype, 255),
         file.buffer,
       ]
@@ -320,8 +323,15 @@ function normalizePersonalPayload(payload) {
       mobilePhone: stringOrNull(payload?.home?.mobilePhone, 255),
       personalMobile: stringOrNull(payload?.home?.personalMobile, 255),
       maritalStatus: stringOrNull(payload?.home?.maritalStatus, 64),
+      childrenHas: stringOrNull(payload?.home?.childrenHas, 16),
       childrenCount: numberOrNull(payload?.home?.childrenCount),
       childrenNames: stringOrNull(payload?.home?.childrenNames, 2000),
+      childrenDetails: Array.isArray(payload?.home?.childrenDetails)
+        ? payload.home.childrenDetails.slice(0, 6).map((item) => compactObject({
+            name: stringOrNull(item?.name, 255),
+            birthdate: dateOnlyOrNull(item?.birthdate),
+          }))
+        : undefined,
     }),
     financial: compactObject({
       bankName: stringOrNull(payload?.financial?.bankName, 255),
@@ -375,12 +385,15 @@ function validatePersonalQuestionnaireRequired(payload) {
   const personal = payload?.personal || {};
   const address = payload?.address || {};
   const home = payload?.home || {};
+  const financial = payload?.financial || {};
+  const uniform = payload?.uniform || {};
 
   const missing = [];
   if (!stringOrNull(payload?.firstName || personal.firstName)) missing.push('First name');
   if (!stringOrNull(payload?.lastName || personal.lastName)) missing.push('Last name');
   if (!dateOnlyOrNull(personal.birthdate || personal.birthDate)) missing.push('Birth day');
   if (!stringOrNull(personal.birthPlace)) missing.push('Birth place');
+  if (!stringOrNull(personal.birthName)) missing.push('Birth name');
   if (!stringOrNull(personal.gender)) missing.push('Gender');
   if (!stringOrNull(personal.nationality)) missing.push('Nationality');
   if (!stringOrNull(home.maritalStatus)) missing.push('Marital status');
@@ -388,7 +401,27 @@ function validatePersonalQuestionnaireRequired(payload) {
   if (!stringOrNull(address.houseNumber)) missing.push('House number');
   if (!stringOrNull(address.postalCode || address.zipCode)) missing.push('Postal code');
   if (!stringOrNull(address.city)) missing.push('City');
-  if (numberOrNull(home.childrenCount) == null) missing.push('Children');
+  if (!stringOrNull(financial.taxId || financial.steuerId)) missing.push('Tax ID');
+  if (!stringOrNull(uniform.jacke)) missing.push('Jacke');
+  if (!stringOrNull(uniform.hose)) missing.push('Hose');
+  if (!stringOrNull(uniform.shirt)) missing.push('Shirt');
+  if (!stringOrNull(uniform.schuhe)) missing.push('Schuhe');
+
+  const childrenHas = stringOrNull(home.childrenHas, 16);
+  if (!childrenHas) {
+    missing.push('Children');
+  } else if (childrenHas === 'Ja') {
+    const count = numberOrNull(home.childrenCount);
+    if (count == null) {
+      missing.push('How many kids?');
+    } else {
+      const details = Array.isArray(home.childrenDetails) ? home.childrenDetails : [];
+      for (let index = 0; index < count; index += 1) {
+        if (!stringOrNull(details[index]?.name)) missing.push(`Child name ${index + 1}`);
+        if (!dateOnlyOrNull(details[index]?.birthdate)) missing.push(`Child birth date ${index + 1}`);
+      }
+    }
+  }
   return missing;
 }
 
@@ -464,21 +497,23 @@ export async function listPersonalQuestionnaires({ status } = {}) {
     where.push(`s.status = $${params.length}`);
   }
   const res = await query(
-    `SELECT
-       s.id,
-       s.status,
-       s.first_name,
-       s.last_name,
-       s.email,
-       s.phone,
-       s.start_date,
-       s.employee_ref,
-       s.kenjo_employee_id,
-       s.last_error,
-       s.created_at,
-       s.updated_at,
-       s.sent_at,
-       COUNT(f.id)::int AS file_count
+      `SELECT
+         s.id,
+         s.status,
+         s.first_name,
+         s.last_name,
+         s.email,
+         s.phone,
+         s.start_date,
+         s.employee_ref,
+         s.kenjo_employee_id,
+         s.last_error,
+         s.notification_read_at,
+         (s.notification_read_at IS NULL) AS is_new,
+         s.created_at,
+         s.updated_at,
+         s.sent_at,
+         COUNT(f.id)::int AS file_count
      FROM personal_questionnaire_submissions s
      LEFT JOIN personal_questionnaire_files f ON f.submission_id = s.id
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -494,7 +529,19 @@ export async function listPersonalQuestionnaires({ status } = {}) {
 
 export async function getPersonalQuestionnaireById(id) {
   await ensurePublicIntakeTables();
-  const res = await query(`SELECT * FROM personal_questionnaire_submissions WHERE id = $1 LIMIT 1`, [Number(id)]);
+  await query(
+    `UPDATE personal_questionnaire_submissions
+     SET notification_read_at = COALESCE(notification_read_at, NOW())
+     WHERE id = $1`,
+    [Number(id)]
+  );
+  const res = await query(
+    `SELECT *, (notification_read_at IS NULL) AS is_new
+     FROM personal_questionnaire_submissions
+     WHERE id = $1
+     LIMIT 1`,
+    [Number(id)]
+  );
   const submission = res.rows[0] || null;
   if (!submission) return null;
   const files = await listFiles('personal_questionnaire_files', 'submission_id', Number(id));
@@ -523,12 +570,36 @@ export async function updatePersonalQuestionnaire(id, payload, status) {
   return res.rows[0] || null;
 }
 
-export async function addPersonalQuestionnaireFiles(id, files, sourceKind = 'admin') {
+export async function deletePersonalQuestionnaire(id) {
+  await ensurePublicIntakeTables();
+  const res = await query(
+    `DELETE FROM personal_questionnaire_submissions
+     WHERE id = $1
+     RETURNING id, status, employee_ref, kenjo_employee_id`,
+    [Number(id)]
+  );
+  return res.rows[0] || null;
+}
+
+export async function markPersonalQuestionnaireUnread(id) {
+  await ensurePublicIntakeTables();
+  const res = await query(
+    `UPDATE personal_questionnaire_submissions
+     SET notification_read_at = NULL,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id, status, first_name, last_name, email, notification_read_at`,
+    [Number(id)]
+  );
+  return res.rows[0] || null;
+}
+
+export async function addPersonalQuestionnaireFiles(id, files, sourceKind = 'admin', customNames = []) {
   await ensurePublicIntakeTables();
   const submissionId = Number(id);
   const row = await getPersonalQuestionnaireById(submissionId);
   if (!row) return null;
-  await insertFiles('personal_questionnaire_files', 'submission_id', submissionId, files, sourceKind);
+  await insertFiles('personal_questionnaire_files', 'submission_id', submissionId, files, sourceKind, customNames);
   return listFiles('personal_questionnaire_files', 'submission_id', submissionId);
 }
 
@@ -916,11 +987,16 @@ export async function saveAndSendPersonalQuestionnaire(id) {
 
 export async function getPublicIntakeSummary() {
   await ensurePublicIntakeTables();
-  const [personalCountsRes, damageCountsRes, recentPersonalRes, recentDamageRes] = await Promise.all([
+  const [personalCountsRes, personalUnreadRes, damageCountsRes, recentPersonalRes, recentDamageRes] = await Promise.all([
     query(`
       SELECT status, COUNT(*)::int AS count
       FROM personal_questionnaire_submissions
       GROUP BY status
+    `),
+    query(`
+      SELECT COUNT(*)::int AS count
+      FROM personal_questionnaire_submissions
+      WHERE notification_read_at IS NULL
     `),
     query(`
       SELECT status, COUNT(*)::int AS count
@@ -943,12 +1019,14 @@ export async function getPublicIntakeSummary() {
 
   const toMap = (rows) => Object.fromEntries((rows || []).map((row) => [String(row.status || ''), Number(row.count || 0)]));
   const personalCounts = toMap(personalCountsRes.rows || []);
+  const personalUnread = Number(personalUnreadRes.rows?.[0]?.count || 0);
   const damageCounts = toMap(damageCountsRes.rows || []);
 
   return {
     personalQuestionnaires: {
       pending: (personalCounts.submitted || 0) + (personalCounts.reviewing || 0) + (personalCounts.error || 0),
       sent: (personalCounts.sent || 0) + (personalCounts.sent_with_warnings || 0),
+      unread: personalUnread,
       byStatus: personalCounts,
       recent: recentPersonalRes.rows || [],
     },
@@ -967,6 +1045,8 @@ const publicIntakeService = {
   listPersonalQuestionnaires,
   getPersonalQuestionnaireById,
   updatePersonalQuestionnaire,
+  deletePersonalQuestionnaire,
+  markPersonalQuestionnaireUnread,
   addPersonalQuestionnaireFiles,
   getPersonalQuestionnaireFile,
   listDamageReports,

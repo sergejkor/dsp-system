@@ -32,6 +32,15 @@ function sendMulterError(res, error) {
   return null;
 }
 
+function parseDocumentNames(rawValue) {
+  if (Array.isArray(rawValue)) {
+    return rawValue.map((value) => String(value || '').trim()).filter(Boolean);
+  }
+  const normalized = String(rawValue || '').trim();
+  if (!normalized) return [];
+  return [normalized];
+}
+
 router.get('/summary', requireIntakeRead, async (_req, res) => {
   try {
     const data = await publicIntakeService.getPublicIntakeSummary();
@@ -74,10 +83,33 @@ router.patch('/personal-questionnaires/:id', requirePersonalAccess, async (req, 
   }
 });
 
+router.delete('/personal-questionnaires/:id', requirePersonalAccess, async (req, res) => {
+  try {
+    const row = await publicIntakeService.deletePersonalQuestionnaire(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Submission not found' });
+    res.json({ ok: true, deleted: row });
+  } catch (error) {
+    console.error('DELETE /api/intake/personal-questionnaires/:id error', error);
+    res.status(400).json({ error: String(error?.message || error) });
+  }
+});
+
+router.post('/personal-questionnaires/:id/unread', requirePersonalAccess, async (req, res) => {
+  try {
+    const row = await publicIntakeService.markPersonalQuestionnaireUnread(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Submission not found' });
+    res.json({ ok: true, submission: row });
+  } catch (error) {
+    console.error('POST /api/intake/personal-questionnaires/:id/unread error', error);
+    res.status(400).json({ error: String(error?.message || error) });
+  }
+});
+
 router.post('/personal-questionnaires/:id/files', requirePersonalAccess, async (req, res) => {
   try {
     await runMultiUpload(req, res, 'files');
-    const files = await publicIntakeService.addPersonalQuestionnaireFiles(req.params.id, req.files || [], 'admin');
+    const documentNames = parseDocumentNames(req.body?.documentName || req.body?.documentNames);
+    const files = await publicIntakeService.addPersonalQuestionnaireFiles(req.params.id, req.files || [], 'admin', documentNames);
     if (!files) return res.status(404).json({ error: 'Submission not found' });
     res.status(201).json(files);
   } catch (error) {
