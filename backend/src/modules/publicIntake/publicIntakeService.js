@@ -9,6 +9,7 @@ import {
   updateEmployeePersonals,
   updateEmployeeWork,
 } from '../kenjo/kenjoClient.js';
+import { sendPersonalQuestionnaireNotification } from './publicIntakeNotificationService.js';
 
 let tablesReady = false;
 let kenjoCompanyIdCache = null;
@@ -453,6 +454,15 @@ export async function submitPersonalQuestionnaire(payload, files) {
 
   const row = res.rows[0];
   await insertFiles('personal_questionnaire_files', 'submission_id', row.id, files, 'public');
+  try {
+    await sendPersonalQuestionnaireNotification({
+      submissionId: row.id,
+      summary,
+      createdAt: row.created_at,
+    });
+  } catch (error) {
+    console.error('Failed to send Personalfragebogen notification email:', error);
+  }
   return row;
 }
 
