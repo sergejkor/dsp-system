@@ -2,6 +2,23 @@ import { query } from '../../db.js';
 
 let finesSchemaReady = false;
 
+const FINE_SELECT_FIELDS = `
+  id,
+  kenjo_employee_id,
+  TO_CHAR(created_date::date, 'YYYY-MM-DD') AS created_date,
+  TO_CHAR(receipt_date::date, 'YYYY-MM-DD') AS receipt_date,
+  case_number,
+  amount,
+  has_fine_points,
+  fine_points,
+  TO_CHAR(processing_date::date, 'YYYY-MM-DD') AS processing_date,
+  paid_by,
+  notify_online,
+  notify_email,
+  created_at,
+  updated_at
+`;
+
 async function ensureFinesSchema() {
   if (finesSchemaReady) return;
   await query(`
@@ -36,8 +53,7 @@ export async function getEmployeesForFines() {
 export async function getFines() {
   await ensureFinesSchema();
   const res = await query(
-    `SELECT id, kenjo_employee_id, created_date, receipt_date, case_number, amount,
-            has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, created_at, updated_at
+    `SELECT ${FINE_SELECT_FIELDS}
      FROM fines
      ORDER BY created_at DESC, id DESC`
   );
@@ -65,8 +81,7 @@ export async function createFine(payload) {
        kenjo_employee_id, created_date, receipt_date, case_number, amount,
        has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email
      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-     RETURNING id, kenjo_employee_id, created_date, receipt_date, case_number, amount,
-               has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, created_at, updated_at`,
+     RETURNING ${FINE_SELECT_FIELDS}`,
     [
       kenjo_employee_id,
       created_date || null,
@@ -115,8 +130,7 @@ export async function updateFine(id, payload) {
          notify_email = $12,
          updated_at = NOW()
      WHERE id = $1
-     RETURNING id, kenjo_employee_id, created_date, receipt_date, case_number, amount,
-               has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, created_at, updated_at`,
+     RETURNING ${FINE_SELECT_FIELDS}`,
     [
       id,
       kenjo_employee_id || null,
@@ -133,6 +147,18 @@ export async function updateFine(id, payload) {
     ]
   );
   return res.rows[0] || null;
+}
+
+export async function deleteFine(id) {
+  await ensureFinesSchema();
+  const fineId = Number(id);
+  if (!Number.isFinite(fineId)) return false;
+  const res = await query(
+    `DELETE FROM fines
+     WHERE id = $1`,
+    [fineId]
+  );
+  return (res.rowCount || 0) > 0;
 }
 
 export async function addFineDocument(fineId, { fileName, mimeType, fileContent }) {
@@ -195,6 +221,7 @@ const finesService = {
   getFines,
   createFine,
   updateFine,
+  deleteFine,
   addFineDocument,
   listFineDocuments,
   getFineDocument,
