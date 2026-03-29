@@ -424,6 +424,7 @@ function normalizePersonalPayload(payload) {
       employeeNumber: stringOrNull(payload?.work?.employeeNumber || payload?.externalId, 255),
       weeklyHours: numberOrNull(payload?.work?.weeklyHours) ?? 40,
       managerName: stringOrNull(payload?.work?.managerName, 255),
+      managerKenjoId: stringOrNull(payload?.work?.managerKenjoId, 255),
       workMobile: stringOrNull(payload?.work?.workMobile, 255),
     }),
     address: compactObject({
@@ -1088,6 +1089,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     account: compactObject({
       email: stringOrNull(email, 255),
       language: normalizeKenjoLanguage(account.language),
+      externalId: stringOrNull(work.employeeNumber || payload.externalId, 255),
     }),
     personal: compactObject({
       firstName: stringOrNull(firstName, 255),
@@ -1132,7 +1134,9 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   const normalizedNationality = normalizeKenjoCountryCode(personal.nationality);
   const normalizedCountry = normalizeKenjoCountryCode(address.country);
   const normalizedMaritalStatus = normalizeKenjoMaritalStatus(home.maritalStatus);
-  const managerKenjoId = await resolveManagerKenjoIdByName(work.managerName);
+  const managerKenjoId =
+    stringOrNull(work.managerKenjoId, 255) ||
+    await resolveManagerKenjoIdByName(work.managerName);
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'personal', updateEmployeePersonals, kenjoEmployeeId, [
     {
