@@ -1099,7 +1099,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
       firstName: stringOrNull(firstName, 255),
       lastName: stringOrNull(lastName, 255),
       salutation: stringOrNull(personal.salutation, 64),
-      birthdate: dateOnlyOrNull(personal.birthDate || personal.birthdate),
+      birthdate: kenjoDateTimeOrNull(personal.birthDate || personal.birthdate),
       gender: normalizedGender,
       nationality: normalizedNationality,
     },
@@ -1107,7 +1107,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
       firstName: stringOrNull(firstName, 255),
       lastName: stringOrNull(lastName, 255),
       salutation: stringOrNull(personal.salutation, 64),
-      birthdate: dateOnlyOrNull(personal.birthDate || personal.birthdate),
+      birthdate: kenjoDateTimeOrNull(personal.birthDate || personal.birthdate),
     },
   ]);
 
