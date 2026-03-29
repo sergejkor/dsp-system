@@ -219,6 +219,16 @@ function compactObject(input) {
   );
 }
 
+function formatKenjoExternalId(value) {
+  const normalized = stringOrNull(value, 255);
+  if (!normalized) return null;
+  const trimmed = normalized.trim();
+  if (/^E-\d{6,}$/i.test(trimmed)) return `E-${trimmed.slice(2).replace(/\D/g, '')}`;
+  const digits = trimmed.replace(/\D/g, '');
+  if (!digits) return trimmed;
+  return `E-${digits.padStart(6, '0')}`;
+}
+
 function displayNameFromPayload(payload) {
   const personal = payload?.personal || {};
   const parts = [
@@ -1177,6 +1187,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   const firstName = stringOrNull(payload.firstName || personal.firstName);
   const lastName = stringOrNull(payload.lastName || personal.lastName);
   const email = stringOrNull(payload.email || account.email || home.privateEmail);
+  const kenjoExternalId = formatKenjoExternalId(work.employeeNumber || payload.externalId);
 
   if (!firstName || !lastName || !email) {
     throw new Error('First name, last name and email are required before Save and Send');
@@ -1191,7 +1202,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     account: compactObject({
       email: stringOrNull(email, 255),
       language: normalizeKenjoLanguage(account.language),
-      externalId: stringOrNull(work.employeeNumber || payload.externalId, 255),
+      externalId: kenjoExternalId,
     }),
     personal: compactObject({
       firstName: stringOrNull(firstName, 255),
@@ -1241,7 +1252,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'account', updateEmployeeAccounts, kenjoEmployeeId, [
     {
-      externalId: stringOrNull(work.employeeNumber || payload.externalId, 255),
+      externalId: kenjoExternalId,
     },
   ]);
 
