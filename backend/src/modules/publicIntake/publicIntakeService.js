@@ -49,6 +49,103 @@ function normalizeKenjoLanguage(value) {
   return 'de';
 }
 
+function normalizeKenjoGender(value) {
+  const normalized = stringOrNull(value, 64);
+  if (!normalized) return null;
+  const key = normalized
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (['mannlich', 'männlich', 'male', 'man'].includes(key)) return 'male';
+  if (['weiblich', 'female', 'woman'].includes(key)) return 'female';
+  if (['nicht-binar', 'nicht-binar', 'nicht binar', 'nichtbinary', 'non-binary', 'non binary', 'nonbinary'].includes(key)) {
+    return 'nonBinary';
+  }
+  return null;
+}
+
+function normalizeKenjoMaritalStatus(value) {
+  const normalized = stringOrNull(value, 64);
+  if (!normalized) return null;
+  const key = normalized
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (['ledig', 'single'].includes(key)) return 'single';
+  if (['verheiratet', 'married'].includes(key)) return 'married';
+  if (['geschieden', 'divorced'].includes(key)) return 'divorced';
+  if (['verwitwet', 'widowed'].includes(key)) return 'widowed';
+  return null;
+}
+
+const KENJO_REGION_LOCALES = ['de', 'en', 'ru', 'fr', 'it', 'es', 'pl', 'uk', 'nl', 'ro', 'hu', 'ar'];
+const KENJO_REGION_CODES = [
+  'AF', 'AL', 'DZ', 'US', 'AD', 'AO', 'AR', 'AM', 'AU', 'AT', 'AZ',
+  'BS', 'BH', 'BD', 'BB', 'BY', 'BE', 'BZ', 'BJ', 'BT', 'BO', 'BA', 'BW', 'BR', 'GB', 'BN', 'BG', 'BF', 'MM', 'BI',
+  'KH', 'CM', 'CA', 'CV', 'CF', 'TD', 'CL', 'CN', 'CO', 'KM', 'CG', 'CR', 'HR', 'CU', 'CY', 'CZ',
+  'DK', 'DJ', 'DO', 'NL', 'TL', 'EC', 'EG', 'AE', 'GQ', 'ER', 'EE', 'ET',
+  'FJ', 'PH', 'FI', 'FR', 'GA', 'GM', 'GE', 'DE', 'GH', 'GR', 'GD', 'GT', 'GN', 'GY',
+  'HT', 'HN', 'HU', 'IS', 'IN', 'ID', 'IR', 'IQ', 'IE', 'IL', 'IT', 'CI',
+  'JM', 'JP', 'JO', 'KZ', 'KE', 'KW', 'KG', 'LA', 'LV', 'LB', 'LR', 'LY', 'LI', 'LT', 'LU',
+  'MG', 'MW', 'MY', 'MV', 'ML', 'MT', 'MR', 'MU', 'MX', 'MD', 'MC', 'MN', 'ME', 'MA', 'MZ',
+  'NA', 'NP', 'NZ', 'NI', 'NE', 'NG', 'KP', 'MK', 'NO', 'OM', 'PK', 'PS', 'PA', 'PG', 'PY', 'PE', 'PL', 'PT',
+  'QA', 'RO', 'RU', 'RW', 'LC', 'SV', 'WS', 'SA', 'SN', 'RS', 'SC', 'SL', 'SG', 'SK', 'SI', 'SO', 'ZA', 'KR', 'ES', 'LK', 'SD', 'SR', 'SE', 'CH', 'SY',
+  'TW', 'TJ', 'TZ', 'TH', 'TG', 'TO', 'TT', 'TN', 'TR', 'TM', 'UG', 'UA', 'UY', 'UZ', 'VE', 'VN', 'YE', 'ZM', 'ZW',
+];
+
+let kenjoRegionNameToCode = null;
+
+function getKenjoRegionNameToCodeMap() {
+  if (kenjoRegionNameToCode) return kenjoRegionNameToCode;
+
+  const map = new Map();
+  for (const code of KENJO_REGION_CODES) {
+    map.set(code.toLowerCase(), code);
+  }
+
+  KENJO_REGION_LOCALES.forEach((locale) => {
+    let formatter = null;
+    try {
+      formatter = new Intl.DisplayNames([locale], { type: 'region' });
+    } catch {
+      formatter = null;
+    }
+    if (!formatter) return;
+
+    KENJO_REGION_CODES.forEach((code) => {
+      const label = stringOrNull(formatter.of(code), 128);
+      if (!label) return;
+      map.set(
+        label
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, ''),
+        code
+      );
+    });
+  });
+
+  map.set('schottland', 'GB');
+  map.set('wales', 'GB');
+  map.set('vereinigtes konigreich', 'GB');
+  map.set('vereinigte staaten', 'US');
+
+  kenjoRegionNameToCode = map;
+  return map;
+}
+
+function normalizeKenjoCountryCode(value) {
+  const normalized = stringOrNull(value, 128);
+  if (!normalized) return null;
+  const cleaned = normalized
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return getKenjoRegionNameToCodeMap().get(cleaned) || null;
+}
+
 function numberOrNull(value) {
   if (value == null || value === '') return null;
   const num = Number(value);
@@ -805,6 +902,28 @@ async function resolveKenjoEmployeeIdByEmail(email) {
   return null;
 }
 
+async function runKenjoSectionUpdateWithFallbacks(warnings, label, fn, employeeId, bodies) {
+  const attempts = Array.isArray(bodies)
+    ? bodies
+        .map((body) => compactObject(body))
+        .filter((body) => Object.keys(body).length)
+    : [];
+
+  if (!attempts.length) return;
+
+  let lastError = null;
+  for (const body of attempts) {
+    try {
+      await fn(employeeId, body);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  warnings.push(`${label}: ${String(lastError?.message || lastError)}`);
+}
+
 async function upsertLocalEmployeeFromSubmission(submission, kenjoEmployeeId) {
   const payload = submission?.payload || {};
   const personal = payload.personal || {};
@@ -969,64 +1088,74 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   }
 
   const warnings = [];
-  const runKenjoSectionUpdate = async (label, fn, body) => {
-    const clean = compactObject(body);
-    if (!Object.keys(clean).length) return;
-    try {
-      await fn(kenjoEmployeeId, clean);
-    } catch (error) {
-      warnings.push(`${label}: ${String(error?.message || error)}`);
-    }
-  };
 
-  await runKenjoSectionUpdate('personal', updateEmployeePersonals, {
-    firstName: stringOrNull(firstName, 255),
-    middleName: stringOrNull(personal.middleName, 255),
-    lastName: stringOrNull(lastName, 255),
-    birthName: stringOrNull(personal.birthName, 255),
-    salutation: stringOrNull(personal.salutation, 64),
-    nationality: stringOrNull(personal.nationality, 128),
-    gender: stringOrNull(personal.gender, 64),
-    mobile: stringOrNull(personal.mobile, 255),
-    birthPlace: stringOrNull(personal.birthPlace, 255),
-    birthDate: dateOnlyOrNull(personal.birthDate || personal.birthdate),
-  });
-  await runKenjoSectionUpdate('work', updateEmployeeWork, {
-    startDate: kenjoDateTimeOrNull(work.startDate),
-    contractEnd: kenjoDateTimeOrNull(work.contractEnd),
-    probationUntil: kenjoDateTimeOrNull(work.probationUntil),
-    jobTitle: stringOrNull(work.jobTitle, 255),
-    transportationId: stringOrNull(work.transportationId, 255),
-    employeeNumber: stringOrNull(work.employeeNumber, 255),
-    weeklyHours: numberOrNull(work.weeklyHours),
-  });
-  await runKenjoSectionUpdate('address', updateEmployeeAddresses, {
-    street: stringOrNull(address.street, 255),
-    streetName: stringOrNull(address.streetName, 255),
-    houseNumber: stringOrNull(address.houseNumber, 64),
-    addressLine1: stringOrNull(address.addressLine1, 255),
-    zipCode: stringOrNull(address.zipCode || address.postalCode, 32),
-    postalCode: stringOrNull(address.postalCode || address.zipCode, 32),
-    city: stringOrNull(address.city, 255),
-    country: stringOrNull(address.country, 128),
-  });
-  await runKenjoSectionUpdate('home', updateEmployeeHomes, {
-    privateEmail: stringOrNull(home.privateEmail, 255),
-    phone: stringOrNull(home.phone, 255),
-    mobilePhone: stringOrNull(home.mobilePhone, 255),
-    personalMobile: stringOrNull(home.personalMobile, 255),
-    maritalStatus: stringOrNull(home.maritalStatus, 64),
-  });
-  await runKenjoSectionUpdate('financial', updateEmployeeFinancials, {
-    bankName: stringOrNull(financial.bankName, 255),
-    accountHolderName: stringOrNull(financial.accountHolderName, 255),
-    iban: stringOrNull(financial.iban, 128),
-    bic: stringOrNull(financial.bic, 64),
-    taxId: stringOrNull(financial.taxId || financial.steuerId, 128),
-    steuerId: stringOrNull(financial.steuerId || financial.taxId, 128),
-    socialSecurityNumber: stringOrNull(financial.socialSecurityNumber || financial.nationalInsuranceNumber, 128),
-    nationalInsuranceNumber: stringOrNull(financial.nationalInsuranceNumber || financial.socialSecurityNumber, 128),
-  });
+  const normalizedGender = normalizeKenjoGender(personal.gender);
+  const normalizedNationality = normalizeKenjoCountryCode(personal.nationality);
+  const normalizedCountry = normalizeKenjoCountryCode(address.country);
+  const normalizedMaritalStatus = normalizeKenjoMaritalStatus(home.maritalStatus);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'personal', updateEmployeePersonals, kenjoEmployeeId, [
+    {
+      firstName: stringOrNull(firstName, 255),
+      lastName: stringOrNull(lastName, 255),
+      salutation: stringOrNull(personal.salutation, 64),
+      birthdate: dateOnlyOrNull(personal.birthDate || personal.birthdate),
+      gender: normalizedGender,
+      nationality: normalizedNationality,
+    },
+    {
+      firstName: stringOrNull(firstName, 255),
+      lastName: stringOrNull(lastName, 255),
+      salutation: stringOrNull(personal.salutation, 64),
+      birthdate: dateOnlyOrNull(personal.birthDate || personal.birthdate),
+    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work', updateEmployeeWork, kenjoEmployeeId, [
+    {
+      startDate: kenjoDateTimeOrNull(work.startDate),
+      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
+      jobTitle: stringOrNull(work.jobTitle, 255),
+      weeklyHours: numberOrNull(work.weeklyHours),
+    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'address', updateEmployeeAddresses, kenjoEmployeeId, [
+    {
+      street: stringOrNull(address.street || address.streetName, 255),
+      houseNumber: stringOrNull(address.houseNumber, 64),
+      postalCode: stringOrNull(address.postalCode || address.zipCode, 32),
+      city: stringOrNull(address.city, 255),
+      country: normalizedCountry,
+    },
+    {
+      street: stringOrNull(address.street || address.streetName, 255),
+      houseNumber: stringOrNull(address.houseNumber, 64),
+      postalCode: stringOrNull(address.postalCode || address.zipCode, 32),
+      city: stringOrNull(address.city, 255),
+    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'home', updateEmployeeHomes, kenjoEmployeeId, [
+    {
+      personalMobile: stringOrNull(home.personalMobile || home.mobilePhone, 255),
+      maritalStatus: normalizedMaritalStatus,
+    },
+    {
+      personalMobile: stringOrNull(home.personalMobile || home.mobilePhone, 255),
+    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'financial', updateEmployeeFinancials, kenjoEmployeeId, [
+    {
+      bankName: stringOrNull(financial.bankName, 255),
+      accountHolderName: stringOrNull(financial.accountHolderName, 255),
+      iban: stringOrNull(financial.iban, 128),
+      swiftCode: stringOrNull(financial.bic, 64),
+      taxIdentificationNumber: stringOrNull(financial.taxId || financial.steuerId, 128),
+      nationalInsuranceNumber: stringOrNull(financial.nationalInsuranceNumber || financial.socialSecurityNumber, 128),
+    },
+  ]);
 
   const employeeRef = await upsertLocalEmployeeFromSubmission(submission, kenjoEmployeeId);
   await copySubmissionFilesToEmployee(submission.id, employeeRef);
