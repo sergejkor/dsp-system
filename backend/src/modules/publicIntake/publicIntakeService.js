@@ -3,6 +3,7 @@ import employeeService from '../employees/employeeService.js';
 import {
   createKenjoEmployee,
   getKenjoCompanies,
+  getKenjoUserAccounts,
   updateEmployeeAddresses,
   updateEmployeeFinancials,
   updateEmployeeHomes,
@@ -752,15 +753,55 @@ function extractKenjoEmployeeId(response) {
     response?.id,
     response?.employeeId,
     response?.userId,
+    response?.account?._id,
+    response?.account?.id,
+    response?.account?.employeeId,
+    response?.user?._id,
+    response?.user?.id,
     response?.data?._id,
     response?.data?.id,
+    response?.data?.employeeId,
+    response?.data?.account?._id,
+    response?.data?.account?.id,
     response?.employee?._id,
     response?.employee?.id,
+    response?.employee?.employeeId,
+    response?.data?.employee?._id,
+    response?.data?.employee?.id,
+    response?.data?.employee?.employeeId,
   ];
   for (const candidate of candidates) {
     const normalized = stringOrNull(candidate, 255);
     if (normalized) return normalized;
   }
+  return null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function resolveKenjoEmployeeIdByEmail(email) {
+  const normalizedEmail = stringOrNull(email, 255)?.toLowerCase();
+  if (!normalizedEmail) return null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const accounts = await getKenjoUserAccounts().catch(() => []);
+    const match = Array.isArray(accounts)
+      ? accounts.find((item) => {
+          const candidate = stringOrNull(item?.email || item?.account?.email, 255)?.toLowerCase();
+          return candidate === normalizedEmail;
+        })
+      : null;
+
+    const resolved = extractKenjoEmployeeId(match);
+    if (resolved) return resolved;
+
+    if (attempt < 2) {
+      await sleep(1000);
+    }
+  }
+
   return null;
 }
 
@@ -915,9 +956,9 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     throw error;
   }
 
-  const kenjoEmployeeId = extractKenjoEmployeeId(createResponse);
+  const kenjoEmployeeId = extractKenjoEmployeeId(createResponse) || await resolveKenjoEmployeeIdByEmail(email);
   if (!kenjoEmployeeId) {
-    const message = 'Kenjo create employee succeeded but returned no employee id';
+    const message = `Kenjo create employee succeeded but returned no employee id for email ${email}`;
     await query(
       `UPDATE personal_questionnaire_submissions
        SET status = 'error', last_error = $2, updated_at = NOW()
