@@ -1200,6 +1200,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     work: compactObject({
       companyId,
       officeId: deliveryStationOfficeId,
+      employeeNumber: stringOrNull(work.employeeNumber || payload.externalId, 255),
       weeklyHours: numberOrNull(work.weeklyHours) ?? 40,
       startDate: kenjoDateTimeOrNull(work.startDate),
       reportsToId: managerKenjoId,
@@ -1278,12 +1279,6 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   await runKenjoSectionUpdateWithFallbacks(warnings, 'work weekly hours', updateEmployeeWork, kenjoEmployeeId, [
     {
       weeklyHours: numberOrNull(work.weeklyHours),
-    },
-  ]);
-
-  await runKenjoSectionUpdateWithFallbacks(warnings, 'work employee number', updateEmployeeWork, kenjoEmployeeId, [
-    {
-      employeeNumber: stringOrNull(work.employeeNumber || payload.externalId, 255),
     },
   ]);
 
