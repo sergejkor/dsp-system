@@ -604,6 +604,12 @@ export async function updateEmployeeWork(employeeId, body) {
   return kenjoPut(`/employees/${id}/works`, body);
 }
 
+export async function updateEmployeeAccounts(employeeId, body) {
+  const id = String(employeeId || '').trim();
+  if (!id) throw new Error('employeeId is required');
+  return kenjoPut(`/employees/${id}/accounts`, body);
+}
+
 export async function updateEmployeePersonals(employeeId, body) {
   const id = String(employeeId || '').trim();
   if (!id) throw new Error('employeeId is required');
@@ -657,6 +663,7 @@ const kenjoClient = {
   getKenjoUserAccounts,
   getKenjoCompanies,
   getKenjoEmployeeByIdReadable,
+  updateEmployeeAccounts,
   getKenjoAttendances,
   createKenjoEmployee,
   updateKenjoAttendance,

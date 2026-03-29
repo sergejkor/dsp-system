@@ -4,6 +4,7 @@ import {
   createKenjoEmployee,
   getKenjoCompanies,
   getKenjoUserAccounts,
+  updateEmployeeAccounts,
   updateEmployeeAddresses,
   updateEmployeeFinancials,
   updateEmployeeHomes,
@@ -939,7 +940,32 @@ async function resolveManagerKenjoIdByName(managerName) {
     [compact]
   ).catch(() => ({ rows: [] }));
 
-  return stringOrNull(kenjoRes.rows?.[0]?.kenjo_user_id, 255);
+  const cachedId = stringOrNull(kenjoRes.rows?.[0]?.kenjo_user_id, 255);
+  if (cachedId) return cachedId;
+
+  try {
+    const accountsJson = await getKenjoUserAccounts();
+    const accounts = Array.isArray(accountsJson)
+      ? accountsJson
+      : Array.isArray(accountsJson?.data)
+        ? accountsJson.data
+        : Array.isArray(accountsJson?.items)
+          ? accountsJson.items
+          : [];
+    const liveMatch = accounts.find((item) => {
+      const display = String(item?.displayName || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const fullName = [item?.firstName, item?.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
+      return display === compact || fullName === compact;
+    });
+    return stringOrNull(liveMatch?._id || liveMatch?.id, 255);
+  } catch {
+    return null;
+  }
 }
 
 async function runKenjoSectionUpdateWithFallbacks(warnings, label, fn, employeeId, bodies) {
@@ -1138,6 +1164,12 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   const normalizedNationality = normalizeKenjoCountryCode(personal.nationality);
   const normalizedCountry = normalizeKenjoCountryCode(address.country);
   const normalizedMaritalStatus = normalizeKenjoMaritalStatus(home.maritalStatus);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'account', updateEmployeeAccounts, kenjoEmployeeId, [
+    {
+      externalId: stringOrNull(work.employeeNumber || payload.externalId, 255),
+    },
+  ]);
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'personal', updateEmployeePersonals, kenjoEmployeeId, [
     {
