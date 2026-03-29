@@ -1155,51 +1155,24 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     {
       startDate: kenjoDateTimeOrNull(work.startDate),
       contractEnd: kenjoDateTimeOrNull(work.contractEnd),
-      probationEnd: kenjoDateTimeOrNull(work.probationUntil),
-      jobTitle: stringOrNull(work.jobTitle, 255),
-      weeklyHours: numberOrNull(work.weeklyHours),
-      reportsToId: managerKenjoId,
-      transportationId: 'DBX9',
-    },
-    {
-      startDate: kenjoDateTimeOrNull(work.startDate),
-      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
-      probationUntil: kenjoDateTimeOrNull(work.probationUntil),
-      jobTitle: stringOrNull(work.jobTitle, 255),
-      weeklyHours: numberOrNull(work.weeklyHours),
-      managerId: managerKenjoId,
-      transportationId: 'DBX9',
-    },
-    {
-      startDate: kenjoDateTimeOrNull(work.startDate),
-      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
-      probationUntil: kenjoDateTimeOrNull(work.probationUntil),
-      jobTitle: stringOrNull(work.jobTitle, 255),
-      weeklyHours: numberOrNull(work.weeklyHours),
-      managerId: managerKenjoId,
-    },
-    {
-      startDate: kenjoDateTimeOrNull(work.startDate),
-      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
-      probationEnd: kenjoDateTimeOrNull(work.probationUntil),
-      jobTitle: stringOrNull(work.jobTitle, 255),
-      weeklyHours: numberOrNull(work.weeklyHours),
-      reportsToId: managerKenjoId,
-    },
-    {
-      startDate: kenjoDateTimeOrNull(work.startDate),
-      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
-      probationEnd: kenjoDateTimeOrNull(work.probationUntil),
       jobTitle: stringOrNull(work.jobTitle, 255),
       weeklyHours: numberOrNull(work.weeklyHours),
     },
-    {
-      startDate: kenjoDateTimeOrNull(work.startDate),
-      contractEnd: kenjoDateTimeOrNull(work.contractEnd),
-      probationUntil: kenjoDateTimeOrNull(work.probationUntil),
-      jobTitle: stringOrNull(work.jobTitle, 255),
-      weeklyHours: numberOrNull(work.weeklyHours),
-    },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work manager', updateEmployeeWork, kenjoEmployeeId, [
+    { reportsToId: managerKenjoId },
+    { managerId: managerKenjoId },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work delivery station', updateEmployeeWork, kenjoEmployeeId, [
+    { transportationId: 'DBX9' },
+    { transporterId: 'DBX9' },
+  ]);
+
+  await runKenjoSectionUpdateWithFallbacks(warnings, 'work probation', updateEmployeeWork, kenjoEmployeeId, [
+    { probationUntil: kenjoDateTimeOrNull(work.probationUntil) },
+    { probationEnd: kenjoDateTimeOrNull(work.probationUntil) },
   ]);
 
   await runKenjoSectionUpdateWithFallbacks(warnings, 'address', updateEmployeeAddresses, kenjoEmployeeId, [
