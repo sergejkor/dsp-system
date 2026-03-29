@@ -1200,7 +1200,6 @@ export async function saveAndSendPersonalQuestionnaire(id) {
     work: compactObject({
       companyId,
       officeId: deliveryStationOfficeId,
-      employeeNumber: stringOrNull(work.employeeNumber || payload.externalId, 255),
       weeklyHours: numberOrNull(work.weeklyHours) ?? 40,
       startDate: kenjoDateTimeOrNull(work.startDate),
       reportsToId: managerKenjoId,
