@@ -21,6 +21,20 @@ function isDocxTemplate(template) {
   return fileName.endsWith('.docx') || mimeType === DOCX_MIME;
 }
 
+async function ensureValidDocxBuffer(buffer) {
+  try {
+    const zip = await JSZip.loadAsync(buffer);
+    const fileNames = Object.keys(zip.files || {});
+    const hasWordDocument = fileNames.some((name) => DOCX_XML_FILE_PATTERN.test(name));
+    if (!hasWordDocument) {
+      throw new Error('missing-word-document');
+    }
+    return zip;
+  } catch (_error) {
+    throw new Error('The uploaded template is not a valid DOCX file. Please upload a real Word .docx file, not .doc, PDF or a damaged file.');
+  }
+}
+
 function xmlEscape(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -41,7 +55,7 @@ function normalizeReplacementEntries(replacements) {
 }
 
 async function replaceTokensInDocx(buffer, replacements) {
-  const zip = await JSZip.loadAsync(buffer);
+  const zip = await ensureValidDocxBuffer(buffer);
   const replacementEntries = normalizeReplacementEntries(replacements);
 
   if (!replacementEntries.length) {

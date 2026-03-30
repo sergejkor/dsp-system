@@ -1,6 +1,24 @@
 import { query } from '../../db.js';
+import JSZip from 'jszip';
 
 let documentTemplatesTableReady = false;
+
+async function ensureUploadIsDocx(fileName, mimeType, fileBuffer) {
+  const normalizedName = String(fileName || '').trim().toLowerCase();
+  const normalizedMime = String(mimeType || '').trim().toLowerCase();
+  if (!normalizedName.endsWith('.docx') && normalizedMime !== 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    throw new Error('Only DOCX templates are supported. Please upload a Word .docx file.');
+  }
+  try {
+    const zip = await JSZip.loadAsync(fileBuffer);
+    const hasWordDocument = Object.keys(zip.files || {}).some((name) => /^word\/document\.xml$/i.test(name));
+    if (!hasWordDocument) {
+      throw new Error('missing-word-document');
+    }
+  } catch (_error) {
+    throw new Error('The uploaded template is not a valid DOCX file. Please upload a real Word .docx file.');
+  }
+}
 
 async function ensureDocumentTemplatesTable() {
   if (documentTemplatesTableReady) return;
@@ -57,6 +75,7 @@ async function createTemplate({ name, documentKey, description, requiresManualDa
   const templateName = String(name || '').trim();
   if (!templateName) throw new Error('Template name is required');
   if (!fileBuffer || !Buffer.isBuffer(fileBuffer) || fileBuffer.length === 0) throw new Error('Template file is required');
+  await ensureUploadIsDocx(fileName, mimeType, fileBuffer);
 
   const res = await query(
     `INSERT INTO document_templates
