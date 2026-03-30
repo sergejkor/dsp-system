@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   getCreateDocumentTemplates,
   uploadCreateDocumentTemplate,
+  updateCreateDocumentTemplate,
   deleteCreateDocumentTemplate,
   downloadCreateDocumentTemplate,
 } from '../../services/settingsApi';
@@ -10,10 +11,12 @@ const PLACEHOLDER_TOKENS = [
   '{{firstName}}',
   '{{lastName}}',
   '{{fullName}}',
+  '{{address}}',
   '{{street}}',
   '{{houseNumber}}',
   '{{postalCode}}',
   '{{city}}',
+  '{{country}}',
   '{{contractStart}}',
   '{{contractEnd}}',
   '{{today}}',
@@ -50,6 +53,7 @@ export default function SettingsCreateDocumentsPage() {
     name: '',
     documentKey: '',
     description: '',
+    requiresManualDates: false,
     file: null,
   });
 
@@ -83,9 +87,10 @@ export default function SettingsCreateDocumentsPage() {
         name: form.name,
         documentKey: form.documentKey,
         description: form.description,
+        requiresManualDates: form.requiresManualDates,
         file: form.file,
       });
-      setForm({ name: '', documentKey: '', description: '', file: null });
+      setForm({ name: '', documentKey: '', description: '', requiresManualDates: false, file: null });
       const fileInput = document.getElementById('create-document-template-file');
       if (fileInput) fileInput.value = '';
       setMessage('Template uploaded.');
@@ -124,6 +129,18 @@ export default function SettingsCreateDocumentsPage() {
       window.URL.revokeObjectURL(url);
     } catch (e) {
       setError(e.message || 'Failed to download template');
+    }
+  }
+
+  async function handleToggleRequiresManualDates(template, checked) {
+    setError('');
+    setMessage('');
+    try {
+      const updated = await updateCreateDocumentTemplate(template.id, { requiresManualDates: checked });
+      setTemplates((current) => current.map((row) => (row.id === template.id ? { ...row, ...updated } : row)));
+      setMessage('Template updated.');
+    } catch (e) {
+      setError(e.message || 'Failed to update template');
     }
   }
 
@@ -178,13 +195,25 @@ export default function SettingsCreateDocumentsPage() {
           <input
             id="create-document-template-file"
             type="file"
-            accept=".docx,.doc,.pdf"
+            accept=".docx"
             onChange={(e) => setForm((current) => ({ ...current, file: e.target.files?.[0] || null }))}
             disabled={saving}
           />
           <small className="muted">
-            Recommended format: DOCX. It is much more reliable for placeholder replacement than PDF.
+            Generation currently supports DOCX templates only.
           </small>
+        </label>
+
+        <label className="settings-row" style={{ alignItems: 'center', gap: '0.6rem' }}>
+          <input
+            type="checkbox"
+            checked={form.requiresManualDates}
+            onChange={(e) => setForm((current) => ({ ...current, requiresManualDates: e.target.checked }))}
+            disabled={saving}
+          />
+          <span className="settings-label" style={{ minWidth: 0 }}>
+            Need manual dates "From / To" on Create Document page
+          </span>
         </label>
 
         <div className="settings-actions">
@@ -211,6 +240,10 @@ export default function SettingsCreateDocumentsPage() {
           <code>{'{{contractStart}}'}</code> and <code>{'{{contractEnd}}'}</code> for contract dates, and{' '}
           <code>{'{{today}}'}</code> at the bottom for today&apos;s date.
         </p>
+        <p className="muted" style={{ margin: '0.85rem 0 0' }}>
+          Important: keep each placeholder as one plain text block in Word. Do not split a placeholder across different
+          colors, bold parts or text boxes, otherwise the generator may not detect it correctly.
+        </p>
       </div>
 
       <div className="settings-template-list" style={{ marginTop: '1.25rem' }}>
@@ -234,6 +267,14 @@ export default function SettingsCreateDocumentsPage() {
                 </div>
                 <div className="muted small">Size: {formatFileSize(template.file_size)}</div>
                 <div className="muted small">Updated: {formatDateTime(template.updated_at)}</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.65rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={template.requires_manual_dates === true}
+                    onChange={(e) => handleToggleRequiresManualDates(template, e.target.checked)}
+                  />
+                  <span className="muted small">Need manual dates "From / To"</span>
+                </label>
                 {template.description ? <p style={{ marginTop: '0.7rem' }}>{template.description}</p> : null}
                 <div className="settings-actions">
                   <button type="button" onClick={() => handleDownload(template)}>

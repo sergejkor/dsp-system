@@ -72,16 +72,31 @@ export async function getCreateDocumentTemplates() {
   return handle(res);
 }
 
-export async function uploadCreateDocumentTemplate({ name, documentKey, description, file }) {
+export async function uploadCreateDocumentTemplate({ name, documentKey, description, requiresManualDates = false, file }) {
   const formData = new FormData();
   formData.append('name', name || '');
   formData.append('document_key', documentKey || '');
   formData.append('description', description || '');
+  formData.append('requires_manual_dates', String(requiresManualDates === true));
   formData.append('file', file);
   const res = await fetchWithHint(`${API_BASE}/api/settings/create-documents/templates`, {
     method: 'POST',
     headers: { ...getAuthHeaders() },
     body: formData,
+  });
+  return handle(res);
+}
+
+export async function updateCreateDocumentTemplate(id, payload = {}) {
+  const body = {};
+  if (payload.name !== undefined) body.name = payload.name;
+  if (payload.documentKey !== undefined) body.document_key = payload.documentKey;
+  if (payload.description !== undefined) body.description = payload.description;
+  if (payload.requiresManualDates !== undefined) body.requires_manual_dates = payload.requiresManualDates === true;
+  const res = await fetchWithHint(`${API_BASE}/api/settings/create-documents/templates/${id}`, {
+    method: 'PATCH',
+    headers: getHeaders(),
+    body: JSON.stringify(body),
   });
   return handle(res);
 }
@@ -108,6 +123,45 @@ export async function downloadCreateDocumentTemplate(id) {
     throw new Error(data.error || res.statusText || 'Failed to download template');
   }
   return res.blob();
+}
+
+function parseDownloadFileName(contentDisposition) {
+  const header = String(contentDisposition || '');
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const plainMatch = header.match(/filename="?([^"]+)"?/i);
+  return plainMatch?.[1] || '';
+}
+
+export async function generateCreateDocument({ templateId, replacements, fileName }) {
+  const res = await fetchWithHint(`${API_BASE}/api/settings/create-documents/generate`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      templateId,
+      replacements: replacements || {},
+      fileName: fileName || '',
+    }),
+  });
+  if (res.status === 401) {
+    clearToken();
+    window.dispatchEvent(new CustomEvent('auth:logout'));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || res.statusText || 'Failed to generate document');
+  }
+  return {
+    blob: await res.blob(),
+    fileName: parseDownloadFileName(res.headers.get('content-disposition')) || 'generated-document.docx',
+  };
 }
 
 // Users

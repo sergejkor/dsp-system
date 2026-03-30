@@ -11,6 +11,7 @@ import rolesService from './rolesService.js';
 import permissionsService from './permissionsService.js';
 import settingsService from './settingsService.js';
 import documentTemplateSettingsService from './documentTemplateSettingsService.js';
+import createDocumentGenerationService from './createDocumentGenerationService.js';
 import lookupService from './lookupService.js';
 import featureFlagsService from './featureFlagsService.js';
 import integrationSettingsService from './integrationSettingsService.js';
@@ -443,6 +444,7 @@ router.post('/create-documents/templates', requirePermission('edit_settings'), u
       name: req.body?.name,
       documentKey: req.body?.document_key,
       description: req.body?.description,
+      requiresManualDates: String(req.body?.requires_manual_dates || '').toLowerCase() === 'true',
       fileName: req.file.originalname,
       mimeType: req.file.mimetype,
       fileBuffer: req.file.buffer,
@@ -452,6 +454,24 @@ router.post('/create-documents/templates', requirePermission('edit_settings'), u
   } catch (e) {
     console.error('POST /api/settings/create-documents/templates', e);
     res.status(400).json({ error: e.message || 'Failed to upload template' });
+  }
+});
+
+router.patch('/create-documents/templates/:id', requirePermission('edit_settings'), async (req, res) => {
+  try {
+    const updated = await documentTemplateSettingsService.updateTemplate(req.params.id, {
+      name: req.body?.name,
+      documentKey: req.body?.document_key,
+      description: req.body?.description,
+      requiresManualDates:
+        typeof req.body?.requires_manual_dates === 'boolean' ? req.body.requires_manual_dates : undefined,
+      userId: getUserId(req),
+    });
+    if (!updated) return res.status(404).json({ error: 'Template not found' });
+    res.json(updated);
+  } catch (e) {
+    console.error('PATCH /api/settings/create-documents/templates/:id', e);
+    res.status(400).json({ error: e.message || 'Failed to update template' });
   }
 });
 
@@ -478,6 +498,22 @@ router.get('/create-documents/templates/:id/download', requirePermission('view_s
   } catch (e) {
     console.error('GET /api/settings/create-documents/templates/:id/download', e);
     res.status(500).json({ error: e.message || 'Failed to download template' });
+  }
+});
+
+router.post('/create-documents/generate', requirePermission('view_settings'), async (req, res) => {
+  try {
+    const generated = await createDocumentGenerationService.generateDocumentFromTemplate({
+      templateId: req.body?.templateId,
+      replacements: req.body?.replacements,
+      fileName: req.body?.fileName,
+    });
+    res.setHeader('Content-Type', generated.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(generated.fileName)}"`);
+    res.send(generated.buffer);
+  } catch (e) {
+    console.error('POST /api/settings/create-documents/generate', e);
+    res.status(400).json({ error: e.message || 'Failed to generate document' });
   }
 });
 
