@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppSettings } from '../context/AppSettingsContext';
+import { useAuth } from '../context/AuthContext';
 import { getDashboardSummary } from '../services/dashboardApi.js';
 import { formatKpiValue, kpiLabel } from '../utils/analyticsKpiDisplay.js';
 
@@ -35,10 +36,28 @@ function formatTs(iso) {
 
 function formatDateNormal(value) {
   if (!value) return '—';
-  const s = String(value).slice(0, 10);
+  const raw = String(value).trim();
+  if (raw.includes('T') || /\d{2}:\d{2}/.test(raw)) {
+    const dt = new Date(raw);
+    if (!Number.isNaN(dt.getTime())) {
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
+      return `${d}.${m}.${y}`;
+    }
+  }
+  const s = raw.slice(0, 10);
   const [y, m, d] = s.split('-');
-  if (!y || !m || !d) return String(value);
+  if (!y || !m || !d) return raw;
   return `${d}.${m}.${y}`;
+}
+
+function formatDateRange(fromValue, toValue) {
+  const from = formatDateNormal(fromValue);
+  const to = formatDateNormal(toValue);
+  if (!fromValue) return '—';
+  if (!toValue || String(toValue).slice(0, 10) === String(fromValue).slice(0, 10)) return from;
+  return `${from} → ${to}`;
 }
 
 function orderOverviewKpis(kpis) {
@@ -58,7 +77,8 @@ function orderOverviewKpis(kpis) {
 }
 
 export default function DashboardPage() {
-  const { t } = useAppSettings();
+  const { t, language } = useAppSettings();
+  const { hasPermission, isSuperAdmin } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -105,8 +125,47 @@ export default function DashboardPage() {
   }, [data?.damagesLast90?.kpis]);
 
   const labelForKpi = (kpi) => kpiLabel(kpi, t);
+  const driversRoutesDate = data?.overview?.kpiContext?.driversRoutesDate || null;
+  const yesterdayYmd = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }, []);
+  const useWeekdayLabelForDriversRoutes = !!driversRoutesDate && driversRoutesDate !== yesterdayYmd;
+  const weekdayLabelForDriversRoutes = useMemo(() => {
+    if (!useWeekdayLabelForDriversRoutes || !driversRoutesDate) return '';
+    const dt = new Date(`${driversRoutesDate}T12:00:00`);
+    const locale = language === 'de' ? 'de-DE' : 'en-US';
+    return new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(dt);
+  }, [useWeekdayLabelForDriversRoutes, driversRoutesDate, language]);
+  const dashboardKpiLabel = (kpi) => {
+    if (!useWeekdayLabelForDriversRoutes) return labelForKpi(kpi);
+    if (kpi.key === 'drivers_worked_yesterday') {
+      return language === 'de'
+        ? `Fahrer ${weekdayLabelForDriversRoutes} im Einsatz`
+        : `Drivers Worked ${weekdayLabelForDriversRoutes}`;
+    }
+    if (kpi.key === 'routes_completed_yesterday') {
+      return language === 'de'
+        ? `Routen ${weekdayLabelForDriversRoutes} abgeschlossen`
+        : `Routes Completed ${weekdayLabelForDriversRoutes}`;
+    }
+    return labelForKpi(kpi);
+  };
 
   const pave = data?.paveInspections || {};
+  const publicIntake = data?.publicIntake || null;
+  const canOpenPersonal = isSuperAdmin || hasPermission('page_employees');
+  const canOpenDamage = isSuperAdmin || hasPermission('page_damages');
+  const personalNotifications = useMemo(
+    () => (publicIntake?.personalQuestionnaires?.recent || []).filter((row) => ['submitted', 'reviewing', 'error'].includes(String(row.status || '').toLowerCase())),
+    [publicIntake?.personalQuestionnaires?.recent]
+  );
+  const damageNotifications = useMemo(
+    () => (publicIntake?.damageReports?.recent || []).filter((row) => ['submitted', 'reviewing', 'error'].includes(String(row.status || '').toLowerCase())),
+    [publicIntake?.damageReports?.recent]
+  );
+  const workshopAppointments = data?.recentWorkshopAppointments || [];
 
   return (
     <section className="analytics-page dashboard-page">
@@ -145,15 +204,164 @@ export default function DashboardPage() {
 
       {data && (
         <>
+          {publicIntake && (canOpenPersonal || canOpenDamage) && (
+            <>
+              <h2 className="dashboard-section-title">Notifications</h2>
+              <div className="dashboard-two-col">
+                {canOpenPersonal && (
+                  <div className="analytics-chart-card">
+                    <h3>New Personalfragebogen submissions</h3>
+                    <p className="muted small">
+                      Pending: <strong>{formatKpiValue(publicIntake.personalQuestionnaires?.pending, 'number')}</strong>
+                    </p>
+                    {personalNotifications.length === 0 ? (
+                      <p className="analytics-no-data">No new Personalfragebogen notifications.</p>
+                    ) : (
+                      <div className="analytics-donut-list">
+                        {personalNotifications.map((row) => (
+                          <Link key={row.id} className="analytics-donut-item" to="/personal-fragebogen-review">
+                            <span className="analytics-donut-label">
+                              {[row.first_name, row.last_name].filter(Boolean).join(' ') || row.email || `Submission ${row.id}`}
+                            </span>
+                            <span className="analytics-donut-value">{formatDateNormal(row.created_at)}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                    <p style={{ marginTop: '0.85rem' }}>
+                      <Link to="/personal-fragebogen-review">Open Personalfragebogen review queue</Link>
+                    </p>
+                  </div>
+                )}
+
+                {canOpenDamage && (
+                  <div className="analytics-chart-card">
+                    <h3>New Schadenmeldung submissions</h3>
+                    <p className="muted small">
+                      Pending: <strong>{formatKpiValue(publicIntake.damageReports?.pending, 'number')}</strong>
+                    </p>
+                    {damageNotifications.length === 0 ? (
+                      <p className="analytics-no-data">No new Schadenmeldung notifications.</p>
+                    ) : (
+                      <div className="analytics-donut-list">
+                        {damageNotifications.map((row) => (
+                          <Link key={row.id} className="analytics-donut-item" to="/schadenmeldung-review">
+                            <span className="analytics-donut-label">
+                              {row.driver_name || row.reporter_name || `Report ${row.id}`}
+                            </span>
+                            <span className="analytics-donut-value">{formatDateNormal(row.created_at)}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                    <p style={{ marginTop: '0.85rem' }}>
+                      <Link to="/schadenmeldung-review">Open Schadenmeldung review queue</Link>
+                    </p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {workshopAppointments.length > 0 && (
+            <>
+              <h2 className="dashboard-section-title">Planned Workshop appointments</h2>
+              <div className="analytics-chart-card" style={{ marginBottom: '1rem' }}>
+                <p className="muted small" style={{ marginTop: 0 }}>
+                  Cars are shown here starting 7 days before the workshop date and stay visible during the workshop period.
+                </p>
+                <div className="analytics-donut-list">
+                  {workshopAppointments.map((row) => (
+                    <Link key={row.id} className="analytics-donut-item" to="/cars">
+                      <span className="analytics-donut-label">
+                        {(row.license_plate || row.vehicle_id || `Car ${row.id}`).trim()}
+                        {row.planned_workshop_name ? ` · ${row.planned_workshop_name}` : ''}
+                      </span>
+                      <span className="analytics-donut-value">
+                        {formatDateRange(row.planned_workshop_from, row.planned_workshop_to)}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
           <h2 className="dashboard-section-title">{t('dashboard.section.executive')}</h2>
           <div className="analytics-kpi-grid">
             {orderedKpis.map((kpi) => (
               <div key={kpi.key} className="analytics-kpi-card">
-                <div className="analytics-kpi-label">{labelForKpi(kpi)}</div>
+                <div className="analytics-kpi-label">{dashboardKpiLabel(kpi)}</div>
                 <div className="analytics-kpi-value">{formatKpiValue(kpi.value, kpi.format)}</div>
               </div>
             ))}
           </div>
+
+          {publicIntake && (canOpenPersonal || canOpenDamage) && (
+            <>
+              <h2 className="dashboard-section-title">Public Intake</h2>
+              <div className="analytics-kpi-grid">
+                {canOpenPersonal && (
+                  <div className="analytics-kpi-card">
+                    <div className="analytics-kpi-label">Personalfragebogen pending</div>
+                    <div className="analytics-kpi-value">{formatKpiValue(publicIntake.personalQuestionnaires?.pending, 'number')}</div>
+                    <p style={{ marginTop: '0.75rem' }}>
+                      <Link to="/personal-fragebogen-review">Open review queue</Link>
+                    </p>
+                  </div>
+                )}
+                {canOpenDamage && (
+                  <div className="analytics-kpi-card">
+                    <div className="analytics-kpi-label">Schadenmeldung pending</div>
+                    <div className="analytics-kpi-value">{formatKpiValue(publicIntake.damageReports?.pending, 'number')}</div>
+                    <p style={{ marginTop: '0.75rem' }}>
+                      <Link to="/schadenmeldung-review">Open damage queue</Link>
+                    </p>
+                  </div>
+                )}
+              </div>
+              <div className="dashboard-two-col">
+                {canOpenPersonal && (
+                  <div className="analytics-chart-card">
+                    <h3>Latest Personalfragebogen</h3>
+                    {(publicIntake.personalQuestionnaires?.recent || []).length === 0 ? (
+                      <p className="analytics-no-data">No submissions yet.</p>
+                    ) : (
+                      <div className="analytics-donut-list">
+                        {publicIntake.personalQuestionnaires.recent.map((row) => (
+                          <Link key={row.id} className="analytics-donut-item" to="/personal-fragebogen-review">
+                            <span className="analytics-donut-label">
+                              {[row.first_name, row.last_name].filter(Boolean).join(' ') || row.email || `Submission ${row.id}`}
+                            </span>
+                            <span className="analytics-donut-value">{row.status}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {canOpenDamage && (
+                  <div className="analytics-chart-card">
+                    <h3>Latest Schadenmeldung</h3>
+                    {(publicIntake.damageReports?.recent || []).length === 0 ? (
+                      <p className="analytics-no-data">No submissions yet.</p>
+                    ) : (
+                      <div className="analytics-donut-list">
+                        {publicIntake.damageReports.recent.map((row) => (
+                          <Link key={row.id} className="analytics-donut-item" to="/schadenmeldung-review">
+                            <span className="analytics-donut-label">
+                              {row.driver_name || row.reporter_name || `Report ${row.id}`}
+                            </span>
+                            <span className="analytics-donut-value">{row.status}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           {insuranceKpis.length > 0 && (
             <>
@@ -299,7 +507,7 @@ export default function DashboardPage() {
                         <tr key={r.id}>
                           <td>{r.plate_number || '—'}</td>
                           <td>{r.status || '—'}</td>
-                          <td>{r.inspection_date || r.report_date || formatTs(r.created_at)}</td>
+                          <td>{formatDateNormal(r.inspection_date || r.report_date) || formatTs(r.created_at)}</td>
                           <td>
                             <Link to={`/pave/gmail/${r.id}`}>{t('dashboard.open')}</Link>
                           </td>

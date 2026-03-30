@@ -6,6 +6,16 @@ const STATUS_OUT_OF_SERVICE = 'Out of Service';
 const STATUS_GROUNDED = 'Grounded';
 const STATUS_DECOMMISSIONED = 'Decommissioned';
 const STATUS_DEFLEETING_CANDIDATE = 'Defleeting candidate';
+let carsExtraColumnsReady = false;
+
+async function ensureCarsExtraColumns() {
+  if (carsExtraColumnsReady) return;
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_from DATE`);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_to DATE`);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_name TEXT`);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_comment TEXT`);
+  carsExtraColumnsReady = true;
+}
 
 function toDateOnly(value) {
   if (!value) return value;
@@ -29,6 +39,8 @@ function normalizeCarDates(car) {
     insurance_expiry: toDateOnly(car.insurance_expiry),
     lease_expiry: toDateOnly(car.lease_expiry),
     planned_defleeting_date: toDateOnly(car.planned_defleeting_date),
+    planned_workshop_from: toDateOnly(car.planned_workshop_from),
+    planned_workshop_to: toDateOnly(car.planned_workshop_to),
     created_at: toDateOnly(car.created_at),
     updated_at: toDateOnly(car.updated_at),
   };
@@ -106,6 +118,7 @@ function buildCarsWhere(filters, params) {
  * Get cars list with optional search and filters. Joins kenjo_employees for driver name.
  */
 async function getCars(filters = {}) {
+  await ensureCarsExtraColumns();
   const params = [];
   const where = buildCarsWhere(filters, params);
   const res = await query(
@@ -159,17 +172,31 @@ async function getCars(filters = {}) {
  * Get KPI counts for cars dashboard.
  */
 async function getCarsKpis() {
+  await ensureCarsExtraColumns();
   const res = await query(`
     SELECT
       COUNT(*)::int AS total_vehicles,
-      COUNT(*) FILTER (WHERE status = $1)::int AS active_vehicles,
-      COUNT(*) FILTER (WHERE status = $2)::int AS in_maintenance,
-      COUNT(*) FILTER (WHERE status = $3)::int AS out_of_service,
-      COUNT(*) FILTER (WHERE LOWER(TRIM(COALESCE(status, ''))) = LOWER($4))::int AS defleeting_candidates,
-      COUNT(*) FILTER (WHERE LOWER(TRIM(COALESCE(status, ''))) = LOWER($5))::int AS grounded_cars,
-      COUNT(*) FILTER (WHERE assigned_driver_id IS NULL OR assigned_driver_id = '')::int AS without_driver,
-      COUNT(*) FILTER (WHERE registration_expiry IS NOT NULL AND registration_expiry <= CURRENT_DATE + INTERVAL '30 days')::int AS expiring_documents
-    FROM cars
+      COUNT(*) FILTER (WHERE c.status = $1)::int AS active_vehicles,
+      COUNT(*) FILTER (WHERE c.status = $2)::int AS in_maintenance,
+      COUNT(*) FILTER (WHERE c.status = $3)::int AS out_of_service,
+      COUNT(*) FILTER (WHERE LOWER(TRIM(COALESCE(c.status, ''))) = LOWER($4))::int AS defleeting_candidates,
+      COUNT(*) FILTER (WHERE LOWER(TRIM(COALESCE(c.status, ''))) = LOWER($5))::int AS grounded_cars,
+      COUNT(*) FILTER (
+        WHERE (c.assigned_driver_id IS NULL OR c.assigned_driver_id = '')
+          AND (p_today.driver_identifier IS NULL OR TRIM(p_today.driver_identifier) = '')
+      )::int AS without_driver,
+      COUNT(*) FILTER (WHERE c.registration_expiry IS NOT NULL AND c.registration_expiry <= CURRENT_DATE + INTERVAL '30 days')::int AS expiring_documents
+    FROM cars c
+    LEFT JOIN LATERAL (
+      SELECT p.driver_identifier
+      FROM car_planning p
+      WHERE p.car_id = c.id
+        AND p.plan_date = CURRENT_DATE
+        AND p.driver_identifier IS NOT NULL
+        AND TRIM(p.driver_identifier) <> ''
+      ORDER BY p.updated_at DESC NULLS LAST, p.id DESC
+      LIMIT 1
+    ) p_today ON TRUE
   `, [STATUS_ACTIVE, STATUS_MAINTENANCE, STATUS_OUT_OF_SERVICE, STATUS_DEFLEETING_CANDIDATE, STATUS_GROUNDED]);
   const row = res.rows[0] || {};
   return {
@@ -188,6 +215,7 @@ async function getCarsKpis() {
  * Get single car by id with maintenance history, documents, driver assignment history.
  */
 async function getCarById(id) {
+  await ensureCarsExtraColumns();
   const carRes = await query(
     `SELECT c.*, k.first_name AS driver_first_name, k.last_name AS driver_last_name
      FROM cars c
@@ -281,6 +309,7 @@ async function getCarDocumentForDownload(carId, docId) {
  * Create car.
  */
 async function createCar(data) {
+  await ensureCarsExtraColumns();
   const res = await query(
     `INSERT INTO cars (
       vehicle_id, license_plate, vin, model, year, fuel_type, vehicle_type, status,
@@ -311,15 +340,16 @@ async function createCar(data) {
  * Update car.
  */
 async function updateCar(id, data) {
+  await ensureCarsExtraColumns();
   const fields = [];
   const values = [];
   let idx = 1;
-  const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date'];
+  const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to', 'planned_workshop_name', 'planned_workshop_comment'];
   for (const key of allow) {
     if (data[key] !== undefined) {
       fields.push(`${key} = $${idx}`);
       if (['year', 'mileage', 'incidents', 'safety_score'].includes(key) && data[key] !== null) values.push(Number(data[key]));
-      else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date'].includes(key)) values.push(data[key] || null);
+      else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to'].includes(key)) values.push(data[key] || null);
       else values.push(data[key] ?? null);
       idx++;
     }

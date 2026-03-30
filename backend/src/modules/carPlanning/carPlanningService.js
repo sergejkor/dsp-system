@@ -1,15 +1,63 @@
 import { query } from '../../db.js';
 
+let carPlanningWorkshopColumnsReady = false;
+
+async function ensureCarPlanningWorkshopColumns() {
+  if (carPlanningWorkshopColumnsReady) return;
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_from DATE`);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_to DATE`);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_name TEXT`);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_comment TEXT`);
+  carPlanningWorkshopColumnsReady = true;
+}
+
+function toDateOnly(value) {
+  if (!value) return '';
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+function isDateWithinRange(dateYmd, fromYmd, toYmd) {
+  if (!dateYmd || !fromYmd) return false;
+  const endYmd = toYmd || fromYmd;
+  return dateYmd >= fromYmd && dateYmd <= endYmd;
+}
+
+function isStatusAutoDeactivated(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return [
+    'maintenance',
+    'grounded',
+    'out of service',
+    'defleeted',
+    'decommissioned',
+  ].includes(normalized);
+}
+
 /**
  * Get all cars for planning grid (vehicle_id, id, license_plate, etc.).
  */
 async function getCarsForPlanning() {
+  await ensureCarPlanningWorkshopColumns();
   const res = await query(
-    `SELECT c.id, c.vehicle_id, c.license_plate
+    `SELECT c.id, c.vehicle_id, c.license_plate, c.status,
+            c.planned_workshop_from::text AS planned_workshop_from,
+            c.planned_workshop_to::text AS planned_workshop_to,
+            c.planned_workshop_name,
+            c.planned_workshop_comment
      FROM cars c
      ORDER BY c.vehicle_id`
   );
-  return res.rows || [];
+  return (res.rows || []).map((row) => ({
+    ...row,
+    planned_workshop_from: toDateOnly(row.planned_workshop_from),
+    planned_workshop_to: toDateOnly(row.planned_workshop_to),
+  }));
 }
 
 /**
@@ -61,6 +109,7 @@ async function getActiveDrivers() {
  * Get planning data for given dates: car states + slots (car_id, plan_date, driver_identifier, abfahrtskontrolle).
  */
 async function getPlanningData(dates) {
+  await ensureCarPlanningWorkshopColumns();
   if (!Array.isArray(dates) || dates.length === 0) {
     return { carStates: {}, slots: [] };
   }
@@ -96,6 +145,7 @@ async function getPlanningData(dates) {
  * Save planning: car states (deactivated) and slots (car_id, plan_date, driver_identifier, abfahrtskontrolle).
  */
 async function savePlanningData(carStates = {}, slots = []) {
+  await ensureCarPlanningWorkshopColumns();
   const carIds = Object.keys(carStates).map((k) => parseInt(k, 10)).filter(Number.isFinite);
   for (const carId of carIds) {
     await query(
@@ -120,6 +170,25 @@ async function savePlanningData(carStates = {}, slots = []) {
     );
   }
 
+  const workshopWindowByCarId = new Map();
+  const statusByCarId = new Map();
+  const workshopCarIds = [...new Set([...deduped.values()].map((s) => parseInt(s.car_id, 10)).filter(Number.isFinite))];
+  if (workshopCarIds.length > 0) {
+    const workshopCarsRes = await query(
+      `SELECT id, status, planned_workshop_from::text AS planned_workshop_from, planned_workshop_to::text AS planned_workshop_to
+       FROM cars
+       WHERE id = ANY($1::int[])`,
+      [workshopCarIds]
+    );
+    for (const row of workshopCarsRes.rows || []) {
+      statusByCarId.set(row.id, row.status || '');
+      workshopWindowByCarId.set(row.id, {
+        from: toDateOnly(row.planned_workshop_from),
+        to: toDateOnly(row.planned_workshop_to),
+      });
+    }
+  }
+
   for (const s of deduped.values()) {
     const planDate = (s.plan_date || '').toString().slice(0, 10);
     if (!planDate) continue;
@@ -128,6 +197,13 @@ async function savePlanningData(carStates = {}, slots = []) {
     const hasDriver = (s.driver_identifier || '').toString().trim();
     const hasControl = !!s.abfahrtskontrolle;
     if (!hasDriver && !hasControl) continue;
+    if (isStatusAutoDeactivated(statusByCarId.get(carId))) {
+      throw new Error(`Car ${carId} is not available for planning because of its current status`);
+    }
+    const workshopWindow = workshopWindowByCarId.get(carId);
+    if (workshopWindow?.from && isDateWithinRange(planDate, workshopWindow.from, workshopWindow.to)) {
+      throw new Error(`Car ${carId} has a planned workshop appointment on ${planDate}`);
+    }
     await query(
       `INSERT INTO car_planning (car_id, plan_date, driver_identifier, abfahrtskontrolle, updated_at)
        VALUES ($1, $2, NULLIF(TRIM($3), ''), $4, NOW())`,

@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } fr
 import html2canvas from 'html2canvas';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getCars, getDrivers, getPlanningData, savePlanningData, getReport, addCar } from '../services/carPlanningApi';
+import { syncKenjoEmployees } from '../services/kenjoApi';
 
 /** Day window around today included in planning columns (saved to DB). */
 const CAR_PLANNING_PAST_DAYS = 60;
-const CAR_PLANNING_FUTURE_DAYS = 5;
+const CAR_PLANNING_FUTURE_DAYS = 8;
 
 const FULL_WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -29,11 +30,41 @@ function formatShort(dateStr) {
   return `${d}.${m}.${y}`;
 }
 
+function isDateWithinRange(dateStr, fromStr, toStr) {
+  if (!dateStr || !fromStr) return false;
+  const end = toStr || fromStr;
+  return dateStr >= fromStr && dateStr <= end;
+}
+
+function formatWorkshopPeriod(fromStr, toStr) {
+  if (!fromStr) return '';
+  if (!toStr || toStr === fromStr) return formatShort(fromStr);
+  return `${formatShort(fromStr)} - ${formatShort(toStr)}`;
+}
+
+function isStatusAutoDeactivated(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return ['maintenance', 'grounded', 'out of service', 'defleeted', 'decommissioned'].includes(normalized);
+}
+
 /** Searchable driver cell: input + dropdown filtered by query; supports free text. */
-function DriverCell({ value, drivers, usedInColumn, onSelect, onAbfahrtskontrolle, abfahrtskontrolleMode, abfahrtskontrolleDone, disabled }) {
+function DriverCell({
+  value,
+  drivers,
+  usedInColumn,
+  onSelect,
+  onAbfahrtskontrolle,
+  abfahrtskontrolleMode,
+  abfahrtskontrolleDone,
+  disabled,
+  pasteValue = '',
+  onCopyValue,
+  usePasteButton = false,
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState(value || '');
   const ref = useRef(null);
+  const locked = !!abfahrtskontrolleMode;
 
   const filtered = useMemo(() => {
     const q = (query || '').trim().toLowerCase();
@@ -48,13 +79,16 @@ function DriverCell({ value, drivers, usedInColumn, onSelect, onAbfahrtskontroll
             (d.employee_number && String(d.employee_number).toLowerCase().includes(q))
         );
     const result = [];
+    const seen = new Set();
     for (const d of base) {
       const name = (d.display_name || d.transporter_id || d.id || '').toString().trim().toLowerCase();
       if (!name) {
         result.push(d);
         continue;
       }
+      if (seen.has(name)) continue;
       if (usedInColumn.has(name) && name !== current) continue;
+      seen.add(name);
       result.push(d);
       if (result.length >= 20) break;
     }
@@ -67,12 +101,13 @@ function DriverCell({ value, drivers, usedInColumn, onSelect, onAbfahrtskontroll
 
   useEffect(() => {
     if (!open) return;
+    if (locked) return;
     function handleClickOutside(e) {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
+  }, [open, locked]);
 
   return (
     <div className="car-planning-cell-wrap" ref={ref}>
@@ -80,12 +115,18 @@ function DriverCell({ value, drivers, usedInColumn, onSelect, onAbfahrtskontroll
         type="text"
         className={`car-planning-cell-input ${abfahrtskontrolleDone ? 'car-planning-cell-green' : ''}`}
         value={query}
+        readOnly={locked || disabled}
         onChange={(e) => {
+          if (locked || disabled) return;
           setQuery(e.target.value);
           setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          if (locked || disabled) return;
+          setOpen(true);
+        }}
         onBlur={() => {
+          if (locked || disabled) return;
           setTimeout(() => {
             setOpen(false);
             onSelect(query.trim());
@@ -94,6 +135,7 @@ function DriverCell({ value, drivers, usedInColumn, onSelect, onAbfahrtskontroll
         disabled={disabled}
         onKeyDown={(e) => {
           if (disabled) return;
+          if (locked) return;
           // Delete / Backspace on empty field clears value
           if ((e.key === 'Delete' || e.key === 'Backspace') && !query) {
             e.preventDefault();
@@ -118,7 +160,7 @@ function DriverCell({ value, drivers, usedInColumn, onSelect, onAbfahrtskontroll
         }}
         placeholder="—"
       />
-      {!disabled && (
+      {!disabled && !locked && (
         <div className="car-planning-cell-icons">
           <button
             type="button"
@@ -136,26 +178,33 @@ function DriverCell({ value, drivers, usedInColumn, onSelect, onAbfahrtskontroll
           <button
             type="button"
             className="car-planning-cell-icon-btn"
-            title="Copy"
+            title={usePasteButton ? 'Paste' : 'Copy'}
             onClick={async (e) => {
               e.preventDefault();
               e.stopPropagation();
+              if (usePasteButton) {
+                const text = (pasteValue || '').trim();
+                if (!text) return;
+                const next = text.toLowerCase();
+                const current = (value || '').trim().toLowerCase();
+                if (usedInColumn.has(next) && next !== current) return;
+                setQuery(text);
+                onSelect(text);
+                return;
+              }
               const text = (query || '').trim();
               if (!text) return;
+              onCopyValue?.(text);
               try {
-                if (navigator.clipboard?.writeText) {
-                  await navigator.clipboard.writeText(text);
-                }
-              } catch {
-                // ignore clipboard errors
-              }
+                if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+              } catch {}
             }}
           >
-            ⧉
+            {usePasteButton ? '📋' : '⧉'}
           </button>
         </div>
       )}
-      {open && (
+      {open && !locked && (
         <ul className="car-planning-cell-dropdown">
           {query.trim() && !drivers.some((d) => (d.display_name || '').toLowerCase() === query.trim().toLowerCase()) && (
             <li
@@ -245,8 +294,12 @@ export default function CarPlanningPage() {
   const { t } = useAppSettings();
   const [cars, setCars] = useState([]);
   const [drivers, setDrivers] = useState([]);
+  const [copiedDriverName, setCopiedDriverName] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [syncingKenjo, setSyncingKenjo] = useState(false);
+  const [copiedDayDate, setCopiedDayDate] = useState('');
+  const copiedSlotsByCarIdRef = useRef(null);
   const [abfahrtskontrolleMode, setAbfahrtskontrolleMode] = useState(false);
   const [carStates, setCarStates] = useState({});
   const [slots, setSlots] = useState({});
@@ -269,6 +322,7 @@ export default function CarPlanningPage() {
   const carPlanningFixedTableRef = useRef(null);
   const carPlanningDaysTableRef = useRef(null);
   const carPlanningDaysScrollWrapRef = useRef(null);
+  const carPlanningDidInitialScrollRef = useRef(false);
   const [screenshotStatus, setScreenshotStatus] = useState('');
 
   const runSyncCarPlanningHeights = useCallback(() => {
@@ -291,6 +345,21 @@ export default function CarPlanningPage() {
     const all = [...new Set([nd, ...scroll])].sort();
     return { newDayDate: nd, scrollDates: scroll, allPlanningDates: all };
   }, []);
+
+  const getWorkshopBlockForDate = useCallback((car, dateStr) => {
+    const from = (car?.planned_workshop_from || '').toString().slice(0, 10);
+    const to = (car?.planned_workshop_to || '').toString().slice(0, 10);
+    if (!from || !isDateWithinRange(dateStr, from, to)) return null;
+    return {
+      workshopName: (car?.planned_workshop_name || '').toString().trim(),
+      periodLabel: formatWorkshopPeriod(from, to),
+    };
+  }, []);
+
+  const isCarUnavailableForPlanning = useCallback(
+    (car, dateStr) => isStatusAutoDeactivated(car?.status) || !!getWorkshopBlockForDate(car, dateStr),
+    [getWorkshopBlockForDate]
+  );
 
   // Auto-set Abfahrtskontrolle based on last driver vs today
   const handleAutoAbfahrtskontrolle = () => {
@@ -412,11 +481,12 @@ export default function CarPlanningPage() {
     const date = newDayDate;
     let n = 0;
     cars.forEach((car) => {
+      if (isCarUnavailableForPlanning(car, date)) return;
       const key = `${car.id}_${date}`;
       if (slots[key]?.driver_identifier && String(slots[key].driver_identifier).trim()) n++;
     });
     return n;
-  }, [cars, slots, newDayDate]);
+  }, [cars, slots, newDayDate, isCarUnavailableForPlanning]);
 
   const sortedCars = useMemo(() => {
     const out = [...cars].sort((a, b) => {
@@ -447,8 +517,28 @@ export default function CarPlanningPage() {
   useLayoutEffect(() => {
     const el = carPlanningDaysScrollWrapRef.current;
     if (!el) return;
-    el.scrollLeft = el.scrollWidth;
-  }, [scrollDates, sortedCars.length, slots]);
+    if (loading) return;
+    if (carPlanningDidInitialScrollRef.current) return;
+
+    // Wait for table layout/width settle, then jump to newest day (right edge).
+    const setToRight = () => {
+      if (!carPlanningDaysScrollWrapRef.current) return;
+      carPlanningDaysScrollWrapRef.current.scrollLeft = carPlanningDaysScrollWrapRef.current.scrollWidth;
+    };
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      setToRight();
+      raf2 = requestAnimationFrame(() => {
+        setToRight();
+        carPlanningDidInitialScrollRef.current = true;
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [loading, scrollDates, sortedCars.length]);
 
   const setSlot = (carId, date, driverIdentifier, abfahrtskontrolle) => {
     const key = `${carId}_${date}`;
@@ -476,15 +566,14 @@ export default function CarPlanningPage() {
   const buildPayload = () => {
     const slotList = [];
     cars.forEach((car) => {
-      allPlanningDates.forEach((date) => {
-        const key = `${car.id}_${date}`;
-        const s = slots[key];
-        slotList.push({
-          car_id: car.id,
-          plan_date: date,
-          driver_identifier: (s?.driver_identifier || '').toString().trim(),
-          abfahrtskontrolle: !!s?.abfahrtskontrolle,
-        });
+      if (isCarUnavailableForPlanning(car, newDayDate)) return;
+      const key = `${car.id}_${newDayDate}`;
+      const s = slots[key];
+      slotList.push({
+        car_id: car.id,
+        plan_date: newDayDate,
+        driver_identifier: (s?.driver_identifier || '').toString().trim(),
+        abfahrtskontrolle: !!s?.abfahrtskontrolle,
       });
     });
     return { carStates, slots: slotList };
@@ -552,6 +641,27 @@ export default function CarPlanningPage() {
         <button
           type="button"
           className="btn-secondary car-planning-btn-sm car-planning-toolbar-btn"
+          disabled={syncingKenjo || loading}
+          onClick={async () => {
+            setError('');
+            setSyncingKenjo(true);
+            try {
+              await syncKenjoEmployees();
+              const freshDrivers = await getDrivers();
+              setDrivers(freshDrivers || []);
+            } catch (e) {
+              setError(e?.message || 'Kenjo sync failed');
+            } finally {
+              setSyncingKenjo(false);
+            }
+          }}
+          title="Sync driver names from Kenjo"
+        >
+          {syncingKenjo ? 'Syncing Kenjo…' : 'Sync Kenjo names'}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary car-planning-btn-sm car-planning-toolbar-btn"
           onClick={() => setAddCarOpen(true)}
         >
           Add Car
@@ -587,6 +697,32 @@ export default function CarPlanningPage() {
                   <button
                     type="button"
                     className="car-planning-sort-btn"
+                    disabled={!copiedSlotsByCarIdRef.current || !copiedDayDate || frozen}
+                    title={copiedDayDate ? `Paste from ${formatShort(copiedDayDate)}` : 'Copy a day first'}
+                    onClick={() => {
+                      const copied = copiedSlotsByCarIdRef.current;
+                      if (!copied) return;
+                      setSlots((prev) => {
+                        const next = { ...prev };
+                        for (const car of sortedCars) {
+                          if (carStates[car.id]) continue; // inactive rows stay untouched
+                          const from = (copied[car.id] || '').toString().trim();
+                          if (!from) continue;
+                          const key = `${car.id}_${newDayDate}`;
+                          next[key] = {
+                            driver_identifier: from,
+                            abfahrtskontrolle: prev[key]?.abfahrtskontrolle,
+                          };
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    <span className="car-planning-sort-icon" aria-hidden>Paste</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="car-planning-sort-btn"
                     title={t('carPlanning.sortAZ')}
                     onClick={() => {
                       setSortByDate((prev) => {
@@ -607,29 +743,82 @@ export default function CarPlanningPage() {
             <tbody>
               {sortedCars.map((car) => {
                 const { plateRaw, plateStyle } = getCarPlateDisplay(car);
+                const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
+                const statusBlocked = isStatusAutoDeactivated(car.status);
+                const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
+                const rowInactiveTitle = statusBlocked
+                  ? `Unavailable because of car status: ${car.status || 'inactive'}`
+                  : newDayWorkshopBlock
+                    ? `Workshop: ${newDayWorkshopBlock.periodLabel}`
+                    : '';
                 return (
-                  <tr key={car.id} className={carStates[car.id] ? 'car-planning-row-inactive' : ''}>
+                  <tr key={car.id} className={rowInactive ? 'car-planning-row-inactive' : ''} title={rowInactiveTitle}>
                     <td className="car-planning-td-fixed">
                       <label className="car-planning-check-label">
                         <input
                           type="checkbox"
                           checked={!!carStates[car.id]}
                           onChange={(e) => setCarState(car.id, e.target.checked)}
+                          disabled={statusBlocked || !!newDayWorkshopBlock}
+                          title={rowInactiveTitle}
                         />
                       </label>
                     </td>
                     <td className="car-planning-td-car" style={plateStyle}>{plateRaw || car.id}</td>
-                    <td className="car-planning-td-cell car-planning-td-newday">
-                      <DriverCell
-                        value={slots[`${car.id}_${newDayDate}`]?.driver_identifier}
-                        drivers={drivers}
-                        usedInColumn={usedDriversByDateExcludingCar[`${car.id}_${newDayDate}`] || new Set()}
-                        onSelect={(name) => setSlot(car.id, newDayDate, name, slots[`${car.id}_${newDayDate}`]?.abfahrtskontrolle)}
-                        onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, newDayDate)}
-                        abfahrtskontrolleMode={abfahrtskontrolleMode}
-                        abfahrtskontrolleDone={!!slots[`${car.id}_${newDayDate}`]?.abfahrtskontrolle}
-                        disabled={!!carStates[car.id] || frozen}
-                      />
+                    <td
+                      className="car-planning-td-cell car-planning-td-newday"
+                      style={statusBlocked ? { backgroundColor: '#f3f4f6' } : newDayWorkshopBlock ? { backgroundColor: '#fef2f2' } : undefined}
+                    >
+                      {statusBlocked ? (
+                        <div
+                          title={car.status || 'Unavailable'}
+                          style={{
+                            minHeight: '2.6rem',
+                            padding: '0.35rem 0.5rem',
+                            borderRadius: 8,
+                            border: '1px solid #d1d5db',
+                            background: '#f9fafb',
+                            color: '#374151',
+                            fontSize: '0.82rem',
+                            lineHeight: 1.25,
+                          }}
+                        >
+                          <strong>{car.status || 'Unavailable'}</strong>
+                          <div>Car is deactivated in planning</div>
+                        </div>
+                      ) : newDayWorkshopBlock ? (
+                        <div
+                          title={newDayWorkshopBlock.workshopName || 'Workshop appointment'}
+                          style={{
+                            minHeight: '2.6rem',
+                            padding: '0.35rem 0.5rem',
+                            borderRadius: 8,
+                            border: '1px solid #fecaca',
+                            background: '#fff1f2',
+                            color: '#991b1b',
+                            fontSize: '0.82rem',
+                            lineHeight: 1.25,
+                          }}
+                        >
+                          <strong>Workshop</strong>
+                          <div>{newDayWorkshopBlock.workshopName || 'Planned appointment'}</div>
+                          <div>{newDayWorkshopBlock.periodLabel}</div>
+                        </div>
+                      ) : (
+                        <DriverCell
+                          value={slots[`${car.id}_${newDayDate}`]?.driver_identifier}
+                          drivers={drivers}
+                          usedInColumn={usedDriversByDateExcludingCar[`${car.id}_${newDayDate}`] || new Set()}
+                          pasteValue={copiedDriverName}
+                          onCopyValue={setCopiedDriverName}
+                          usePasteButton
+                          onSelect={(name) => setSlot(car.id, newDayDate, name, slots[`${car.id}_${newDayDate}`]?.abfahrtskontrolle)}
+                          onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, newDayDate)}
+                          abfahrtskontrolleMode={abfahrtskontrolleMode}
+                          abfahrtskontrolleDone={!!slots[`${car.id}_${newDayDate}`]?.abfahrtskontrolle}
+                          disabled={!!carStates[car.id] || frozen}
+                        />
+                      )}
                     </td>
                   </tr>
                 );
@@ -644,6 +833,21 @@ export default function CarPlanningPage() {
                 {scrollDates.map((d) => (
                   <th key={d} className="car-planning-th-day car-planning-th-scroll-day">
                     <span>{t(`carPlanning.weekdays.${weekdayKeyFromYmd(d)}`)} ({formatShort(d)})</span>
+                    <button
+                      type="button"
+                      className="car-planning-sort-btn"
+                      title={`Copy names from ${formatShort(d)}`}
+                      onClick={() => {
+                        const map = {};
+                        for (const car of cars) {
+                          map[car.id] = (slots[`${car.id}_${d}`]?.driver_identifier || '').toString().trim();
+                        }
+                        copiedSlotsByCarIdRef.current = map;
+                        setCopiedDayDate(d);
+                      }}
+                    >
+                      <span className="car-planning-sort-icon" aria-hidden>⧉</span>
+                    </button>
                     <button
                       type="button"
                       className="car-planning-sort-btn"
@@ -666,24 +870,74 @@ export default function CarPlanningPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedCars.map((car) => (
-                <tr key={car.id} className={carStates[car.id] ? 'car-planning-row-inactive' : ''}>
-                  {scrollDates.map((date) => (
-                    <td key={date} className="car-planning-td-cell car-planning-td-scroll-day">
-                      <DriverCell
-                        value={slots[`${car.id}_${date}`]?.driver_identifier}
-                        drivers={drivers}
-                        usedInColumn={usedDriversByDateExcludingCar[`${car.id}_${date}`] || new Set()}
-                        onSelect={(name) => setSlot(car.id, date, name, slots[`${car.id}_${date}`]?.abfahrtskontrolle)}
-                        onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, date)}
-                        abfahrtskontrolleMode={abfahrtskontrolleMode}
-                        abfahrtskontrolleDone={!!slots[`${car.id}_${date}`]?.abfahrtskontrolle}
-                        disabled={!!carStates[car.id] || (frozen && date <= newDayDate)}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {sortedCars.map((car) => {
+                const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
+                const statusBlocked = isStatusAutoDeactivated(car.status);
+                const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
+                return (
+                  <tr key={car.id} className={rowInactive ? 'car-planning-row-inactive' : ''}>
+                    {scrollDates.map((date) => {
+                      const workshopBlock = getWorkshopBlockForDate(car, date);
+                      const statusBlock = isStatusAutoDeactivated(car.status);
+                      return (
+                        <td
+                          key={date}
+                          className="car-planning-td-cell car-planning-td-scroll-day"
+                          style={statusBlock ? { backgroundColor: '#f3f4f6' } : workshopBlock ? { backgroundColor: '#fef2f2' } : undefined}
+                        >
+                          {statusBlock ? (
+                            <div
+                              title={car.status || 'Unavailable'}
+                              style={{
+                                minHeight: '2.6rem',
+                                padding: '0.35rem 0.4rem',
+                                borderRadius: 8,
+                                border: '1px solid #d1d5db',
+                                background: '#f9fafb',
+                                color: '#374151',
+                                fontSize: '0.78rem',
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              <strong>{car.status || 'Unavailable'}</strong>
+                            </div>
+                          ) : workshopBlock ? (
+                            <div
+                              title={workshopBlock.workshopName || 'Workshop appointment'}
+                              style={{
+                                minHeight: '2.6rem',
+                                padding: '0.35rem 0.4rem',
+                                borderRadius: 8,
+                                border: '1px solid #fecaca',
+                                background: '#fff1f2',
+                                color: '#991b1b',
+                                fontSize: '0.78rem',
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              <strong>Workshop</strong>
+                              {workshopBlock.workshopName ? <div>{workshopBlock.workshopName}</div> : null}
+                            </div>
+                          ) : (
+                            <DriverCell
+                              value={slots[`${car.id}_${date}`]?.driver_identifier}
+                              drivers={drivers}
+                              usedInColumn={usedDriversByDateExcludingCar[`${car.id}_${date}`] || new Set()}
+                              pasteValue={copiedDriverName}
+                              onCopyValue={setCopiedDriverName}
+                              onSelect={(name) => setSlot(car.id, date, name, slots[`${car.id}_${date}`]?.abfahrtskontrolle)}
+                              onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, date)}
+                              abfahrtskontrolleMode={abfahrtskontrolleMode}
+                              abfahrtskontrolleDone={!!slots[`${car.id}_${date}`]?.abfahrtskontrolle}
+                              disabled={!!carStates[car.id] || (frozen && date <= newDayDate)}
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

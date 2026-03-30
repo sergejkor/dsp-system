@@ -1,5 +1,6 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { QRCodeCanvas } from 'qrcode.react';
 import {
   getCarsKpis,
   getCars,
@@ -68,9 +69,14 @@ export default function CarsPage() {
   const [maintenanceCarId, setMaintenanceCarId] = useState(null);
   const [deleteCarId, setDeleteCarId] = useState(null);
   const [actionsOpenId, setActionsOpenId] = useState(null);
+  const [actionsMenuPos, setActionsMenuPos] = useState(null); // { top, left }
+  const actionsMenuCarRef = useRef(null);
   const [kenjoUsers, setKenjoUsers] = useState([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [qrVin, setQrVin] = useState('');
+  const [sortKey, setSortKey] = useState('vehicle_id');
+  const [sortDir, setSortDir] = useState('asc');
 
   const filters = useMemo(() => ({
     search: search.trim() || undefined,
@@ -160,6 +166,85 @@ export default function CarsPage() {
     return {};
   };
 
+  const withoutDriverInList = useMemo(
+    () =>
+      cars.reduce((count, c) => {
+        const hasAssignedDriver = Boolean(c.today_planning_driver || c.assigned_driver_id);
+        return hasAssignedDriver ? count : count + 1;
+      }, 0),
+    [cars],
+  );
+
+  const sortedCars = useMemo(() => {
+    const list = [...cars];
+    list.sort((a, b) => {
+      const av = a?.[sortKey];
+      const bv = b?.[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const an = Number(av);
+      const bn = Number(bv);
+      let cmp = 0;
+      if (Number.isFinite(an) && Number.isFinite(bn)) cmp = an - bn;
+      else cmp = String(av).localeCompare(String(bv), undefined, { sensitivity: 'base', numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return list;
+  }, [cars, sortKey, sortDir]);
+
+  function toggleSort(nextKey) {
+    if (sortKey === nextKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDir('asc');
+  }
+
+  function renderSortHeader(label, key) {
+    const active = sortKey === key;
+    const icon = active ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
+    return (
+      <button
+        type="button"
+        className="cars-sort-btn"
+        onClick={() => toggleSort(key)}
+        title={`Sort by ${label}`}
+      >
+        <span>{label}</span>
+        <span className="cars-sort-icon" aria-hidden="true">{icon}</span>
+      </button>
+    );
+  }
+
+  function openVinQr(vinValue) {
+    const vin = String(vinValue || '').trim();
+    if (!vin) return;
+    setQrVin(vin);
+  }
+
+  useEffect(() => {
+    if (!actionsOpenId) return;
+    function close() {
+      setActionsOpenId(null);
+      setActionsMenuPos(null);
+      actionsMenuCarRef.current = null;
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') close();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    // Close on scroll/resize so the menu doesn't drift.
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [actionsOpenId]);
+
   return (
     <section className="card cars-page">
       <h2>Cars</h2>
@@ -174,7 +259,7 @@ export default function CarsPage() {
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.activeVehicles}</span><span className="cars-kpi-label">Active</span></div>
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.inMaintenance}</span><span className="cars-kpi-label">In Maintenance</span></div>
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.outOfService}</span><span className="cars-kpi-label">Out of Service</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.withoutDriver}</span><span className="cars-kpi-label">Without Driver</span></div>
+          <div className="cars-kpi"><span className="cars-kpi-value">{withoutDriverInList}</span><span className="cars-kpi-label">Without Driver</span></div>
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.expiringDocuments}</span><span className="cars-kpi-label">Expiring Documents</span></div>
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.defleetingCandidates ?? 0}</span><span className="cars-kpi-label">Defleeting Candidates</span></div>
           <div className="cars-kpi"><span className="cars-kpi-value">{kpis.groundedCars ?? 0}</span><span className="cars-kpi-label">Grounded Cars</span></div>
@@ -212,27 +297,28 @@ export default function CarsPage() {
           <table className="cars-table">
             <thead>
               <tr>
-                <th>Vehicle ID</th>
-                <th>License Plate</th>
-                <th>Vehicle Model</th>
-                <th>Status</th>
-                <th>Assigned Driver</th>
-                <th>Station</th>
-                <th>Mileage</th>
-                <th>Last Maintenance</th>
-                <th>Next Maintenance</th>
-                <th>Condition</th>
-                <th>Incidents</th>
-                <th>Fuel Type</th>
-                <th>Registration Expiry</th>
+                <th>{renderSortHeader('Vehicle ID', 'vehicle_id')}</th>
+                <th>{renderSortHeader('License Plate', 'license_plate')}</th>
+                <th>{renderSortHeader('VIN', 'vin')}</th>
+                <th>{renderSortHeader('Vehicle Model', 'model')}</th>
+                <th>{renderSortHeader('Status', 'status')}</th>
+                <th>{renderSortHeader('Assigned Driver', 'today_planning_driver')}</th>
+                <th>{renderSortHeader('Station', 'station')}</th>
+                <th>{renderSortHeader('Mileage', 'mileage')}</th>
+                <th>{renderSortHeader('Last Maintenance', 'last_maintenance_date')}</th>
+                <th>{renderSortHeader('Next Maintenance', 'next_maintenance_date')}</th>
+                <th>{renderSortHeader('Condition', 'condition_grade')}</th>
+                <th>{renderSortHeader('Incidents', 'incidents')}</th>
+                <th>{renderSortHeader('Fuel Type', 'fuel_type')}</th>
+                <th>{renderSortHeader('Registration Expiry', 'registration_expiry')}</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {cars.length === 0 ? (
-                <tr><td colSpan={15} className="cars-empty">No cars found.</td></tr>
+                <tr><td colSpan={16} className="cars-empty">No cars found.</td></tr>
               ) : (
-                cars.map((c) => (
+                sortedCars.map((c) => (
                   <tr
                     key={c.id}
                     style={
@@ -255,6 +341,22 @@ export default function CarsPage() {
                       )}
                     </td>
                     <td>{c.license_plate || '—'}</td>
+                    <td>
+                      <div className="cars-vin-cell">
+                        <span>{c.vin || '—'}</span>
+                        {c.vin && (
+                          <button
+                            type="button"
+                            className="cars-vin-qr-btn"
+                            title="Show VIN QR code"
+                            aria-label="Show VIN QR code"
+                            onClick={() => openVinQr(c.vin)}
+                          >
+                            ▦
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td>{c.model || '—'}</td>
                     <td><span style={statusColor(c.status)}>{c.status || '—'}</span></td>
                     <td>
@@ -311,13 +413,27 @@ export default function CarsPage() {
                       )}
                     </td>
                     <td className="cars-actions-cell">
-                      <div style={{ position: 'relative', display: 'inline-block' }}>
+                      <div style={{ display: 'inline-block' }}>
                         <button
                           type="button"
                           className="cars-action-menu-trigger"
-                          onClick={() =>
-                            setActionsOpenId((id) => (id === c.id ? null : c.id))
-                          }
+                          onClick={(e) => {
+                            const nextId = actionsOpenId === c.id ? null : c.id;
+                            if (!nextId) {
+                              setActionsOpenId(null);
+                              setActionsMenuPos(null);
+                              actionsMenuCarRef.current = null;
+                              return;
+                            }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setActionsOpenId(nextId);
+                            actionsMenuCarRef.current = c;
+                            // Fixed-position menu, aligned to trigger bottom-right.
+                            setActionsMenuPos({
+                              top: Math.round(rect.bottom + 4),
+                              left: Math.round(rect.right),
+                            });
+                          }}
                           title="Actions"
                           style={{
                             border: 'none',
@@ -329,76 +445,6 @@ export default function CarsPage() {
                         >
                           ⋮
                         </button>
-                        {actionsOpenId === c.id && (
-                          <div
-                            className="cars-actions-menu"
-                            style={{
-                              position: 'absolute',
-                              right: 0,
-                              marginTop: '0.25rem',
-                              background: '#fff',
-                              border: '1px solid #ddd',
-                              borderRadius: '6px',
-                              boxShadow: '0 4px 10px rgba(0,0,0,0.15)',
-                              minWidth: '140px',
-                              zIndex: 5,
-                              display: 'flex',
-                              flexDirection: 'column',
-                            }}
-                          >
-                            <button
-                              type="button"
-                              className="cars-action-menu-item"
-                              onClick={() => {
-                                openDetails(c.id);
-                                setActionsOpenId(null);
-                              }}
-                            >
-                              View
-                            </button>
-                            <button
-                              type="button"
-                              className="cars-action-menu-item"
-                              onClick={() => {
-                                setEditCarId(c.id);
-                                setActionsOpenId(null);
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="cars-action-menu-item"
-                              onClick={() => {
-                                navigate(`/car-planning?car_id=${c.id}`);
-                                setActionsOpenId(null);
-                              }}
-                            >
-                              Assign Driver
-                            </button>
-                            <button
-                              type="button"
-                              className="cars-action-menu-item"
-                              onClick={() => {
-                                setMaintenanceCarId(c.id);
-                                setActionsOpenId(null);
-                              }}
-                            >
-                              Maintenance
-                            </button>
-                            <button
-                              type="button"
-                              className="cars-action-menu-item cars-action-menu-item--danger"
-                              onClick={() => {
-                                setDeleteCarId(c.id);
-                                setActionsOpenId(null);
-                              }}
-                              disabled={c.status !== 'Decommissioned'}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -438,6 +484,7 @@ export default function CarsPage() {
           onClose={() => setDetailsCarId(null)}
           onRefresh={() => { loadCars(); loadKpis(); getCarById(detailsCarId).then(setDetailsCar); }}
           onAssignDriver={() => { setDetailsCarId(null); setAssignCarId(detailsCarId); }}
+          onOpenVinQr={openVinQr}
         />
       )}
 
@@ -506,6 +553,104 @@ export default function CarsPage() {
         />
       )}
 
+      {qrVin && (
+        <VinQrModal vin={qrVin} onClose={() => setQrVin('')} />
+      )}
+
+      {actionsOpenId && actionsMenuPos && actionsMenuCarRef.current && (
+        <div
+          onMouseDown={(e) => {
+            // close if click outside menu
+            if (e.target === e.currentTarget) {
+              setActionsOpenId(null);
+              setActionsMenuPos(null);
+              actionsMenuCarRef.current = null;
+            }
+          }}
+          style={{ position: 'fixed', inset: 0, zIndex: 1500 }}
+        >
+          <div
+            className="cars-actions-menu"
+            style={{
+              position: 'fixed',
+              top: actionsMenuPos.top,
+              left: actionsMenuPos.left,
+              transform: 'translateX(-100%)',
+              background: '#fff',
+              border: '1px solid #ddd',
+              borderRadius: '6px',
+              boxShadow: '0 4px 10px rgba(0,0,0,0.15)',
+              minWidth: '140px',
+              zIndex: 1501,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <button
+              type="button"
+              className="cars-action-menu-item"
+              onClick={() => {
+                openDetails(actionsMenuCarRef.current.id);
+                setActionsOpenId(null);
+                setActionsMenuPos(null);
+                actionsMenuCarRef.current = null;
+              }}
+            >
+              View
+            </button>
+            <button
+              type="button"
+              className="cars-action-menu-item"
+              onClick={() => {
+                setEditCarId(actionsMenuCarRef.current.id);
+                setActionsOpenId(null);
+                setActionsMenuPos(null);
+                actionsMenuCarRef.current = null;
+              }}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="cars-action-menu-item"
+              onClick={() => {
+                navigate(`/car-planning?car_id=${actionsMenuCarRef.current.id}`);
+                setActionsOpenId(null);
+                setActionsMenuPos(null);
+                actionsMenuCarRef.current = null;
+              }}
+            >
+              Assign Driver
+            </button>
+            <button
+              type="button"
+              className="cars-action-menu-item"
+              onClick={() => {
+                setMaintenanceCarId(actionsMenuCarRef.current.id);
+                setActionsOpenId(null);
+                setActionsMenuPos(null);
+                actionsMenuCarRef.current = null;
+              }}
+            >
+              Maintenance
+            </button>
+            <button
+              type="button"
+              className="cars-action-menu-item cars-action-menu-item--danger"
+              onClick={() => {
+                setDeleteCarId(actionsMenuCarRef.current.id);
+                setActionsOpenId(null);
+                setActionsMenuPos(null);
+                actionsMenuCarRef.current = null;
+              }}
+              disabled={actionsMenuCarRef.current.status !== 'Decommissioned'}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .cars-page { max-width: 100%; }
         .cars-message { padding: 0.5rem 0.75rem; border-radius: 6px; margin-bottom: 0.5rem; }
@@ -527,7 +672,36 @@ export default function CarsPage() {
         .cars-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
         .cars-table th, .cars-table td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
         .cars-table th { background: #f5f5f5; font-weight: 600; }
+        .cars-sort-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.3rem;
+          border: none;
+          background: transparent;
+          font: inherit;
+          font-weight: 600;
+          color: inherit;
+          cursor: pointer;
+          padding: 0;
+        }
+        .cars-sort-icon { font-size: 0.72rem; opacity: 0.8; }
         .cars-empty { text-align: center; color: #666; padding: 1rem !important; }
+        .cars-vin-cell { display: flex; align-items: center; gap: 0.35rem; }
+        .cars-vin-qr-btn {
+          border: 1px solid #cbd5e1;
+          background: #fff;
+          color: #0f172a;
+          border-radius: 4px;
+          padding: 0;
+          width: 18px;
+          height: 18px;
+          display: inline-grid;
+          place-items: center;
+          font-size: 0.75rem;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .cars-vin-qr-btn:hover { background: #f8fafc; }
         .cars-link { background: none; border: none; color: #1976d2; cursor: pointer; padding: 0; text-decoration: underline; }
         .cars-link--disabled { cursor: default; text-decoration: none; color: #555; }
         .cars-actions-cell { white-space: nowrap; }
@@ -542,6 +716,109 @@ export default function CarsPage() {
         .cars-selected-bar { margin-top: 0.75rem; padding: 0.5rem 0.75rem; background: #e3f2fd; border-radius: 6px; font-size: 0.9rem; }
       `}</style>
     </section>
+  );
+}
+
+function VinQrModal({ vin, onClose }) {
+  const value = String(vin || '').trim();
+  if (!value) return null;
+  const [copyStatus, setCopyStatus] = useState('');
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2000,
+        padding: '1rem',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%',
+          maxWidth: 360,
+          background: '#fff',
+          borderRadius: 10,
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.75rem 1rem',
+            borderBottom: '1px solid #eee',
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>VIN QR code</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {copyStatus && (
+              <span className="muted" style={{ fontSize: '0.85rem' }}>{copyStatus}</span>
+            )}
+            <button
+              type="button"
+              className="cars-btn cars-btn--secondary"
+              style={{ padding: '0.3rem 0.55rem', fontSize: '0.85rem' }}
+              onClick={async () => {
+                setCopyStatus('');
+                try {
+                  const canvas = document.getElementById('vin-qr-canvas');
+                  if (canvas && canvas.toBlob && navigator.clipboard?.write) {
+                    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+                    if (blob) {
+                      await navigator.clipboard.write([
+                        new ClipboardItem({ 'image/png': blob }),
+                      ]);
+                      setCopyStatus('Copied');
+                      setTimeout(() => setCopyStatus(''), 1500);
+                      return;
+                    }
+                  }
+                  // Fallback: copy VIN as text
+                  if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(value);
+                    setCopyStatus('VIN copied');
+                    setTimeout(() => setCopyStatus(''), 1500);
+                  }
+                } catch {
+                  setCopyStatus('Copy failed');
+                  setTimeout(() => setCopyStatus(''), 1500);
+                }
+              }}
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              title="Close"
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '1.5rem',
+                lineHeight: 1,
+                cursor: 'pointer',
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <div style={{ padding: '1rem', display: 'grid', placeItems: 'center', gap: '0.75rem' }}>
+          <QRCodeCanvas id="vin-qr-canvas" value={value} size={220} includeMargin />
+          <code style={{ wordBreak: 'break-all' }}>{value}</code>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -952,7 +1229,7 @@ function DeleteCarModal({ carId, onClose, onDeleted, onError }) {
 
 const DOCUMENT_TYPES = ['Registration', 'Insurance', 'Lease Agreement', 'Wartung', 'TÜV'];
 
-function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDriver }) {
+function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDriver, onOpenVinQr }) {
   const navigate = useNavigate();
   const [commentText, setCommentText] = useState('');
   const [commentSubmitting, setCommentSubmitting] = useState(false);
@@ -966,6 +1243,9 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
   const [paveImportsLoading, setPaveImportsLoading] = useState(false);
   const [paveImportsError, setPaveImportsError] = useState('');
   const [localDocuments, setLocalDocuments] = useState([]);
+  const [workshopForm, setWorkshopForm] = useState({ from: '', to: '', workshop: '', comment: '' });
+  const [workshopSaving, setWorkshopSaving] = useState(false);
+  const [drawerMessage, setDrawerMessage] = useState('');
 
   useEffect(() => {
     if (carId) getPaveSessions({ car_id: carId }).then((list) => setLastPave(list[0] || null)).catch(() => setLastPave(null));
@@ -1002,6 +1282,16 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
   useEffect(() => {
     setLocalDocuments(car?.documents || []);
   }, [car?.documents]);
+
+  useEffect(() => {
+    setWorkshopForm({
+      from: car?.planned_workshop_from ? String(car.planned_workshop_from).slice(0, 10) : '',
+      to: car?.planned_workshop_to ? String(car.planned_workshop_to).slice(0, 10) : '',
+      workshop: car?.planned_workshop_name || '',
+      comment: car?.planned_workshop_comment || '',
+    });
+    setDrawerMessage('');
+  }, [car?.planned_workshop_from, car?.planned_workshop_to, car?.planned_workshop_name, car?.planned_workshop_comment]);
 
   if (!car && !loading) return null;
 
@@ -1054,6 +1344,32 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
     downloadCarDocument(carId, doc.id, doc.file_name || `${doc.document_type}.pdf`).catch((err) => setDrawerError(err.message));
   }
 
+  async function handleSaveWorkshopAppointment(e) {
+    e.preventDefault();
+    if (!carId) return;
+    if (!workshopForm.from && !workshopForm.to && !workshopForm.workshop.trim() && !workshopForm.comment.trim()) {
+      setDrawerError('Please fill at least one workshop appointment field.');
+      return;
+    }
+    setWorkshopSaving(true);
+    setDrawerError('');
+    setDrawerMessage('');
+    try {
+      await updateCar(carId, {
+        planned_workshop_from: workshopForm.from || null,
+        planned_workshop_to: workshopForm.to || null,
+        planned_workshop_name: workshopForm.workshop.trim() || null,
+        planned_workshop_comment: workshopForm.comment.trim() || null,
+      });
+      setDrawerMessage('Planned workshop appointment saved.');
+      onRefresh();
+    } catch (err) {
+      setDrawerError(err?.message || 'Failed to save workshop appointment');
+    } finally {
+      setWorkshopSaving(false);
+    }
+  }
+
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
@@ -1077,7 +1393,23 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
                 <dl className="drawer-dl">
                   <dt>Vehicle ID</dt><dd>{car.vehicle_id}</dd>
                   <dt>License Plate</dt><dd>{car.license_plate || '—'}</dd>
-                  <dt>VIN</dt><dd>{car.vin || '—'}</dd>
+                  <dt>VIN</dt>
+                  <dd>
+                    <div className="cars-vin-cell">
+                      <span>{car.vin || '—'}</span>
+                      {car.vin && (
+                        <button
+                          type="button"
+                          className="cars-vin-qr-btn"
+                          title="Show VIN QR code"
+                          aria-label="Show VIN QR code"
+                          onClick={() => onOpenVinQr?.(car.vin)}
+                        >
+                          ▦
+                        </button>
+                      )}
+                    </div>
+                  </dd>
                   <dt>Model</dt><dd>{car.model || '—'}</dd>
                   <dt>Vehicle Type</dt><dd>{car.vehicle_type || '—'}</dd>
                   <dt>Year</dt><dd>{car.year || '—'}</dd>
@@ -1278,6 +1610,7 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
               <section className="drawer-section">
                 <h4>Documents</h4>
                 {drawerError && <p className="cars-message cars-message--error">{drawerError}</p>}
+                {drawerMessage && <p className="cars-message cars-message--ok">{drawerMessage}</p>}
                 {localDocuments?.length ? (
                   <ul className="drawer-docs-list">
                     {localDocuments.map((d) => (
@@ -1296,6 +1629,48 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
                   <label>Expiry <input type="date" value={docExpiry} onChange={(e) => setDocExpiry(e.target.value)} /></label>
                   <label>File <input type="file" onChange={(e) => setDocFile(e.target.files?.[0] || null)} /></label>
                   <button type="submit" disabled={!docFile || docSubmitting}>{docSubmitting ? 'Uploading…' : 'Upload document'}</button>
+                </form>
+              </section>
+              <section className="drawer-section">
+                <h4>Planned Workshop appointment</h4>
+                <form onSubmit={handleSaveWorkshopAppointment} className="drawer-upload-form">
+                  <label>
+                    From
+                    <input
+                      type="date"
+                      value={workshopForm.from}
+                      onChange={(e) => setWorkshopForm((prev) => ({ ...prev, from: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    To
+                    <input
+                      type="date"
+                      value={workshopForm.to}
+                      onChange={(e) => setWorkshopForm((prev) => ({ ...prev, to: e.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Workshop
+                    <input
+                      type="text"
+                      value={workshopForm.workshop}
+                      onChange={(e) => setWorkshopForm((prev) => ({ ...prev, workshop: e.target.value }))}
+                      placeholder="Workshop name"
+                    />
+                  </label>
+                  <label>
+                    Comment
+                    <textarea
+                      rows={3}
+                      value={workshopForm.comment}
+                      onChange={(e) => setWorkshopForm((prev) => ({ ...prev, comment: e.target.value }))}
+                      placeholder="Comment"
+                    />
+                  </label>
+                  <button type="submit" disabled={workshopSaving}>
+                    {workshopSaving ? 'Saving...' : 'Save workshop appointment'}
+                  </button>
                 </form>
               </section>
             </>
