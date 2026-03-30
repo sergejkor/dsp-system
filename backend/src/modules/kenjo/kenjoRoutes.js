@@ -32,6 +32,48 @@ const requireKenjoTimeOffAccess = authMiddleware.requireAnyPermission([
   'page_sync_kenjo',
 ]);
 
+async function getKenjoUsersListFallback() {
+  const res = await query(
+    `SELECT
+       k.kenjo_user_id AS _id,
+       COALESCE(NULLIF(TRIM(k.display_name), ''), NULLIF(TRIM(CONCAT_WS(' ', k.first_name, k.last_name)), ''), k.kenjo_user_id) AS display_name,
+       k.first_name,
+       k.last_name,
+       COALESCE(e.email, '') AS email,
+       COALESCE(k.job_title, '') AS job_title,
+       COALESCE(k.is_active, true) AS is_active,
+       COALESCE(k.transporter_id, '') AS transportation_id,
+       COALESCE(k.employee_number, '') AS employee_number,
+       k.start_date::text AS start_date,
+       k.contract_end::text AS contract_end
+     FROM kenjo_employees k
+     LEFT JOIN LATERAL (
+       SELECT emp.email
+       FROM employees emp
+       WHERE emp.kenjo_user_id = k.kenjo_user_id
+       ORDER BY emp.is_active DESC NULLS LAST, emp.id DESC
+       LIMIT 1
+     ) e ON TRUE
+     ORDER BY COALESCE(NULLIF(TRIM(k.last_name), ''), NULLIF(TRIM(k.display_name), ''), k.kenjo_user_id) ASC,
+              COALESCE(NULLIF(TRIM(k.first_name), ''), '') ASC`
+  );
+
+  return (res.rows || []).map((row) => ({
+    _id: String(row._id || '').trim(),
+    displayName: String(row.display_name || '').trim(),
+    firstName: String(row.first_name || '').trim(),
+    lastName: String(row.last_name || '').trim(),
+    email: String(row.email || '').trim(),
+    jobTitle: String(row.job_title || '').trim(),
+    isActive: row.is_active !== false,
+    transportationId: String(row.transportation_id || '').trim(),
+    employeeNumber: String(row.employee_number || '').trim(),
+    startDate: row.start_date ? String(row.start_date).slice(0, 10) : '',
+    contractEnd: row.contract_end ? String(row.contract_end).slice(0, 10) : '',
+    source: 'fallback_db',
+  }));
+}
+
 router.get('/health', requireKenjoReadAccess, (_req, res) => res.json({ ok: true, module: 'kenjo' }));
 
 router.get('/info', requireKenjoReadAccess, (_req, res) => {
@@ -44,7 +86,13 @@ router.get('/users', requireKenjoReadAccess, async (_req, res) => {
     res.json(users || []);
   } catch (error) {
     console.error('Kenjo /users error', error);
-    res.status(500).json({ error: String(error?.message || error) });
+    try {
+      const fallbackUsers = await getKenjoUsersListFallback();
+      res.json(fallbackUsers);
+    } catch (fallbackError) {
+      console.error('Kenjo /users fallback error', fallbackError);
+      res.status(500).json({ error: String(error?.message || error) });
+    }
   }
 });
 
@@ -516,4 +564,3 @@ router.get('/time-off', requireKenjoTimeOffAccess, async (req, res) => {
 });
 
 export default router;
-
