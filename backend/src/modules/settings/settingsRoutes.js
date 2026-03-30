@@ -3,12 +3,14 @@
  * All routes require authentication. Permission checks use session user. SuperAdmin-only: create user, lock/unlock/disable, reset password, set login enabled.
  */
 import { Router } from 'express';
+import multer from 'multer';
 import accessControlService from './accessControlService.js';
 import auditLogService from './auditLogService.js';
 import usersSettingsService from './usersSettingsService.js';
 import rolesService from './rolesService.js';
 import permissionsService from './permissionsService.js';
 import settingsService from './settingsService.js';
+import documentTemplateSettingsService from './documentTemplateSettingsService.js';
 import lookupService from './lookupService.js';
 import featureFlagsService from './featureFlagsService.js';
 import integrationSettingsService from './integrationSettingsService.js';
@@ -17,6 +19,7 @@ import authMiddleware from '../auth/authMiddleware.js';
 import authService from '../auth/authService.js';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 router.use(authMiddleware.requireAuth);
 
@@ -421,6 +424,62 @@ router.get('/audit', requirePermission('view_audit_logs'), async (req, res) => {
 });
 
 router.get('/health', (_req, res) => res.json({ ok: true, module: 'settings' }));
+
+// ---- Create Document template settings ----
+router.get('/create-documents/templates', requirePermission('view_settings'), async (_req, res) => {
+  try {
+    const list = await documentTemplateSettingsService.listTemplates();
+    res.json(list);
+  } catch (e) {
+    console.error('GET /api/settings/create-documents/templates', e);
+    res.status(500).json({ error: e.message || 'Failed to load templates' });
+  }
+});
+
+router.post('/create-documents/templates', requirePermission('edit_settings'), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Template file is required' });
+    const template = await documentTemplateSettingsService.createTemplate({
+      name: req.body?.name,
+      documentKey: req.body?.document_key,
+      description: req.body?.description,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      fileBuffer: req.file.buffer,
+      userId: getUserId(req),
+    });
+    res.status(201).json(template);
+  } catch (e) {
+    console.error('POST /api/settings/create-documents/templates', e);
+    res.status(400).json({ error: e.message || 'Failed to upload template' });
+  }
+});
+
+router.delete('/create-documents/templates/:id', requirePermission('edit_settings'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const deleted = await documentTemplateSettingsService.deleteTemplate(id);
+    if (!deleted) return res.status(404).json({ error: 'Template not found' });
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('DELETE /api/settings/create-documents/templates/:id', e);
+    res.status(500).json({ error: e.message || 'Failed to delete template' });
+  }
+});
+
+router.get('/create-documents/templates/:id/download', requirePermission('view_settings'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const template = await documentTemplateSettingsService.getTemplateDownload(id);
+    if (!template) return res.status(404).json({ error: 'Template not found' });
+    res.setHeader('Content-Type', template.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(template.file_name || `template-${id}.docx`)}"`);
+    res.send(template.file_content);
+  } catch (e) {
+    console.error('GET /api/settings/create-documents/templates/:id/download', e);
+    res.status(500).json({ error: e.message || 'Failed to download template' });
+  }
+});
 
 // ---- Settings by group key (must be after /lookups, /features, /integrations, /security, /audit) ----
 router.get('/:groupKey', requirePermission('view_settings'), async (req, res) => {

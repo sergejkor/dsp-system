@@ -7,6 +7,8 @@ const SECTION_KEYS = [
   { path: 'roles', key: 'rolesPermissions' },
   { path: 'kpi', key: 'kpi' },
   { path: 'payroll', key: 'payroll' },
+  { path: 'personalfragebogen', key: 'personalfragebogen' },
+  { path: 'create-documents', key: 'createDocuments' },
   { path: 'drivers', key: 'drivers' },
   { path: 'cars', key: 'carsFleet' },
   { path: 'routes', key: 'routes' },

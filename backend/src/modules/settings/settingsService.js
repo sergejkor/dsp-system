@@ -84,6 +84,13 @@ const PERSONALFRAGEBOGEN_SETTINGS_GROUP = {
   sort_order: 35,
 };
 
+const CREATE_DOCUMENTS_SETTINGS_GROUP = {
+  key: 'create_documents',
+  label: 'Create Document',
+  description: 'Template storage and generation settings for employee documents',
+  sort_order: 36,
+};
+
 const PERSONALFRAGEBOGEN_DEFAULT_ITEMS = [
   {
     key: 'notification_emails',
@@ -183,6 +190,7 @@ async function ensureDefaultItems(groupId, items) {
 async function ensureLateAddedSettings() {
   const personalfragebogenGroupId = await ensureGroupExists(PERSONALFRAGEBOGEN_SETTINGS_GROUP);
   await ensureDefaultItems(personalfragebogenGroupId, PERSONALFRAGEBOGEN_DEFAULT_ITEMS);
+  await ensureGroupExists(CREATE_DOCUMENTS_SETTINGS_GROUP);
 }
 
 async function getGroups() {

@@ -4,7 +4,7 @@
  */
 import { getAuthHeaders, clearToken } from './authStore.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
+import { API_BASE } from '../config/apiBase.js';
 
 function getHeaders() {
   const h = { 'Content-Type': 'application/json' };
@@ -65,6 +65,49 @@ export async function resetSettingsGroup(groupKey) {
     headers: getHeaders(),
   });
   return handle(res);
+}
+
+export async function getCreateDocumentTemplates() {
+  const res = await fetchWithHint(`${API_BASE}/api/settings/create-documents/templates`, { headers: getHeaders() });
+  return handle(res);
+}
+
+export async function uploadCreateDocumentTemplate({ name, documentKey, description, file }) {
+  const formData = new FormData();
+  formData.append('name', name || '');
+  formData.append('document_key', documentKey || '');
+  formData.append('description', description || '');
+  formData.append('file', file);
+  const res = await fetchWithHint(`${API_BASE}/api/settings/create-documents/templates`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: formData,
+  });
+  return handle(res);
+}
+
+export async function deleteCreateDocumentTemplate(id) {
+  const res = await fetchWithHint(`${API_BASE}/api/settings/create-documents/templates/${id}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  return handle(res);
+}
+
+export async function downloadCreateDocumentTemplate(id) {
+  const res = await fetchWithHint(`${API_BASE}/api/settings/create-documents/templates/${id}/download`, {
+    headers: { ...getAuthHeaders() },
+  });
+  if (res.status === 401) {
+    clearToken();
+    window.dispatchEvent(new CustomEvent('auth:logout'));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || res.statusText || 'Failed to download template');
+  }
+  return res.blob();
 }
 
 // Users
