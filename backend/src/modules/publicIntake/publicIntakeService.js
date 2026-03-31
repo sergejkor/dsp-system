@@ -12,7 +12,7 @@ import {
   updateEmployeePersonals,
   updateEmployeeWork,
 } from '../kenjo/kenjoClient.js';
-import { sendPersonalQuestionnaireNotification } from './publicIntakeNotificationService.js';
+import { sendPersonalQuestionnaireNotification, sendDamageReportNotification } from './publicIntakeNotificationService.js';
 
 let tablesReady = false;
 let kenjoCompanyIdCache = null;
@@ -389,6 +389,7 @@ async function ensurePublicIntakeTables() {
   await query(`ALTER TABLE public_damage_reports ADD COLUMN IF NOT EXISTS incident_date DATE`);
   await query(`ALTER TABLE public_damage_reports ADD COLUMN IF NOT EXISTS last_error TEXT`);
   await query(`ALTER TABLE public_damage_reports ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`);
+  await query(`ALTER TABLE public_damage_reports ADD COLUMN IF NOT EXISTS notification_read_at TIMESTAMP WITH TIME ZONE`);
   await query(`ALTER TABLE public_damage_reports ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`);
   await query(`ALTER TABLE public_damage_reports ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`);
   await query(`CREATE INDEX IF NOT EXISTS idx_public_damage_reports_status ON public_damage_reports (status, created_at DESC)`);
@@ -685,6 +686,15 @@ export async function submitDamageReport(payload, files) {
 
   const row = res.rows[0];
   await insertFiles('public_damage_report_files', 'report_id', row.id, files, 'public');
+  try {
+    await sendDamageReportNotification({
+      reportId: row.id,
+      summary,
+      createdAt: row.created_at,
+    });
+  } catch (error) {
+    console.error('Failed to send Schadenmeldung notification email:', error);
+  }
   return row;
 }
 
@@ -824,12 +834,14 @@ export async function listDamageReports({ status } = {}) {
        r.reporter_email,
        r.reporter_phone,
        r.driver_name,
-       r.license_plate,
-       r.incident_date,
-       r.last_error,
-       r.created_at,
-       r.updated_at,
-       COUNT(f.id)::int AS file_count
+      r.license_plate,
+      r.incident_date,
+      r.last_error,
+      r.notification_read_at,
+      (r.notification_read_at IS NULL) AS is_new,
+      r.created_at,
+      r.updated_at,
+      COUNT(f.id)::int AS file_count
      FROM public_damage_reports r
      LEFT JOIN public_damage_report_files f ON f.report_id = r.id
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -845,11 +857,30 @@ export async function listDamageReports({ status } = {}) {
 
 export async function getDamageReportById(id) {
   await ensurePublicIntakeTables();
-  const res = await query(`SELECT * FROM public_damage_reports WHERE id = $1 LIMIT 1`, [Number(id)]);
+  await query(
+    `UPDATE public_damage_reports
+     SET notification_read_at = COALESCE(notification_read_at, NOW())
+     WHERE id = $1`,
+    [Number(id)]
+  );
+  const res = await query(`SELECT *, (notification_read_at IS NULL) AS is_new FROM public_damage_reports WHERE id = $1 LIMIT 1`, [Number(id)]);
   const report = res.rows[0] || null;
   if (!report) return null;
   const files = await listFiles('public_damage_report_files', 'report_id', Number(id));
   return { ...report, files };
+}
+
+export async function markDamageReportUnread(id) {
+  await ensurePublicIntakeTables();
+  const res = await query(
+    `UPDATE public_damage_reports
+     SET notification_read_at = NULL,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id, status, reporter_name, driver_name, license_plate, notification_read_at`,
+    [Number(id)]
+  );
+  return res.rows[0] || null;
 }
 
 export async function updateDamageReport(id, payload, status) {
@@ -1369,7 +1400,7 @@ export async function saveAndSendPersonalQuestionnaire(id) {
 
 export async function getPublicIntakeSummary() {
   await ensurePublicIntakeTables();
-  const [personalCountsRes, personalUnreadRes, damageCountsRes, recentPersonalRes, recentDamageRes] = await Promise.all([
+  const [personalCountsRes, personalUnreadRes, damageCountsRes, damageUnreadRes, recentPersonalRes, recentDamageRes] = await Promise.all([
     query(`
       SELECT status, COUNT(*)::int AS count
       FROM personal_questionnaire_submissions
@@ -1386,13 +1417,18 @@ export async function getPublicIntakeSummary() {
       GROUP BY status
     `),
     query(`
+      SELECT COUNT(*)::int AS count
+      FROM public_damage_reports
+      WHERE notification_read_at IS NULL
+    `),
+    query(`
       SELECT id, status, first_name, last_name, email, created_at
       FROM personal_questionnaire_submissions
       ORDER BY created_at DESC, id DESC
       LIMIT 5
     `),
     query(`
-      SELECT id, status, reporter_name, driver_name, license_plate, incident_date, created_at
+      SELECT id, status, reporter_name, driver_name, license_plate, incident_date, created_at, (notification_read_at IS NULL) AS is_new
       FROM public_damage_reports
       ORDER BY created_at DESC, id DESC
       LIMIT 5
@@ -1403,6 +1439,7 @@ export async function getPublicIntakeSummary() {
   const personalCounts = toMap(personalCountsRes.rows || []);
   const personalUnread = Number(personalUnreadRes.rows?.[0]?.count || 0);
   const damageCounts = toMap(damageCountsRes.rows || []);
+  const damageUnread = Number(damageUnreadRes.rows?.[0]?.count || 0);
 
   return {
     personalQuestionnaires: {
@@ -1415,6 +1452,7 @@ export async function getPublicIntakeSummary() {
     damageReports: {
       pending: (damageCounts.submitted || 0) + (damageCounts.reviewing || 0) + (damageCounts.error || 0),
       resolved: damageCounts.resolved || 0,
+      unread: damageUnread,
       byStatus: damageCounts,
       recent: recentDamageRes.rows || [],
     },
@@ -1433,6 +1471,7 @@ const publicIntakeService = {
   getPersonalQuestionnaireFile,
   listDamageReports,
   getDamageReportById,
+  markDamageReportUnread,
   updateDamageReport,
   addDamageReportFiles,
   getDamageReportFile,

@@ -26,9 +26,24 @@ async function buildRecipients() {
   );
 }
 
+async function buildDamageRecipients() {
+  const dbValue = await settingsService.getSetting('schadenmeldung', 'notification_emails').catch(() => null);
+  return parseEmailList(
+    dbValue,
+    process.env.SCHADENMELDUNG_NOTIFY_EMAILS,
+    process.env.DAMAGE_REPORT_NOTIFY_EMAILS,
+    process.env.PUBLIC_INTAKE_NOTIFY_EMAILS
+  );
+}
+
 function buildReviewUrl(submissionId) {
   const baseUrl = stringOrNull(process.env.DSP_SYSTEM_BASE_URL) || 'https://dsp-system.alfamile.com';
   return `${baseUrl.replace(/\/+$/, '')}/personal-fragebogen-review?id=${encodeURIComponent(submissionId)}`;
+}
+
+function buildDamageReviewUrl(reportId) {
+  const baseUrl = stringOrNull(process.env.DSP_SYSTEM_BASE_URL) || 'https://dsp-system.alfamile.com';
+  return `${baseUrl.replace(/\/+$/, '')}/schadenmeldung-review?id=${encodeURIComponent(reportId)}`;
 }
 
 function buildTemplateContext({ submissionId, summary, createdAt }) {
@@ -42,6 +57,20 @@ function buildTemplateContext({ submissionId, summary, createdAt }) {
     startDate: summary?.startDate || '',
     createdAt: createdAt || new Date().toISOString(),
     reviewUrl: buildReviewUrl(submissionId),
+  };
+}
+
+function buildDamageTemplateContext({ reportId, summary, createdAt }) {
+  return {
+    reportId: String(reportId ?? ''),
+    reporterName: summary?.reporterName || '',
+    driverName: summary?.driverName || '',
+    email: summary?.reporterEmail || '',
+    phone: summary?.reporterPhone || '',
+    licensePlate: summary?.licensePlate || '',
+    incidentDate: summary?.incidentDate || '',
+    createdAt: createdAt || new Date().toISOString(),
+    reviewUrl: buildDamageReviewUrl(reportId),
   };
 }
 
@@ -63,6 +92,20 @@ async function getNotificationTemplates() {
     body:
       stringOrNull(body) ||
       'A new Personalfragebogen has been submitted.\n\nSubmission ID: {{submissionId}}\nName: {{firstName}} {{lastName}}\nEmail: {{email}}\nPhone: {{phone}}\nStart date: {{startDate}}\nReceived at: {{createdAt}}\n\nOpen review page: {{reviewUrl}}',
+  };
+}
+
+async function getDamageNotificationTemplates() {
+  const [subject, body] = await Promise.all([
+    settingsService.getSetting('schadenmeldung', 'notification_subject').catch(() => null),
+    settingsService.getSetting('schadenmeldung', 'notification_body').catch(() => null),
+  ]);
+
+  return {
+    subject: stringOrNull(subject) || 'New Schadenmeldung: {{driverName}}',
+    body:
+      stringOrNull(body) ||
+      'A new Schadenmeldung has been submitted.\n\nReport ID: {{reportId}}\nDriver: {{driverName}}\nReporter: {{reporterName}}\nEmail: {{email}}\nPhone: {{phone}}\nLicense plate: {{licensePlate}}\nIncident date: {{incidentDate}}\nReceived at: {{createdAt}}\n\nOpen review page: {{reviewUrl}}',
   };
 }
 
@@ -131,3 +174,27 @@ export async function sendPersonalQuestionnaireNotification({ submissionId, summ
   };
 }
 
+export async function sendDamageReportNotification({ reportId, summary, createdAt }) {
+  const recipients = await buildDamageRecipients();
+  if (!recipients.length) return { skipped: true, reason: 'notification email not configured' };
+
+  const transporter = await getTransporter();
+  const templates = await getDamageNotificationTemplates();
+  const context = buildDamageTemplateContext({ reportId, summary, createdAt });
+  const subject = renderTemplate(templates.subject, context);
+  const bodyText = renderTemplate(templates.body, context);
+  const { from } = getSmtpConfig();
+
+  const info = await transporter.sendMail({
+    from,
+    to: recipients.join(', '),
+    subject,
+    text: bodyText,
+  });
+
+  return {
+    skipped: false,
+    recipients,
+    messageId: info?.messageId || null,
+  };
+}

@@ -79,6 +79,7 @@ const SETTINGS_GROUPS = [
   { key: 'kpi', label: 'KPI', description: 'KPI thresholds and targets', sort_order: 20 },
   { key: 'payroll', label: 'Payroll', description: 'Payroll configuration', sort_order: 30 },
   { key: 'personalfragebogen', label: 'Personalfragebogen', description: 'Personalfragebogen form and notification settings', sort_order: 35 },
+  { key: 'schadenmeldung', label: 'Schadenmeldung', description: 'Schadenmeldung form and notification settings', sort_order: 37 },
   { key: 'drivers', label: 'Drivers', description: 'Driver-related settings', sort_order: 40 },
   { key: 'cars', label: 'Cars', description: 'Fleet/car settings', sort_order: 50 },
   { key: 'routes', label: 'Routes', description: 'Route and dispatch settings', sort_order: 60 },
@@ -107,6 +108,9 @@ const SETTINGS_ITEMS = [
   { group_key: 'personalfragebogen', key: 'notification_emails', label: 'Notification e-mail(s)', value_type: 'string', value_text: '', default_value_json: '""' },
   { group_key: 'personalfragebogen', key: 'notification_subject', label: 'Notification e-mail subject', value_type: 'string', value_text: 'New Personalfragebogen: {{firstName}} {{lastName}}', default_value_json: '"New Personalfragebogen: {{firstName}} {{lastName}}"' },
   { group_key: 'personalfragebogen', key: 'notification_body', label: 'Notification e-mail text', value_type: 'string', value_text: 'A new Personalfragebogen has been submitted.\n\nSubmission ID: {{submissionId}}\nName: {{firstName}} {{lastName}}\nEmail: {{email}}\nPhone: {{phone}}\nStart date: {{startDate}}\nReceived at: {{createdAt}}\n\nOpen review page: {{reviewUrl}}', default_value_json: '"A new Personalfragebogen has been submitted.\\n\\nSubmission ID: {{submissionId}}\\nName: {{firstName}} {{lastName}}\\nEmail: {{email}}\\nPhone: {{phone}}\\nStart date: {{startDate}}\\nReceived at: {{createdAt}}\\n\\nOpen review page: {{reviewUrl}}"' },
+  { group_key: 'schadenmeldung', key: 'notification_emails', label: 'Notification e-mail(s)', value_type: 'string', value_text: '', default_value_json: '""' },
+  { group_key: 'schadenmeldung', key: 'notification_subject', label: 'Notification e-mail subject', value_type: 'string', value_text: 'New Schadenmeldung: {{driverName}}', default_value_json: '"New Schadenmeldung: {{driverName}}"' },
+  { group_key: 'schadenmeldung', key: 'notification_body', label: 'Notification e-mail text', value_type: 'string', value_text: 'A new Schadenmeldung has been submitted.\n\nReport ID: {{reportId}}\nDriver: {{driverName}}\nReporter: {{reporterName}}\nEmail: {{email}}\nPhone: {{phone}}\nLicense plate: {{licensePlate}}\nIncident date: {{incidentDate}}\nReceived at: {{createdAt}}\n\nOpen review page: {{reviewUrl}}', default_value_json: '"A new Schadenmeldung has been submitted.\\n\\nReport ID: {{reportId}}\\nDriver: {{driverName}}\\nReporter: {{reporterName}}\\nEmail: {{email}}\\nPhone: {{phone}}\\nLicense plate: {{licensePlate}}\\nIncident date: {{incidentDate}}\\nReceived at: {{createdAt}}\\n\\nOpen review page: {{reviewUrl}}"' },
   {
     group_key: 'drivers',
     key: 'employee_document_types',

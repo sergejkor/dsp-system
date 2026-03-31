@@ -219,7 +219,7 @@ export default function DashboardPage() {
                     ) : (
                       <div className="analytics-donut-list">
                         {personalNotifications.map((row) => (
-                          <Link key={row.id} className="analytics-donut-item" to="/personal-fragebogen-review">
+                          <Link key={row.id} className="analytics-donut-item" to={`/personal-fragebogen-review?id=${row.id}`}>
                             <span className="analytics-donut-label">
                               {[row.first_name, row.last_name].filter(Boolean).join(' ') || row.email || `Submission ${row.id}`}
                             </span>
@@ -245,7 +245,7 @@ export default function DashboardPage() {
                     ) : (
                       <div className="analytics-donut-list">
                         {damageNotifications.map((row) => (
-                          <Link key={row.id} className="analytics-donut-item" to="/schadenmeldung-review">
+                          <Link key={row.id} className="analytics-donut-item" to={`/schadenmeldung-review?id=${row.id}`}>
                             <span className="analytics-donut-label">
                               {row.driver_name || row.reporter_name || `Report ${row.id}`}
                             </span>
@@ -329,7 +329,7 @@ export default function DashboardPage() {
                     ) : (
                       <div className="analytics-donut-list">
                         {publicIntake.personalQuestionnaires.recent.map((row) => (
-                          <Link key={row.id} className="analytics-donut-item" to="/personal-fragebogen-review">
+                          <Link key={row.id} className="analytics-donut-item" to={`/personal-fragebogen-review?id=${row.id}`}>
                             <span className="analytics-donut-label">
                               {[row.first_name, row.last_name].filter(Boolean).join(' ') || row.email || `Submission ${row.id}`}
                             </span>
@@ -348,7 +348,7 @@ export default function DashboardPage() {
                     ) : (
                       <div className="analytics-donut-list">
                         {publicIntake.damageReports.recent.map((row) => (
-                          <Link key={row.id} className="analytics-donut-item" to="/schadenmeldung-review">
+                          <Link key={row.id} className="analytics-donut-item" to={`/schadenmeldung-review?id=${row.id}`}>
                             <span className="analytics-donut-label">
                               {row.driver_name || row.reporter_name || `Report ${row.id}`}
                             </span>

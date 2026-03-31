@@ -91,6 +91,13 @@ const CREATE_DOCUMENTS_SETTINGS_GROUP = {
   sort_order: 36,
 };
 
+const SCHADENMELDUNG_SETTINGS_GROUP = {
+  key: 'schadenmeldung',
+  label: 'Schadenmeldung',
+  description: 'Schadenmeldung form and notification settings',
+  sort_order: 37,
+};
+
 const DRIVERS_SETTINGS_GROUP = {
   key: 'drivers',
   label: 'Drivers',
@@ -126,6 +133,38 @@ const PERSONALFRAGEBOGEN_DEFAULT_ITEMS = [
     default_value_json:
       '"A new Personalfragebogen has been submitted.\\n\\nSubmission ID: {{submissionId}}\\nName: {{firstName}} {{lastName}}\\nEmail: {{email}}\\nPhone: {{phone}}\\nStart date: {{startDate}}\\nReceived at: {{createdAt}}\\n\\nOpen review page: {{reviewUrl}}"',
     description: 'Body template for Personalfragebogen notification e-mails.',
+    sort_order: 30,
+  },
+];
+
+const SCHADENMELDUNG_DEFAULT_ITEMS = [
+  {
+    key: 'notification_emails',
+    label: 'Notification e-mail(s)',
+    value_type: 'string',
+    value_text: '',
+    default_value_json: '""',
+    description: 'Comma-separated e-mail addresses that receive a notification for each new Schadenmeldung submission.',
+    sort_order: 10,
+  },
+  {
+    key: 'notification_subject',
+    label: 'Notification e-mail subject',
+    value_type: 'string',
+    value_text: 'New Schadenmeldung: {{driverName}}',
+    default_value_json: '"New Schadenmeldung: {{driverName}}"',
+    description: 'Subject template for Schadenmeldung notification e-mails.',
+    sort_order: 20,
+  },
+  {
+    key: 'notification_body',
+    label: 'Notification e-mail text',
+    value_type: 'string',
+    value_text:
+      'A new Schadenmeldung has been submitted.\n\nReport ID: {{reportId}}\nDriver: {{driverName}}\nReporter: {{reporterName}}\nEmail: {{email}}\nPhone: {{phone}}\nLicense plate: {{licensePlate}}\nIncident date: {{incidentDate}}\nReceived at: {{createdAt}}\n\nOpen review page: {{reviewUrl}}',
+    default_value_json:
+      '"A new Schadenmeldung has been submitted.\\n\\nReport ID: {{reportId}}\\nDriver: {{driverName}}\\nReporter: {{reporterName}}\\nEmail: {{email}}\\nPhone: {{phone}}\\nLicense plate: {{licensePlate}}\\nIncident date: {{incidentDate}}\\nReceived at: {{createdAt}}\\n\\nOpen review page: {{reviewUrl}}"',
+    description: 'Body template for Schadenmeldung notification e-mails.',
     sort_order: 30,
   },
 ];
@@ -277,6 +316,8 @@ async function ensureDefaultItems(groupId, items) {
 async function ensureLateAddedSettings() {
   const personalfragebogenGroupId = await ensureGroupExists(PERSONALFRAGEBOGEN_SETTINGS_GROUP);
   await ensureDefaultItems(personalfragebogenGroupId, PERSONALFRAGEBOGEN_DEFAULT_ITEMS);
+  const schadenmeldungGroupId = await ensureGroupExists(SCHADENMELDUNG_SETTINGS_GROUP);
+  await ensureDefaultItems(schadenmeldungGroupId, SCHADENMELDUNG_DEFAULT_ITEMS);
   const driversGroupId = await ensureGroupExists(DRIVERS_SETTINGS_GROUP);
   await ensureDefaultItems(driversGroupId, DRIVER_DEFAULT_ITEMS);
   await ensureGroupExists(CREATE_DOCUMENTS_SETTINGS_GROUP);

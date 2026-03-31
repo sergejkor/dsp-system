@@ -175,6 +175,17 @@ router.patch('/damage-reports/:id', requireDamageAccess, async (req, res) => {
   }
 });
 
+router.post('/damage-reports/:id/unread', requireDamageAccess, async (req, res) => {
+  try {
+    const row = await publicIntakeService.markDamageReportUnread(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Damage report not found' });
+    res.json({ ok: true, report: row });
+  } catch (error) {
+    console.error('POST /api/intake/damage-reports/:id/unread error', error);
+    res.status(400).json({ error: String(error?.message || error) });
+  }
+});
+
 router.post('/damage-reports/:id/files', requireDamageAccess, async (req, res) => {
   try {
     await runMultiUpload(req, res, 'files');

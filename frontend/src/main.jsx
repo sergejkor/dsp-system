@@ -46,6 +46,7 @@ import SettingsRolesPage from './pages/settings/SettingsRolesPage';
 import SettingsKpiPage from './pages/settings/SettingsKpiPage';
 import SettingsPayrollPage from './pages/settings/SettingsPayrollPage';
 import SettingsPersonalfragebogenPage from './pages/settings/SettingsPersonalfragebogenPage';
+import SettingsSchadenmeldungPage from './pages/settings/SettingsSchadenmeldungPage';
 import SettingsCreateDocumentsPage from './pages/settings/SettingsCreateDocumentsPage';
 import SettingsDriversPage from './pages/settings/SettingsDriversPage';
 import SettingsCarsPage from './pages/settings/SettingsCarsPage';
@@ -137,6 +138,8 @@ function AppLayout() {
   }, [location.pathname, location.search, canEmployees, canDamages]);
 
   const unreadPersonalNotifications = Number(intakeSummary?.personalQuestionnaires?.unread || 0);
+  const unreadDamageNotifications = Number(intakeSummary?.damageReports?.unread || 0);
+  const unreadNotificationTotal = unreadPersonalNotifications + unreadDamageNotifications;
 
   const PagePermissionRoute = ({ permission, children }) => {
     if (can(permission)) return children;
@@ -146,13 +149,13 @@ function AppLayout() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-topbar">
-          <NavLink to="/personal-fragebogen-notifications" className="sidebar-notification-link" title="Personalfragebogen notifications">
+          <NavLink to="/personal-fragebogen-notifications" className="sidebar-notification-link" title="Notifications">
             <span className="sidebar-notification-icon">
               <MailIcon />
             </span>
-            {unreadPersonalNotifications > 0 && (
+            {unreadNotificationTotal > 0 && (
               <span className="sidebar-notification-badge">
-                {unreadPersonalNotifications > 99 ? '99+' : unreadPersonalNotifications}
+                {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
               </span>
             )}
           </NavLink>
@@ -193,7 +196,7 @@ function AppLayout() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/kenjo-sync" element={<KenjoSyncPage />} />
             <Route path="/employee" element={<EmployeeProfilePage />} />
-            <Route path="/personal-fragebogen-notifications" element={<PagePermissionRoute permission="page_employees"><PersonalQuestionnaireNotificationsPage /></PagePermissionRoute>} />
+            <Route path="/personal-fragebogen-notifications" element={<PersonalQuestionnaireNotificationsPage />} />
             <Route path="/personal-fragebogen-review" element={<PagePermissionRoute permission="page_employees"><PersonalQuestionnaireReviewPage /></PagePermissionRoute>} />
             <Route path="/payroll" element={<PagePermissionRoute permission="page_payroll"><PayrollPage /></PagePermissionRoute>} />
             <Route path="/calendar" element={<CalendarPage />} />
@@ -227,6 +230,7 @@ function AppLayout() {
               <Route path="kpi" element={<SettingsKpiPage />} />
               <Route path="payroll" element={<SettingsPayrollPage />} />
               <Route path="personalfragebogen" element={<SettingsPersonalfragebogenPage />} />
+              <Route path="schadenmeldung" element={<SettingsSchadenmeldungPage />} />
               <Route path="create-documents" element={<SettingsCreateDocumentsPage />} />
               <Route path="drivers" element={<SettingsDriversPage />} />
               <Route path="cars" element={<SettingsCarsPage />} />

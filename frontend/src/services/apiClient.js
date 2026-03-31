@@ -1,6 +1,7 @@
 import { getAuthHeaders, clearToken } from './authStore.js';
+import { API_BASE } from '../config/apiBase.js';
 
-export const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
+export { API_BASE };
 
 export function authHeaders() {
   return { ...getAuthHeaders() };
