@@ -10,6 +10,7 @@ function createEmptyDocumentType() {
     type: '',
     exactNameEnabled: false,
     exactNames: [],
+    exactNamesText: '',
   };
 }
 
@@ -22,6 +23,23 @@ function textToExactNames(value) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function decorateDocumentTypesForEditing(value) {
+  return normalizeEmployeeDocumentTypeSettings(value).map((item) => ({
+    ...item,
+    exactNamesText: exactNamesToText(item.exactNames),
+  }));
+}
+
+function normalizeDocumentTypesForSaving(value) {
+  return normalizeEmployeeDocumentTypeSettings(
+    (Array.isArray(value) ? value : []).map((item) => ({
+      type: item?.type,
+      exactNameEnabled: item?.exactNameEnabled === true,
+      exactNames: textToExactNames(item?.exactNamesText),
+    }))
+  );
 }
 
 const PLACEHOLDER_TOKENS = [
@@ -48,7 +66,7 @@ export default function SettingsDriversPage() {
       const obj = await getSettingsByGroup('drivers');
       setData(obj);
       setDraft(obj);
-      setDocumentTypes(normalizeEmployeeDocumentTypeSettings(obj?.employee_document_types?.value));
+      setDocumentTypes(decorateDocumentTypesForEditing(obj?.employee_document_types?.value));
     } catch (e) {
       setError(e.message || 'Failed to load driver settings');
     } finally {
@@ -65,7 +83,7 @@ export default function SettingsDriversPage() {
     [draft]
   );
   const serializedCurrentDocumentTypes = useMemo(
-    () => serializeEmployeeDocumentTypeSettings(documentTypes),
+    () => serializeEmployeeDocumentTypeSettings(normalizeDocumentTypesForSaving(documentTypes)),
     [documentTypes]
   );
   const serializedSavedDocumentTypes = useMemo(
@@ -92,7 +110,7 @@ export default function SettingsDriversPage() {
       }
     });
     if (hasDocumentTypeChanges) {
-      payload.employee_document_types = normalizeEmployeeDocumentTypeSettings(documentTypes);
+      payload.employee_document_types = normalizeDocumentTypesForSaving(documentTypes);
     }
     if (Object.keys(payload).length === 0) return;
     setSaving(true);
@@ -102,7 +120,7 @@ export default function SettingsDriversPage() {
       const updated = await updateSettingsGroup('drivers', payload);
       setData(updated);
       setDraft(updated);
-      setDocumentTypes(normalizeEmployeeDocumentTypeSettings(updated?.employee_document_types?.value));
+      setDocumentTypes(decorateDocumentTypesForEditing(updated?.employee_document_types?.value));
       setMessage('Saved.');
     } catch (e) {
       setError(e.message || 'Failed to save settings');
@@ -119,7 +137,7 @@ export default function SettingsDriversPage() {
       const updated = await resetSettingsGroup('drivers');
       setData(updated);
       setDraft(updated);
-      setDocumentTypes(normalizeEmployeeDocumentTypeSettings(updated?.employee_document_types?.value));
+      setDocumentTypes(decorateDocumentTypesForEditing(updated?.employee_document_types?.value));
       setMessage('Reset to defaults.');
     } catch (e) {
       setError(e.message || 'Failed to reset settings');
@@ -173,7 +191,7 @@ export default function SettingsDriversPage() {
                   onChange={(e) =>
                     updateDocumentType(index, {
                       exactNameEnabled: e.target.checked,
-                      exactNames: e.target.checked ? item.exactNames : [],
+                      exactNamesText: e.target.checked ? item.exactNamesText : '',
                     })
                   }
                 />
@@ -187,8 +205,8 @@ export default function SettingsDriversPage() {
                   <span className="settings-label">Exact document names (one per line)</span>
                   <textarea
                     rows={6}
-                    value={exactNamesToText(item.exactNames)}
-                    onChange={(e) => updateDocumentType(index, { exactNames: textToExactNames(e.target.value) })}
+                    value={item.exactNamesText ?? ''}
+                    onChange={(e) => updateDocumentType(index, { exactNamesText: e.target.value })}
                     placeholder="Anmeldung_{{firstName}}_{{lastName}}"
                   />
                 </label>
