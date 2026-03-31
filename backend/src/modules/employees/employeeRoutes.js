@@ -4,7 +4,6 @@ import employeeService from './employeeService.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-const ALLOWED_DOC_TYPES = new Set(['Dokumente', 'Lohnabrechnung', 'Vertrag', 'Abmahnung', 'AMZL', 'Zertifikat']);
 
 function runSingleUpload(req, res, fieldName) {
   return new Promise((resolve, reject) => {
@@ -89,14 +88,15 @@ router.post('/:id/documents', async (req, res) => {
     await runSingleUpload(req, res, 'file');
     const employeeRef = String(req.params.id || '').trim();
     const documentType = String(req.body?.document_type || '').trim();
+    const requestedFileName = String(req.body?.file_name || '').trim();
     if (!employeeRef) return res.status(400).json({ error: 'Employee id is required' });
-    if (!documentType || !ALLOWED_DOC_TYPES.has(documentType)) {
+    if (!documentType || documentType.length > 64) {
       return res.status(400).json({ error: 'Invalid document type' });
     }
     if (!req.file?.buffer) return res.status(400).json({ error: 'File is required' });
     const row = await employeeService.addEmployeeDocument(employeeRef, {
       documentType,
-      fileName: req.file.originalname || 'document.bin',
+      fileName: requestedFileName || req.file.originalname || 'document.bin',
       mimeType: req.file.mimetype || 'application/octet-stream',
       fileContent: req.file.buffer,
     });

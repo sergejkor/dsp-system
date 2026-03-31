@@ -15,6 +15,13 @@ import { saveAdvances } from '../services/advancesApi';
 import { getEmployeeKpi, saveEmployeeKpiComment } from '../services/payrollApi';
 import { getPaveSessions } from '../services/paveApi';
 import { useAppSettings } from '../context/AppSettingsContext';
+import { getSettingsByGroup } from '../services/settingsApi';
+import {
+  DEFAULT_EMPLOYEE_DOCUMENT_TYPE_SETTINGS,
+  normalizeEmployeeDocumentTypeSettings,
+  buildEmployeeDocumentExactNameOptions,
+  buildEmployeeDocumentTypeTemplateContext,
+} from '../utils/employeeDocumentTypeSettings';
 
 /** KPI rating: <50 POOR, <70 FAIR, <85 GREAT, <93 FANTASTIC, >=93 FANTASTIC PLUS */
 function getKpiRatingLabel(kpi) {
@@ -38,7 +45,40 @@ const TERMINATION_REASONS = [
   { group: '8. Failure to Meet Job Requirements', options: ['Invalid or suspended driver\'s license', 'Failure to complete required training', 'Failure to comply with Amazon DSP or Amazon Logistics requirements'] },
 ];
 
-const EMPLOYEE_DOC_TYPES = ['Dokumente', 'Lohnabrechnung', 'Vertrag', 'Abmahnung', 'AMZL', 'Zertifikat'];
+function buildEmployeeContractTemplateOptions({ firstName, lastName, startDate, selectedDate }) {
+  const safeFirstName = normalizeDocumentNamePart(firstName);
+  const safeLastName = normalizeDocumentNamePart(lastName);
+  const suffix = [safeFirstName, safeLastName].filter(Boolean).join('_') || 'Name_Surname';
+  const startDatePart = formatDocumentDatePart(startDate) || 'Start_date';
+  const selectedDatePart = formatDocumentDatePart(selectedDate) || 'Select_date';
+
+  return [
+    {
+      key: 'fixed_contract',
+      value: `Arbeitsvertrag_${suffix}_35_St._Befristet_AlfaMile_GmbH_Stand_${startDatePart}`,
+      label: `Arbeitsvertrag_${suffix}_35_St._Befristet_AlfaMile_GmbH_Stand_${startDatePart}`,
+      requiresSelectedDate: false,
+    },
+    {
+      key: 'extension_agreement',
+      value: `Verlängerungsverinbarung_zum_befristeten_Arbeitsvertrag_${suffix}_unterschrieben`,
+      label: `Verlängerungsverinbarung_zum_befristeten_Arbeitsvertrag_${suffix}_unterschrieben`,
+      requiresSelectedDate: false,
+    },
+    {
+      key: 'change_agreement',
+      value: `Änderungsverinbarung_zum_Arbeitsvertrag_${selectedDatePart}_unbefristet_${suffix}`,
+      label: `Änderungsverinbarung_zum_Arbeitsvertrag_${selectedDatePart}_unbefristet_${suffix}`,
+      requiresSelectedDate: true,
+    },
+    {
+      key: 'unlimited_contract',
+      value: `Arbeitsvertrag_unbefristet_Vollzeit_AlfaMile_UG_${suffix}`,
+      label: `Arbeitsvertrag_unbefristet_Vollzeit_AlfaMile_UG_${suffix}`,
+      requiresSelectedDate: false,
+    },
+  ];
+}
 
 export default function EmployeeProfilePage() {
   const { language } = useAppSettings();
@@ -76,10 +116,13 @@ export default function EmployeeProfilePage() {
   const [paveSessions, setPaveSessions] = useState([]);
   const [employeeDocs, setEmployeeDocs] = useState([]);
   const [employeeDocsLoading, setEmployeeDocsLoading] = useState(false);
+  const [employeeDocumentTypeSettings, setEmployeeDocumentTypeSettings] = useState(DEFAULT_EMPLOYEE_DOCUMENT_TYPE_SETTINGS);
   const [employeeDocFiles, setEmployeeDocFiles] = useState([]);
-  const [employeeDocType, setEmployeeDocType] = useState(EMPLOYEE_DOC_TYPES[0]);
+  const [employeeDocType, setEmployeeDocType] = useState(DEFAULT_EMPLOYEE_DOCUMENT_TYPE_SETTINGS[0]?.type || '');
   const [employeeDocUploading, setEmployeeDocUploading] = useState(false);
   const [employeeDocError, setEmployeeDocError] = useState('');
+  const [employeeDocumentTemplate, setEmployeeDocumentTemplate] = useState('');
+  const [employeeContractTemplateDate, setEmployeeContractTemplateDate] = useState('');
   const [showEmployeeDocsList, setShowEmployeeDocsList] = useState(false);
   const [employeeDocsFilterType, setEmployeeDocsFilterType] = useState('');
   const [contractExtensions, setContractExtensions] = useState([]);
@@ -115,6 +158,17 @@ export default function EmployeeProfilePage() {
   }, [kenjoEmployeeId, localEmployeeId]);
 
   useEffect(() => {
+    getSettingsByGroup('drivers')
+      .then((group) => {
+        const configuredTypes = normalizeEmployeeDocumentTypeSettings(group?.employee_document_types?.value);
+        setEmployeeDocumentTypeSettings(configuredTypes);
+      })
+      .catch(() => {
+        setEmployeeDocumentTypeSettings(DEFAULT_EMPLOYEE_DOCUMENT_TYPE_SETTINGS);
+      });
+  }, []);
+
+  useEffect(() => {
     if (employee) {
       setDraft({
         ...employee,
@@ -126,6 +180,16 @@ export default function EmployeeProfilePage() {
       setIsEditing(false);
     }
   }, [employee]);
+
+  useEffect(() => {
+    const availableTypes = normalizeEmployeeDocumentTypeSettings(employeeDocumentTypeSettings).map((item) => item.type);
+    if (!availableTypes.length) return;
+    if (!availableTypes.includes(employeeDocType)) {
+      setEmployeeDocType(availableTypes[0]);
+      setEmployeeDocumentTemplate('');
+      setEmployeeContractTemplateDate('');
+    }
+  }, [employeeDocumentTypeSettings, employeeDocType]);
 
   useEffect(() => {
     if (!showDaPerformance || !kenjoEmployeeId || !employee) return;
@@ -233,7 +297,6 @@ export default function EmployeeProfilePage() {
       ? employeeDocs.filter((d) => String(d?.document_type || '') === employeeDocsFilterType)
       : employeeDocs;
 
-
   if (!kenjoEmployeeId && !localEmployeeId) {
     return (
       <section className="card">
@@ -285,6 +348,27 @@ export default function EmployeeProfilePage() {
 
   const fullName =
     displayName || personal?.displayName || [firstName, lastName].filter(Boolean).join(' ');
+  const employeeDocTypeConfigs = normalizeEmployeeDocumentTypeSettings(employeeDocumentTypeSettings);
+  const employeeDocTypeOptions = employeeDocTypeConfigs.map((item) => item.type);
+  const selectedEmployeeDocTypeConfig =
+    employeeDocTypeConfigs.find((item) => item.type === employeeDocType) || employeeDocTypeConfigs[0] || null;
+  const employeeDocumentTemplateOptions = buildEmployeeDocumentExactNameOptions(
+    selectedEmployeeDocTypeConfig,
+    buildEmployeeDocumentTypeTemplateContext({
+      firstName: firstName || personal?.firstName,
+      lastName: lastName || personal?.lastName,
+      startDate: work?.startDate,
+      selectedDate: employeeContractTemplateDate,
+    })
+  );
+  const selectedEmployeeDocumentTemplateOption =
+    employeeDocumentTemplateOptions.find((option) => option.value === employeeDocumentTemplate) || null;
+  const employeeDocTypeFilterOptions = Array.from(
+    new Set([
+      ...employeeDocTypeOptions,
+      ...employeeDocs.map((doc) => String(doc?.document_type || '').trim()).filter(Boolean),
+    ])
+  );
   const isActive = account?.isActive ?? false;
   const jobTitle = work?.jobTitle;
   const transportationId = work?.transportationId;
@@ -1014,33 +1098,81 @@ export default function EmployeeProfilePage() {
             setEmployeeDocUploading(true);
             setEmployeeDocError('');
             try {
+              const requiresNamedDocument =
+                selectedEmployeeDocTypeConfig?.exactNameEnabled === true && employeeDocumentTemplateOptions.length > 0;
+              if (requiresNamedDocument && !employeeDocumentTemplate) {
+                setEmployeeDocError('Please select the exact document name first.');
+                return;
+              }
+              if (selectedEmployeeDocumentTemplateOption?.requiresSelectedDate && !employeeContractTemplateDate) {
+                setEmployeeDocError('Please select the document date first.');
+                return;
+              }
+              if (requiresNamedDocument && employeeDocFiles.length !== 1) {
+                setEmployeeDocError(`Please choose exactly one file for document type "${employeeDocType}".`);
+                return;
+              }
               for (const file of employeeDocFiles) {
-                // Upload selected files with the same chosen document type.
-                await uploadEmployeeDocument(employeeDocRef, file, employeeDocType);
+                const extension = file?.name?.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : '';
+                const targetFileName =
+                  requiresNamedDocument && selectedEmployeeDocumentTemplateOption?.value
+                    ? `${selectedEmployeeDocumentTemplateOption.value}${extension}`
+                      : '';
+                await uploadEmployeeDocument(employeeDocRef, file, employeeDocType, targetFileName);
               }
               const refreshed = await getEmployeeDocuments(employeeDocRef);
               setEmployeeDocs(Array.isArray(refreshed) ? refreshed : []);
               setEmployeeDocFiles([]);
-              setEmployeeDocType(EMPLOYEE_DOC_TYPES[0]);
+              setEmployeeDocType(employeeDocTypeOptions[0] || '');
+              setEmployeeDocumentTemplate('');
+              setEmployeeContractTemplateDate('');
             } catch (err) {
               setEmployeeDocError(String(err?.message || err));
             } finally {
               setEmployeeDocUploading(false);
             }
           }}
-          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.5rem', alignItems: 'end', marginBottom: '0.75rem' }}
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'end', marginBottom: '0.75rem' }}
         >
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <span>Type of document</span>
-            <select value={employeeDocType} onChange={(e) => setEmployeeDocType(e.target.value)}>
-              {EMPLOYEE_DOC_TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
+            <select
+              value={employeeDocType}
+              onChange={(e) => {
+                setEmployeeDocType(e.target.value);
+                setEmployeeDocumentTemplate('');
+                setEmployeeContractTemplateDate('');
+              }}
+            >
+              {employeeDocTypeOptions.map((x) => <option key={x} value={x}>{x}</option>)}
             </select>
           </label>
+          {selectedEmployeeDocTypeConfig?.exactNameEnabled && employeeDocumentTemplateOptions.length ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <span>Exact document name</span>
+              <select value={employeeDocumentTemplate} onChange={(e) => setEmployeeDocumentTemplate(e.target.value)}>
+                <option value="">Select exact document name...</option>
+                {employeeDocumentTemplateOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          ) : <div />}
+          {selectedEmployeeDocumentTemplateOption?.requiresSelectedDate ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <span>Select date</span>
+              <input
+                type="date"
+                value={employeeContractTemplateDate}
+                onChange={(e) => setEmployeeContractTemplateDate(e.target.value)}
+              />
+            </label>
+          ) : <div />}
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <span>Files</span>
             <input
               type="file"
-              multiple
+              multiple={!(selectedEmployeeDocTypeConfig?.exactNameEnabled && employeeDocumentTemplateOptions.length)}
               onChange={(e) => setEmployeeDocFiles(Array.from(e.target.files || []))}
             />
           </label>
@@ -1064,7 +1196,7 @@ export default function EmployeeProfilePage() {
                 onChange={(e) => setEmployeeDocsFilterType(e.target.value)}
               >
                 <option value="">All</option>
-                {EMPLOYEE_DOC_TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
+                {employeeDocTypeFilterOptions.map((x) => <option key={x} value={x}>{x}</option>)}
               </select>
             </label>
           )}

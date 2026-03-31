@@ -91,6 +91,13 @@ const CREATE_DOCUMENTS_SETTINGS_GROUP = {
   sort_order: 36,
 };
 
+const DRIVERS_SETTINGS_GROUP = {
+  key: 'drivers',
+  label: 'Drivers',
+  description: 'Driver-related settings',
+  sort_order: 40,
+};
+
 const PERSONALFRAGEBOGEN_DEFAULT_ITEMS = [
   {
     key: 'notification_emails',
@@ -120,6 +127,86 @@ const PERSONALFRAGEBOGEN_DEFAULT_ITEMS = [
       '"A new Personalfragebogen has been submitted.\\n\\nSubmission ID: {{submissionId}}\\nName: {{firstName}} {{lastName}}\\nEmail: {{email}}\\nPhone: {{phone}}\\nStart date: {{startDate}}\\nReceived at: {{createdAt}}\\n\\nOpen review page: {{reviewUrl}}"',
     description: 'Body template for Personalfragebogen notification e-mails.',
     sort_order: 30,
+  },
+];
+
+const DRIVER_DEFAULT_ITEMS = [
+  {
+    key: 'employee_document_types',
+    label: 'Employee page document types',
+    value_type: 'json',
+    value_json: [
+      {
+        type: 'Dokumente',
+        exactNameEnabled: true,
+        exactNames: [
+          'Anmeldung_{{firstName}}_{{lastName}}',
+          'Aufhenthaltstitel_{{firstName}}_{{lastName}}_hinten',
+          'Aufhenthaltstitel_{{firstName}}_{{lastName}}_vorne',
+          'Ausweis_{{firstName}}_{{lastName}}_hinten',
+          'Ausweis_{{firstName}}_{{lastName}}_vorne',
+          'Fuehrerschein_{{firstName}}_{{lastName}}_hinten',
+          'Fuehrerschein_{{firstName}}_{{lastName}}_vorne',
+          'Zusatzblatt_{{firstName}}_{{lastName}}_hinten',
+          'Zusatzblatt_{{firstName}}_{{lastName}}_vorne',
+          'Bankkonto_{{firstName}}_{{lastName}}',
+          'Versicherungskarte_{{firstName}}_{{lastName}}',
+          'Steuer_ID_{{firstName}}_{{lastName}}',
+          'SV_Nummer_{{firstName}}_{{lastName}}',
+        ],
+      },
+      { type: 'Lohnabrechnung', exactNameEnabled: false, exactNames: [] },
+      {
+        type: 'Vertrag',
+        exactNameEnabled: true,
+        exactNames: [
+          'Arbeitsvertrag_{{firstName}}_{{lastName}}_35_St._Befristet_AlfaMile_GmbH_Stand_{{startDate}}',
+          'Verlaengerungsverinbarung_zum_befristeten_Arbeitsvertrag_{{firstName}}_{{lastName}}_unterschrieben',
+          'Aenderungsverinbarung_zum_Arbeitsvertrag_{{selectedDate}}_unbefristet_{{firstName}}_{{lastName}}',
+          'Arbeitsvertrag_unbefristet_Vollzeit_AlfaMile_UG_{{firstName}}_{{lastName}}',
+        ],
+      },
+      { type: 'Abmahnung', exactNameEnabled: false, exactNames: [] },
+      { type: 'AMZL', exactNameEnabled: false, exactNames: [] },
+      { type: 'Zertifikat', exactNameEnabled: false, exactNames: [] },
+    ],
+    default_value_json: JSON.stringify([
+      {
+        type: 'Dokumente',
+        exactNameEnabled: true,
+        exactNames: [
+          'Anmeldung_{{firstName}}_{{lastName}}',
+          'Aufhenthaltstitel_{{firstName}}_{{lastName}}_hinten',
+          'Aufhenthaltstitel_{{firstName}}_{{lastName}}_vorne',
+          'Ausweis_{{firstName}}_{{lastName}}_hinten',
+          'Ausweis_{{firstName}}_{{lastName}}_vorne',
+          'Fuehrerschein_{{firstName}}_{{lastName}}_hinten',
+          'Fuehrerschein_{{firstName}}_{{lastName}}_vorne',
+          'Zusatzblatt_{{firstName}}_{{lastName}}_hinten',
+          'Zusatzblatt_{{firstName}}_{{lastName}}_vorne',
+          'Bankkonto_{{firstName}}_{{lastName}}',
+          'Versicherungskarte_{{firstName}}_{{lastName}}',
+          'Steuer_ID_{{firstName}}_{{lastName}}',
+          'SV_Nummer_{{firstName}}_{{lastName}}',
+        ],
+      },
+      { type: 'Lohnabrechnung', exactNameEnabled: false, exactNames: [] },
+      {
+        type: 'Vertrag',
+        exactNameEnabled: true,
+        exactNames: [
+          'Arbeitsvertrag_{{firstName}}_{{lastName}}_35_St._Befristet_AlfaMile_GmbH_Stand_{{startDate}}',
+          'Verlaengerungsverinbarung_zum_befristeten_Arbeitsvertrag_{{firstName}}_{{lastName}}_unterschrieben',
+          'Aenderungsverinbarung_zum_Arbeitsvertrag_{{selectedDate}}_unbefristet_{{firstName}}_{{lastName}}',
+          'Arbeitsvertrag_unbefristet_Vollzeit_AlfaMile_UG_{{firstName}}_{{lastName}}',
+        ],
+      },
+      { type: 'Abmahnung', exactNameEnabled: false, exactNames: [] },
+      { type: 'AMZL', exactNameEnabled: false, exactNames: [] },
+      { type: 'Zertifikat', exactNameEnabled: false, exactNames: [] },
+    ]),
+    description: 'Document types available on the employee page, including optional exact document name templates.',
+    sort_order: 10,
   },
 ];
 
@@ -190,6 +277,8 @@ async function ensureDefaultItems(groupId, items) {
 async function ensureLateAddedSettings() {
   const personalfragebogenGroupId = await ensureGroupExists(PERSONALFRAGEBOGEN_SETTINGS_GROUP);
   await ensureDefaultItems(personalfragebogenGroupId, PERSONALFRAGEBOGEN_DEFAULT_ITEMS);
+  const driversGroupId = await ensureGroupExists(DRIVERS_SETTINGS_GROUP);
+  await ensureDefaultItems(driversGroupId, DRIVER_DEFAULT_ITEMS);
   await ensureGroupExists(CREATE_DOCUMENTS_SETTINGS_GROUP);
 }
 
