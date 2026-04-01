@@ -67,6 +67,14 @@ function formatPayslipDocumentLabel(item) {
   return '1/1';
 }
 
+function buildTimeOffTooltip(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (!list.length) return '';
+  return list
+    .map((entry) => `${formatDateDDMMYYYY(entry?.from)} -> ${formatDateDDMMYYYY(entry?.to)}`)
+    .join('\n');
+}
+
 function formatKpiValue(num) {
   const n = Number(num);
   if (Number.isNaN(n)) return 'â€”';
@@ -1272,6 +1280,15 @@ export default function PayrollPage() {
                             : typeof val === 'number' ? (Number.isInteger(val) ? val : val.toFixed(2)) : val ?? '—';
                     let cellStyle = { padding: '0.4rem 0.5rem', textAlign: isNumericCol ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
                     let content = display;
+                    let title;
+                    if (col.key === 'krank_days' && Number(val) > 0) {
+                      title = buildTimeOffTooltip(row.krank_entries);
+                      if (title) cellStyle = { ...cellStyle, cursor: 'help' };
+                    }
+                    if (col.key === 'urlaub_days' && Number(val) > 0) {
+                      title = buildTimeOffTooltip(row.urlaub_entries);
+                      if (title) cellStyle = { ...cellStyle, cursor: 'help' };
+                    }
                     if (col.key === 'austrittsdatum' && val) {
                       const today = new Date();
                       today.setHours(0, 0, 0, 0);
@@ -1284,7 +1301,7 @@ export default function PayrollPage() {
                       }
                     }
                     return (
-                      <td key={col.key} style={cellStyle}>
+                      <td key={col.key} style={cellStyle} title={title}>
                         {content}
                       </td>
                     );

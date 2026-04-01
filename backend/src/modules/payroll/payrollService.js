@@ -322,16 +322,33 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const endT = new Date(end + 'T12:00:00').getTime();
     const monthStartT = new Date(monthStart + 'T12:00:00').getTime();
     const monthEndT = new Date(monthEnd + 'T12:00:00').getTime();
+    const clampedStartT = Math.max(startT, monthStartT);
+    const clampedEndT = Math.min(endT, monthEndT);
+    if (clampedStartT > clampedEndT) continue;
+    const clampedStart = new Date(clampedStartT).toISOString().slice(0, 10);
+    const clampedEnd = new Date(clampedEndT).toISOString().slice(0, 10);
     let count = 0;
-    for (let t = Math.max(startT, monthStartT); t <= Math.min(endT, monthEndT); t += 86400000) {
+    for (let t = clampedStartT; t <= clampedEndT; t += 86400000) {
       const d = new Date(t);
       const dayOfWeek = d.getDay();
       if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
     }
-    if (!timeOffDaysByEmployee.has(eid)) timeOffDaysByEmployee.set(eid, { krank_days: 0, urlaub_days: 0 });
+    if (!timeOffDaysByEmployee.has(eid)) {
+      timeOffDaysByEmployee.set(eid, {
+        krank_days: 0,
+        urlaub_days: 0,
+        krank_entries: [],
+        urlaub_entries: [],
+      });
+    }
     const rec = timeOffDaysByEmployee.get(eid);
-    if (typeId === KENJO_TYPE_KRANK) rec.krank_days += count;
-    else if (typeId === KENJO_TYPE_URLAUB) rec.urlaub_days += count;
+    if (typeId === KENJO_TYPE_KRANK) {
+      rec.krank_days += count;
+      rec.krank_entries.push({ from: clampedStart, to: clampedEnd, days: count });
+    } else if (typeId === KENJO_TYPE_URLAUB) {
+      rec.urlaub_days += count;
+      rec.urlaub_entries.push({ from: clampedStart, to: clampedEnd, days: count });
+    }
   }
 
   const rows = [];
@@ -497,7 +514,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
       { amount: 0, comment: '' },
     ];
     // Only include employees who have at least one working day in the calculation month
-    const timeOff = timeOffDaysByEmployee.get(uid) || { krank_days: 0, urlaub_days: 0 };
+    const timeOff = timeOffDaysByEmployee.get(uid) || { krank_days: 0, urlaub_days: 0, krank_entries: [], urlaub_entries: [] };
     if (workingDays > 0) {
       rows.push({
         kenjo_employee_id: uid,
@@ -518,6 +535,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
         vorschuss: Math.round(vorschuss * 100) / 100,
         krank_days: timeOff.krank_days,
         urlaub_days: timeOff.urlaub_days,
+        krank_entries: timeOff.krank_entries,
+        urlaub_entries: timeOff.urlaub_entries,
         rescue_entries: rescueEntries,
         weekly_breakdown: employeeWeeklyBreakdown,
       });
@@ -577,6 +596,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
         vorschuss: Math.round(manual.vorschuss * 100) / 100,
         krank_days: row.krank_days ?? 0,
         urlaub_days: row.urlaub_days ?? 0,
+        krank_entries: row.krank_entries || [],
+        urlaub_entries: row.urlaub_entries || [],
         rescue_entries: rescueEntries,
         weekly_breakdown: row.weekly_breakdown || [],
       });
@@ -596,7 +617,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const maxVerpfl = manual.working_days * 14;
     const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
     const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
-    const timeOff = timeOffDaysByEmployee.get(eid) || { krank_days: 0, urlaub_days: 0 };
+    const timeOff = timeOffDaysByEmployee.get(eid) || { krank_days: 0, urlaub_days: 0, krank_entries: [], urlaub_entries: [] };
     rowsWithManual.push({
       kenjo_employee_id: eid,
       name,
@@ -619,6 +640,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
       vorschuss: Math.round(manual.vorschuss * 100) / 100,
       krank_days: timeOff.krank_days,
       urlaub_days: timeOff.urlaub_days,
+      krank_entries: timeOff.krank_entries,
+      urlaub_entries: timeOff.urlaub_entries,
       rescue_entries: rescueEntries,
       weekly_breakdown: [],
     });
