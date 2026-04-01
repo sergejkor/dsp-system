@@ -1,6 +1,6 @@
 import { getAuthHeaders } from './authStore.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
+import { API_BASE } from '../config/apiBase.js';
 
 function authOpts(opts = {}) {
   return { ...opts, headers: { ...getAuthHeaders(), ...(opts.headers || {}) } };
@@ -38,6 +38,15 @@ export async function updateDamage(id, data) {
   }));
   const out = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(out.error || 'Failed to update damage');
+  return out;
+}
+
+export async function deleteDamage(id) {
+  const res = await fetch(`${API_BASE}/api/damages/${id}`, authOpts({
+    method: 'DELETE',
+  }));
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || 'Failed to delete damage');
   return out;
 }
 

@@ -197,14 +197,33 @@ async function deleteDamageFile(damageId, fileId) {
   return true;
 }
 
+async function deleteDamage(id) {
+  const damageId = Number(id);
+  if (!Number.isFinite(damageId)) return false;
+  const existing = await getDamageById(damageId);
+  if (!existing) return false;
+
+  const files = await listDamageFiles(damageId);
+  for (const file of files) {
+    if (file?.file_path) {
+      const abs = path.resolve(__dirname, '../../../', file.file_path);
+      fs.unlink(abs).catch(() => {});
+    }
+  }
+
+  await query(`DELETE FROM damage_files WHERE damage_id = $1`, [damageId]);
+  const res = await query(`DELETE FROM damages WHERE id = $1`, [damageId]);
+  return (res.rowCount || 0) > 0;
+}
+
 export default {
   listDamages,
   getDamageById,
   createDamage,
   updateDamage,
+  deleteDamage,
   listDamageFiles,
   addDamageFiles,
   getDamageFile,
   deleteDamageFile,
 };
-

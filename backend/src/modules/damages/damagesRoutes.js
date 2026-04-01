@@ -217,6 +217,19 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
+router.delete('/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    const ok = await damagesService.deleteDamage(id);
+    if (!ok) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE /api/damages/:id', e);
+    res.status(500).json({ error: e.message || 'Failed to delete damage' });
+  }
+});
+
 router.get('/:id/files', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -396,4 +409,3 @@ router.post('/:id/save-and-send', async (req, res) => {
 });
 
 export default router;
-

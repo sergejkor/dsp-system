@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createDamage, deleteDamageFile, downloadDamageFile, getDamageById, getDamageFiles, getDamages, saveInsuranceReport, updateDamage, uploadDamageFiles } from '../services/damagesApi';
+import { createDamage, deleteDamage, deleteDamageFile, downloadDamageFile, getDamageById, getDamageFiles, getDamages, saveInsuranceReport, updateDamage, uploadDamageFiles } from '../services/damagesApi';
 import { getCars, getDrivers } from '../services/carPlanningApi';
 import { getKenjoEmployeeProfile } from '../services/kenjoApi';
 
@@ -104,6 +104,20 @@ export default function DamagesPage() {
       setRows((prev) => prev.map((x) => (x.id === row.id ? { ...x, case_closed: checked } : x)));
     } catch (e) {
       setError(e.message || 'Failed to update case');
+    }
+  }
+
+  async function handleDelete(row) {
+    if (!window.confirm(`Delete damage case ${row.unfallnummer || row.id}?`)) return;
+    setError('');
+    try {
+      await deleteDamage(row.id);
+      setRows((prev) => prev.filter((x) => x.id !== row.id));
+      setActionsOpenId(null);
+      if (viewId === row.id) setViewId(null);
+      if (editId === row.id) setEditId(null);
+    } catch (e) {
+      setError(e.message || 'Failed to delete damage');
     }
   }
 
@@ -243,6 +257,21 @@ export default function DamagesPage() {
                               }}
                             >
                               Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="cars-action-menu-item"
+                              style={{ color: '#b42318' }}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setActionsOpenId(null);
+                                setTimeout(() => {
+                                  handleDelete(r);
+                                }, 0);
+                              }}
+                            >
+                              Delete
                             </button>
                           </div>
                         )}
@@ -1786,4 +1815,3 @@ function FilesBlock({ damageId, initialFiles = [], onFilesChange, readOnly }) {
     </div>
   );
 }
-
