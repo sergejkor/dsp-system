@@ -57,16 +57,52 @@ export async function addEmployeeContractExtension(employeeRef, payload) {
   return out;
 }
 
+export async function getEmployeeRescues(employeeRef) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/rescues`,
+    authOpts()
+  );
+  if (!response.ok) throw new Error('Employee rescues load failed');
+  return response.json();
+}
+
+export async function addEmployeeRescue(employeeRef, rescueDate) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/rescues`,
+    authOpts({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rescueDate }),
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee rescue save failed');
+  return out;
+}
+
+export async function deleteEmployeeRescue(employeeRef, rescueId) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/rescues/${encodeURIComponent(rescueId)}`,
+    authOpts({ method: 'DELETE' })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee rescue delete failed');
+  return out;
+}
+
 export async function getEmployeeDocuments(employeeRef) {
   const response = await fetch(`${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents`, authOpts());
   if (!response.ok) throw new Error('Employee documents load failed');
   return response.json();
 }
 
-export async function uploadEmployeeDocument(employeeRef, file, documentType) {
+export async function uploadEmployeeDocument(employeeRef, file, documentType, fileName = '') {
   const form = new FormData();
   form.append('file', file);
   form.append('document_type', documentType);
+  if (fileName) {
+    form.append('file_name', fileName);
+  }
   let response;
   try {
     response = await fetch(

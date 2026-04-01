@@ -2,6 +2,7 @@ import { query } from '../../db.js';
 
 let docsTableReady = false;
 let contractExtensionsTableReady = false;
+let rescueTableReady = false;
 
 async function ensureEmployeeDocumentsTable() {
   if (docsTableReady) return;
@@ -43,6 +44,25 @@ async function ensureEmployeeContractExtensionsTable() {
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_employee_contract_extensions_ref ON employee_contract_extensions (employee_ref, extension_index ASC)`);
   contractExtensionsTableReady = true;
+}
+
+export async function ensureEmployeeRescuesTable() {
+  if (rescueTableReady) return;
+  await query(`
+    CREATE TABLE IF NOT EXISTS employee_rescues (
+      id SERIAL PRIMARY KEY,
+      employee_ref VARCHAR(128) NOT NULL,
+      kenjo_employee_id VARCHAR(128),
+      rescue_date DATE NOT NULL,
+      amount NUMERIC(10,2) NOT NULL DEFAULT 20,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE employee_rescues ADD COLUMN IF NOT EXISTS kenjo_employee_id VARCHAR(128)`);
+  await query(`ALTER TABLE employee_rescues ADD COLUMN IF NOT EXISTS amount NUMERIC(10,2) NOT NULL DEFAULT 20`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_employee_rescues_ref ON employee_rescues (employee_ref, rescue_date DESC, id DESC)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_employee_rescues_kenjo_date ON employee_rescues (kenjo_employee_id, rescue_date DESC)`);
+  rescueTableReady = true;
 }
 
 async function listEmployees({ search, onlyActive } = {}) {
@@ -147,6 +167,31 @@ async function resolveEmployeeRefs(employeeRef) {
   return [...refs];
 }
 
+async function resolveEmployeeRescueTarget(employeeRef) {
+  const ref = String(employeeRef || '').trim();
+  const refs = await resolveEmployeeRefs(ref);
+  const allRefs = [...new Set([ref, ...refs].filter(Boolean))];
+  let kenjoEmployeeId = '';
+  if (allRefs.length) {
+    const res = await query(
+      `SELECT kenjo_user_id
+       FROM employees
+       WHERE employee_id = ANY($1::text[])
+          OR id::text = ANY($1::text[])
+          OR kenjo_user_id = ANY($1::text[])
+       ORDER BY CASE WHEN kenjo_user_id IS NOT NULL AND kenjo_user_id <> '' THEN 0 ELSE 1 END, id ASC
+       LIMIT 1`,
+      [allRefs]
+    ).catch(() => ({ rows: [] }));
+    kenjoEmployeeId = String(res.rows?.[0]?.kenjo_user_id || '').trim();
+  }
+  return {
+    employeeRef: ref,
+    refs: allRefs,
+    kenjoEmployeeId,
+  };
+}
+
 async function listEmployeeDocuments(employeeRef) {
   await ensureEmployeeDocumentsTable();
   const refs = await resolveEmployeeRefs(employeeRef);
@@ -215,6 +260,69 @@ async function addEmployeeContractExtension(employeeRef, { startDate, endDate })
     [ref, nextIndex, normalizedStartDate, normalizedEndDate]
   );
   return res.rows[0] || null;
+}
+
+async function listEmployeeRescues(employeeRef) {
+  await ensureEmployeeRescuesTable();
+  const target = await resolveEmployeeRescueTarget(employeeRef);
+  if (!target.refs.length && !target.kenjoEmployeeId) return [];
+  const params = [];
+  const where = [];
+  if (target.refs.length) {
+    params.push(target.refs);
+    where.push(`employee_ref = ANY($${params.length}::text[])`);
+  }
+  if (target.kenjoEmployeeId) {
+    params.push(target.kenjoEmployeeId);
+    where.push(`kenjo_employee_id = $${params.length}`);
+  }
+  const res = await query(
+    `SELECT id, employee_ref, kenjo_employee_id, rescue_date, amount, created_at
+     FROM employee_rescues
+     WHERE ${where.join(' OR ')}
+     ORDER BY rescue_date DESC, id DESC`,
+    params
+  );
+  return res.rows || [];
+}
+
+async function addEmployeeRescue(employeeRef, { rescueDate }) {
+  await ensureEmployeeRescuesTable();
+  const target = await resolveEmployeeRescueTarget(employeeRef);
+  const ref = String(target.employeeRef || '').trim();
+  const normalizedDate = normalizeDateOnly(rescueDate);
+  if (!ref) throw new Error('employee_ref is required');
+  if (!normalizedDate) throw new Error('Valid rescue date is required');
+  const res = await query(
+    `INSERT INTO employee_rescues (employee_ref, kenjo_employee_id, rescue_date, amount)
+     VALUES ($1, $2, $3, 20)
+     RETURNING id, employee_ref, kenjo_employee_id, rescue_date, amount, created_at`,
+    [ref, target.kenjoEmployeeId || null, normalizedDate]
+  );
+  return res.rows[0] || null;
+}
+
+async function deleteEmployeeRescue(employeeRef, rescueId) {
+  await ensureEmployeeRescuesTable();
+  const id = Number(rescueId);
+  if (!Number.isFinite(id)) return false;
+  const target = await resolveEmployeeRescueTarget(employeeRef);
+  const params = [id];
+  const where = [`id = $1`];
+  if (target.refs.length) {
+    params.push(target.refs);
+    where.push(`employee_ref = ANY($${params.length}::text[])`);
+  }
+  if (target.kenjoEmployeeId) {
+    params.push(target.kenjoEmployeeId);
+    where.push(`kenjo_employee_id = $${params.length}`);
+  }
+  const res = await query(
+    `DELETE FROM employee_rescues
+     WHERE ${where[0]} AND (${where.slice(1).join(' OR ')})`,
+    params
+  );
+  return Number(res.rowCount || 0) > 0;
 }
 
 async function addEmployeeDocument(employeeRef, { documentType, fileName, mimeType, fileContent, importGroupId, importSourceKey, importSourceName }) {
@@ -321,10 +429,13 @@ const employeeService = {
   listEmployees,
   getEmployeeById,
   listEmployeeDocuments,
+  listEmployeeRescues,
   listEmployeeContractExtensions,
   addEmployeeContractExtension,
+  addEmployeeRescue,
   addEmployeeDocument,
   getEmployeeDocument,
+  deleteEmployeeRescue,
   deleteEmployeeDocument,
   deleteEmployeeDocumentsBulk,
   deleteImportedSourceDocuments,

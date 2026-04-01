@@ -73,6 +73,43 @@ router.post('/:id/contract-extensions', async (req, res) => {
   }
 });
 
+router.get('/:id/rescues', async (req, res) => {
+  try {
+    const rows = await employeeService.listEmployeeRescues(req.params.id);
+    res.json(rows);
+  } catch (error) {
+    console.error('GET /api/employees/:id/rescues error', error);
+    res.status(500).json({ error: 'Failed to load rescues' });
+  }
+});
+
+router.post('/:id/rescues', async (req, res) => {
+  try {
+    const row = await employeeService.addEmployeeRescue(req.params.id, {
+      rescueDate: req.body?.rescueDate,
+    });
+    res.status(201).json(row);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (message === 'employee_ref is required' || message === 'Valid rescue date is required') {
+      return res.status(400).json({ error: message });
+    }
+    console.error('POST /api/employees/:id/rescues error', error);
+    res.status(500).json({ error: 'Failed to save rescue' });
+  }
+});
+
+router.delete('/:id/rescues/:rescueId', async (req, res) => {
+  try {
+    const ok = await employeeService.deleteEmployeeRescue(req.params.id, req.params.rescueId);
+    if (!ok) return res.status(404).json({ error: 'Rescue not found' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('DELETE /api/employees/:id/rescues/:rescueId error', error);
+    res.status(500).json({ error: 'Failed to delete rescue' });
+  }
+});
+
 router.get('/:id/documents', async (req, res) => {
   try {
     const rows = await employeeService.listEmployeeDocuments(req.params.id);

@@ -4,11 +4,14 @@ import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmploy
 import {
   getEmployee,
   getEmployeeContractExtensions,
+  getEmployeeRescues,
   getEmployeeDocuments,
   addEmployeeContractExtension,
+  addEmployeeRescue,
   uploadEmployeeDocument,
   viewEmployeeDocument,
   downloadEmployeeDocument,
+  deleteEmployeeRescue,
   deleteEmployeeDocument,
 } from '../services/employeesApi';
 import { saveAdvances } from '../services/advancesApi';
@@ -133,6 +136,12 @@ export default function EmployeeProfilePage() {
   const [contractExtensionSaving, setContractExtensionSaving] = useState(false);
   const [contractExtensionModal, setContractExtensionModal] = useState(null);
   const [contractFileUploading, setContractFileUploading] = useState(false);
+  const [rescues, setRescues] = useState([]);
+  const [rescuesLoading, setRescuesLoading] = useState(false);
+  const [rescueError, setRescueError] = useState('');
+  const [showRescueModal, setShowRescueModal] = useState(false);
+  const [rescueDate, setRescueDate] = useState('');
+  const [rescueSaving, setRescueSaving] = useState(false);
   const contractFileInputRef = useRef(null);
 
   useEffect(() => {
@@ -229,6 +238,57 @@ export default function EmployeeProfilePage() {
     }
   };
 
+  const openRescueModal = () => {
+    setRescueDate('');
+    setRescueError('');
+    setShowRescueModal(true);
+  };
+
+  const closeRescueModal = () => {
+    if (rescueSaving) return;
+    setShowRescueModal(false);
+    setRescueDate('');
+  };
+
+  const saveRescue = async () => {
+    if (!employeeDocRef) {
+      setRescueError('Employee reference is missing.');
+      return;
+    }
+    if (!rescueDate) {
+      setRescueError('Please select a date.');
+      return;
+    }
+    setRescueSaving(true);
+    setRescueError('');
+    try {
+      const row = await addEmployeeRescue(employeeDocRef, rescueDate);
+      setRescues((prev) =>
+        [row, ...(Array.isArray(prev) ? prev : [])].sort((a, b) =>
+          String(b?.rescue_date || '').localeCompare(String(a?.rescue_date || ''))
+        )
+      );
+      setShowRescueModal(false);
+      setRescueDate('');
+    } catch (e) {
+      setRescueError(String(e?.message || e));
+    } finally {
+      setRescueSaving(false);
+    }
+  };
+
+  const removeRescue = async (rescueId) => {
+    if (!employeeDocRef) return;
+    if (!window.confirm('Delete this rescue entry?')) return;
+    try {
+      setRescueError('');
+      await deleteEmployeeRescue(employeeDocRef, rescueId);
+      setRescues((prev) => (prev || []).filter((row) => row.id !== rescueId));
+    } catch (e) {
+      setRescueError(String(e?.message || e));
+    }
+  };
+
   useEffect(() => {
     if (!kenjoEmployeeId) return;
     getPaveSessions({ driver_id: kenjoEmployeeId }).then(setPaveSessions).catch(() => setPaveSessions([]));
@@ -290,6 +350,16 @@ export default function EmployeeProfilePage() {
       .then((rows) => setContractExtensions(Array.isArray(rows) ? rows : []))
       .catch((e) => setContractExtensionError(String(e?.message || e)))
       .finally(() => setContractExtensionsLoading(false));
+  }, [employeeDocRef]);
+
+  useEffect(() => {
+    if (!employeeDocRef) return;
+    setRescuesLoading(true);
+    setRescueError('');
+    getEmployeeRescues(employeeDocRef)
+      .then((rows) => setRescues(Array.isArray(rows) ? rows : []))
+      .catch((e) => setRescueError(String(e?.message || e)))
+      .finally(() => setRescuesLoading(false));
   }, [employeeDocRef]);
 
   const filteredEmployeeDocs =
@@ -713,7 +783,7 @@ export default function EmployeeProfilePage() {
                 </>
               )}
               {kenjoEmployeeId && isActive && (
-                <button type="button" className="btn-secondary" onClick={openDeactivateConfirm} style={{ color: '#b91c1c' }}>
+                <button type="button" className="btn-secondary btn-danger" onClick={openDeactivateConfirm}>
                   Deactivate employee
                 </button>
               )}
@@ -1412,6 +1482,59 @@ export default function EmployeeProfilePage() {
               </div>
             )}
           </div>
+          <div style={{ marginBottom: '1rem' }}>
+            <p style={{ margin: '0 0 0.35rem' }}>
+              <strong>Rescue</strong>
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={openRescueModal}
+                disabled={rescueSaving}
+              >
+                Add Rescue
+              </button>
+              <span style={{ color: '#666', fontSize: '0.9rem' }}>
+                {rescues.length} saved
+              </span>
+            </div>
+            {rescuesLoading ? (
+              <p style={{ margin: '0.35rem 0 0', color: '#666' }}>Loading rescues...</p>
+            ) : null}
+            {rescueError ? (
+              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{rescueError}</p>
+            ) : null}
+            {!rescuesLoading && rescues.length > 0 ? (
+              <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.45rem' }}>
+                {rescues.map((row) => (
+                  <div
+                    key={row.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto auto',
+                      gap: '0.5rem',
+                      alignItems: 'center',
+                      padding: '0.65rem 0.8rem',
+                      border: '1px solid #d8dde6',
+                      borderRadius: 10,
+                      background: '#f8fafc',
+                    }}
+                  >
+                    <span>{formatDate(row.rescue_date)}</span>
+                    <strong>20.00 EUR</strong>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => removeRescue(row.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
           {renderText(
             'Manager',
             work?.managerName || employee?.manager?.displayName,
@@ -1525,6 +1648,30 @@ export default function EmployeeProfilePage() {
           )}
         </div>
       </div>
+
+      {showRescueModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 420, width: 'calc(100% - 2rem)', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 1rem' }}>Add Rescue</h3>
+            {rescueError ? <p className="error-text" style={{ margin: '0 0 0.75rem' }}>{rescueError}</p> : null}
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              <span>Date</span>
+              <input type="date" value={rescueDate} onChange={(e) => setRescueDate(e.target.value)} />
+            </label>
+            <p style={{ margin: '0.85rem 0 0', color: '#666', fontSize: '0.9rem' }}>
+              Each saved rescue adds 20.00 EUR to Total Bonus.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
+              <button type="button" className="btn-secondary" onClick={closeRescueModal} disabled={rescueSaving}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary" onClick={saveRescue} disabled={rescueSaving}>
+                {rescueSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

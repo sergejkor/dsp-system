@@ -3,7 +3,7 @@ import { getKenjoUsersList, getKenjoAttendances } from '../kenjo/kenjoClient.js'
 import settingsService from '../settings/settingsService.js';
 import { PDFDocument } from 'pdf-lib';
 import { PDFParse } from 'pdf-parse';
-import employeeService from '../employees/employeeService.js';
+import employeeService, { ensureEmployeeRescuesTable } from '../employees/employeeService.js';
 
 /**
  * Get ISO year and week number for a date string YYYY-MM-DD.
@@ -114,6 +114,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const monthEnd = `${monthStr}-${String(lastDay).padStart(2, '0')}`;
   const weeksInPeriod = getWeeksInRange(from, to);
   const numWeeks = weeksInPeriod.length;
+  await ensureEmployeeRescuesTable();
 
   // Formula settings (defaults match current hardcoded logic).
   let payrollFormula = {
@@ -162,7 +163,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     weeklyFactsRows = weeklyFactsRes;
   }
 
-  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows] = await Promise.all([
+  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows, rescueRows] = await Promise.all([
     getKenjoUsersList(),
     getKenjoAttendances(monthStart, monthEnd),
     getKenjoAttendances(from, to),
@@ -180,6 +181,13 @@ export async function calculatePayroll(month, fromDate, toDate) {
     ).catch(() => ({ rows: [] })),
     query(
       `SELECT kenjo_user_id, transporter_id FROM kenjo_employees WHERE transporter_id IS NOT NULL AND transporter_id != ''`
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT kenjo_employee_id, rescue_date, amount
+       FROM employee_rescues
+       WHERE rescue_date >= $1::date AND rescue_date <= $2::date
+         AND kenjo_employee_id IS NOT NULL AND kenjo_employee_id <> ''`,
+      [from, to]
     ).catch(() => ({ rows: [] })),
   ]);
 
@@ -242,6 +250,20 @@ export async function calculatePayroll(month, fromDate, toDate) {
   }
   const vorschussByEmployee = new Map((vorschussRows?.rows || []).map((r) => [String(r.kenjo_employee_id).trim(), Number(r.total) || 0]));
   const bonusByEmployeeCorrect = new Map((bonusRows?.rows || []).map((r) => [String(r.employee_id).trim(), Number(r.total) || 0]));
+  const rescuesByEmployee = new Map();
+  for (const row of rescueRows?.rows || []) {
+    const employeeId = String(row.kenjo_employee_id || '').trim();
+    const rescueDate = toDateStr(row.rescue_date);
+    if (!employeeId || !rescueDate) continue;
+    if (!rescuesByEmployee.has(employeeId)) rescuesByEmployee.set(employeeId, []);
+    rescuesByEmployee.get(employeeId).push({
+      date: rescueDate,
+      amount: Math.round((Number(row.amount) || 20) * 100) / 100,
+    });
+  }
+  for (const rows of rescuesByEmployee.values()) {
+    rows.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  }
 
   // Kenjo user ID -> Amazon transporter ID (from local kenjo_employees; kpi_data uses transporter ID)
   const transporterIdByKenjoId = new Map();
@@ -425,6 +447,18 @@ export async function calculatePayroll(month, fromDate, toDate) {
       });
     }
 
+    const rescueEntries = (rescuesByEmployee.get(uid) || []).map((entry) => ({ ...entry }));
+    let rescueTotal = 0;
+    for (const rescue of rescueEntries) {
+      rescueTotal += Number(rescue.amount) || 0;
+      const rescueWeek = getISOWeek(rescue.date);
+      const weekSummary = weeklySummaryMap.get(`${rescueWeek.year}-${rescueWeek.week}`);
+      if (weekSummary) {
+        weekSummary.total_bonus += Number(rescue.amount) || 0;
+      }
+    }
+    totalBonus += rescueTotal;
+
     if (totalBonus > 0) employeesWithNonZeroBonus++;
 
     if (debugSample.length < DEBUG_SAMPLE_SIZE) {
@@ -471,6 +505,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
         vorschuss: Math.round(vorschuss * 100) / 100,
         krank_days: timeOff.krank_days,
         urlaub_days: timeOff.urlaub_days,
+        rescue_entries: rescueEntries,
         weekly_breakdown: employeeWeeklyBreakdown,
       });
     }
@@ -505,14 +540,17 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const manual = manualByEmployee.get(eid);
     if (manual) {
       manualByEmployee.delete(eid);
-      const afterAbzug = Math.round((manual.total_bonus - manual.abzug) * 100) / 100;
+      const rescueEntries = row.rescue_entries || [];
+      const rescueTotal = rescueEntries.reduce((sum, entry) => sum + (Number(entry?.amount) || 0), 0);
+      const effectiveTotalBonus = Math.round((manual.total_bonus + rescueTotal) * 100) / 100;
+      const afterAbzug = Math.round((effectiveTotalBonus - manual.abzug) * 100) / 100;
       const maxVerpfl = manual.working_days * 14;
       const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
       const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
       rowsWithManual.push({
         ...row,
         working_days: manual.working_days,
-        total_bonus: Math.round(manual.total_bonus * 100) / 100,
+        total_bonus: effectiveTotalBonus,
         abzug: Math.round(manual.abzug * 100) / 100,
         abzug_lines: [
           { amount: Math.round(manual.abzug * 100) / 100, comment: '' },
@@ -526,6 +564,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
         vorschuss: Math.round(manual.vorschuss * 100) / 100,
         krank_days: row.krank_days ?? 0,
         urlaub_days: row.urlaub_days ?? 0,
+        rescue_entries: rescueEntries,
         weekly_breakdown: row.weekly_breakdown || [],
       });
     } else {
@@ -537,7 +576,10 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const u = userIdToUser.get(eid);
     const name = u?.displayName || [u?.firstName, u?.lastName].filter(Boolean).join(' ') || eid;
     const pn = u?.employeeNumber ?? u?.employee_number ?? '';
-    const afterAbzug = Math.round((manual.total_bonus - manual.abzug) * 100) / 100;
+    const rescueEntries = (rescuesByEmployee.get(eid) || []).map((entry) => ({ ...entry }));
+    const rescueTotal = rescueEntries.reduce((sum, entry) => sum + (Number(entry?.amount) || 0), 0);
+    const effectiveTotalBonus = Math.round((manual.total_bonus + rescueTotal) * 100) / 100;
+    const afterAbzug = Math.round((effectiveTotalBonus - manual.abzug) * 100) / 100;
     const maxVerpfl = manual.working_days * 14;
     const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
     const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
@@ -548,7 +590,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
       pn,
       working_days: manual.working_days,
       period_days: periodDays,
-      total_bonus: Math.round(manual.total_bonus * 100) / 100,
+      total_bonus: effectiveTotalBonus,
       abzug: Math.round(manual.abzug * 100) / 100,
       abzug_lines: [
         { amount: Math.round(manual.abzug * 100) / 100, comment: '' },
@@ -564,6 +606,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
       vorschuss: Math.round(manual.vorschuss * 100) / 100,
       krank_days: timeOff.krank_days,
       urlaub_days: timeOff.urlaub_days,
+      rescue_entries: rescueEntries,
       weekly_breakdown: [],
     });
   }

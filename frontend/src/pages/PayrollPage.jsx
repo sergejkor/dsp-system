@@ -1071,37 +1071,64 @@ export default function PayrollPage() {
               </button>
             </div>
 
-            {(bonusBreakdownRow.weekly_breakdown || []).length ? (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                    <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week</th>
-                    <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week period</th>
-                    <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Working days</th>
-                    <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>KPI</th>
-                    <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Weekly bonus</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(bonusBreakdownRow.weekly_breakdown || []).map((weekRow) => (
-                    <tr key={`${bonusBreakdownRow.kenjo_employee_id}-${weekRow.year}-${weekRow.week}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '0.55rem 0.5rem' }}>
-                        {weekRow.year}-W{String(weekRow.week).padStart(2, '0')}
-                      </td>
-                      <td style={{ padding: '0.55rem 0.5rem' }}>
-                        {formatDateDDMMYYYY(weekRow.period_from)} - {formatDateDDMMYYYY(weekRow.period_to)}
-                      </td>
-                      <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>
-                        {Number.isInteger(Number(weekRow.working_days))
-                          ? Number(weekRow.working_days || 0)
-                          : Number(weekRow.working_days || 0).toFixed(2)}
-                      </td>
-                      <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatKpiValue(weekRow.kpi)}</td>
-                      <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatCurrency(weekRow.weekly_bonus)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {((bonusBreakdownRow.weekly_breakdown || []).length || (bonusBreakdownRow.rescue_entries || []).length) ? (
+              <>
+                {(bonusBreakdownRow.weekly_breakdown || []).length ? (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                        <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week</th>
+                        <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week period</th>
+                        <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Working days</th>
+                        <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>KPI</th>
+                        <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Weekly bonus</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(bonusBreakdownRow.weekly_breakdown || []).map((weekRow) => (
+                        <tr key={`${bonusBreakdownRow.kenjo_employee_id}-${weekRow.year}-${weekRow.week}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                          <td style={{ padding: '0.55rem 0.5rem' }}>
+                            {weekRow.year}-W{String(weekRow.week).padStart(2, '0')}
+                          </td>
+                          <td style={{ padding: '0.55rem 0.5rem' }}>
+                            {formatDateDDMMYYYY(weekRow.period_from)} - {formatDateDDMMYYYY(weekRow.period_to)}
+                          </td>
+                          <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>
+                            {Number.isInteger(Number(weekRow.working_days))
+                              ? Number(weekRow.working_days || 0)
+                              : Number(weekRow.working_days || 0).toFixed(2)}
+                          </td>
+                          <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatKpiValue(weekRow.kpi)}</td>
+                          <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatCurrency(weekRow.weekly_bonus)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : null}
+                {(bonusBreakdownRow.rescue_entries || []).length ? (
+                  <div style={{ marginTop: '1rem' }}>
+                    <h4 style={{ margin: '0 0 0.5rem' }}>Rescue</h4>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                          <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Type</th>
+                          <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Date</th>
+                          <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(bonusBreakdownRow.rescue_entries || []).map((entry, index) => (
+                          <tr key={`${bonusBreakdownRow.kenjo_employee_id}-rescue-${index}-${entry.date || ''}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '0.55rem 0.5rem' }}>Rescue</td>
+                            <td style={{ padding: '0.55rem 0.5rem' }}>{formatDateDDMMYYYY(entry.date)}</td>
+                            <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatCurrency(entry.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </>
             ) : (
               <div className="settings-msg settings-msg--err">
                 No weekly breakdown data is available for this employee in the loaded payroll response.
