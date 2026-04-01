@@ -247,7 +247,9 @@ export default function ScorecardUploadsPage() {
                             if (col.key === 'names') {
                               const first = row.first_name != null && row.first_name !== '' ? row.first_name : '';
                               const last = row.last_name != null && row.last_name !== '' ? row.last_name : '';
-                              val = (first || last) ? `${first} ${last}`.trim() : (row.transporter_id ?? '—');
+                              val = (first || last)
+                                ? `${first} ${last}`.trim()
+                                : (row.display_name || row.transporter_id || '—');
                             } else if (col.key === 'cdf') val = formatCdf(row.cdf);
                             else if (col.key === 'rating') val = getRating(row.total_score);
                             else val = row[col.key] ?? '—';

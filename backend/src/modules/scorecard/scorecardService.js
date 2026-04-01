@@ -1,6 +1,7 @@
 import { query } from '../../db.js';
 import { parseScorecardPdf } from './scorecardPdfParser.js';
 import { computeCDF, computeTotalScore } from './scorecardFormulas.js';
+import settingsService from '../settings/settingsService.js';
 
 /**
  * Get all weeks (1–53) for a year with upload status.
@@ -24,19 +25,38 @@ async function getWeeksWithUploads(year) {
 
 /**
  * Get scorecard_employees for a given year and week (without id, year, week, created_at).
- * Joins kenjo_employees to get first_name, last_name by transporter_id.
+ * Resolves employee names by transporter_id from kenjo_employees first and falls back to local employees.
  */
 async function getEmployeesForWeek(year, week) {
   const y = Number(year);
   const w = Number(week);
   if (!Number.isFinite(y) || !Number.isFinite(w) || w < 1 || w > 53) return [];
   const res = await query(
-    `SELECT DISTINCT ON (s.id) s.id, s.transporter_id, s.delivered, s.dcr, s.dsc_dpmo, s.lor_dpmo, s.pod, s.cc, s.ce, s.cdf_dpmo, s.cdf, s.total_score,
-            k.first_name, k.last_name
+    `SELECT s.id, s.transporter_id, s.delivered, s.dcr, s.dsc_dpmo, s.lor_dpmo, s.pod, s.cc, s.ce, s.cdf_dpmo, s.cdf, s.total_score,
+            COALESCE(k.first_name, e.first_name) AS first_name,
+            COALESCE(k.last_name, e.last_name) AS last_name,
+            COALESCE(
+              NULLIF(TRIM(CONCAT_WS(' ', k.first_name, k.last_name)), ''),
+              NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''),
+              NULLIF(TRIM(e.display_name), '')
+            ) AS display_name
      FROM scorecard_employees s
-     LEFT JOIN kenjo_employees k ON k.transporter_id = s.transporter_id
+     LEFT JOIN LATERAL (
+       SELECT first_name, last_name
+       FROM kenjo_employees
+       WHERE transporter_id = s.transporter_id
+       ORDER BY updated_at DESC NULLS LAST, kenjo_user_id ASC
+       LIMIT 1
+     ) k ON true
+     LEFT JOIN LATERAL (
+       SELECT first_name, last_name, display_name
+       FROM employees
+       WHERE transporter_id = s.transporter_id
+       ORDER BY is_active DESC, id DESC
+       LIMIT 1
+     ) e ON true
      WHERE s.year = $1 AND s.week = $2
-     ORDER BY s.id, k.updated_at DESC NULLS LAST`,
+     ORDER BY s.total_score DESC NULLS LAST, s.transporter_id ASC, s.id ASC`,
     [y, w]
   );
   return (res.rows || []).map(({ id, ...row }) => row);
@@ -49,6 +69,15 @@ async function parseAndSaveScorecardData(buffer, year, week) {
   const y = Number(year);
   const w = Number(week);
   const { company, employees } = await parseScorecardPdf(buffer);
+  let totalScoreConfig = {};
+  try {
+    const kpi = await settingsService.getByGroupKey('kpi');
+    totalScoreConfig = Object.fromEntries(
+      Object.entries(kpi || {}).map(([key, item]) => [key, item?.value]),
+    );
+  } catch (_) {
+    totalScoreConfig = {};
+  }
 
   await query(
     `INSERT INTO company_scorecard (
@@ -114,7 +143,7 @@ async function parseAndSaveScorecardData(buffer, year, week) {
   await query(`DELETE FROM kpi_data WHERE year = $1 AND week = $2`, [y, w]);
   for (const emp of employees) {
     const cdf = computeCDF(emp.cdf_dpmo);
-    const totalScore = computeTotalScore({ ...emp, cdf });
+    const totalScore = computeTotalScore({ ...emp, cdf }, totalScoreConfig);
     await query(
       `INSERT INTO scorecard_employees (year, week, transporter_id, delivered, dcr, dsc_dpmo, lor_dpmo, pod, cc, ce, cdf_dpmo, cdf, total_score)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
