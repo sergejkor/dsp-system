@@ -54,6 +54,83 @@ function normalizeReplacementEntries(replacements) {
   }).filter(Boolean);
 }
 
+function collectWordTextNodes(xml) {
+  const nodes = [];
+  const regex = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g;
+  let match;
+  while ((match = regex.exec(xml))) {
+    const fullMatch = match[0];
+    const text = match[1] || '';
+    const relativeStart = fullMatch.indexOf(text);
+    if (relativeStart < 0) continue;
+    const contentStart = match.index + relativeStart;
+    const contentEnd = contentStart + text.length;
+    nodes.push({
+      text,
+      contentStart,
+      contentEnd,
+    });
+  }
+  return nodes;
+}
+
+function replaceTokenAcrossWordTextNodes(xml, token, replacement) {
+  if (!xml || !token) return { xml, replaced: false };
+
+  const nodes = collectWordTextNodes(xml);
+  if (!nodes.length) return { xml, replaced: false };
+
+  const combined = nodes.map((node) => node.text).join('');
+  const tokenIndex = combined.indexOf(token);
+  if (tokenIndex < 0) return { xml, replaced: false };
+
+  const tokenEnd = tokenIndex + token.length;
+  let charCursor = 0;
+  let startNodeIndex = -1;
+  let endNodeIndex = -1;
+  let startOffset = 0;
+  let endOffset = 0;
+
+  for (let i = 0; i < nodes.length; i += 1) {
+    const nextCursor = charCursor + nodes[i].text.length;
+    if (startNodeIndex < 0 && tokenIndex >= charCursor && tokenIndex < nextCursor) {
+      startNodeIndex = i;
+      startOffset = tokenIndex - charCursor;
+    }
+    if (tokenEnd > charCursor && tokenEnd <= nextCursor) {
+      endNodeIndex = i;
+      endOffset = tokenEnd - charCursor;
+      break;
+    }
+    charCursor = nextCursor;
+  }
+
+  if (startNodeIndex < 0 || endNodeIndex < 0) {
+    return { xml, replaced: false };
+  }
+
+  const newTexts = nodes.map((node) => node.text);
+  if (startNodeIndex === endNodeIndex) {
+    newTexts[startNodeIndex] = `${nodes[startNodeIndex].text.slice(0, startOffset)}${replacement}${nodes[startNodeIndex].text.slice(endOffset)}`;
+  } else {
+    newTexts[startNodeIndex] = `${nodes[startNodeIndex].text.slice(0, startOffset)}${replacement}`;
+    for (let i = startNodeIndex + 1; i < endNodeIndex; i += 1) {
+      newTexts[i] = '';
+    }
+    newTexts[endNodeIndex] = nodes[endNodeIndex].text.slice(endOffset);
+  }
+
+  let rebuilt = '';
+  let cursor = 0;
+  for (let i = 0; i < nodes.length; i += 1) {
+    rebuilt += xml.slice(cursor, nodes[i].contentStart);
+    rebuilt += newTexts[i];
+    cursor = nodes[i].contentEnd;
+  }
+  rebuilt += xml.slice(cursor);
+  return { xml: rebuilt, replaced: true };
+}
+
 async function replaceTokensInDocx(buffer, replacements) {
   const zip = await ensureValidDocxBuffer(buffer);
   const replacementEntries = normalizeReplacementEntries(replacements);
@@ -69,7 +146,16 @@ async function replaceTokensInDocx(buffer, replacements) {
     let xml = await file.async('string');
     for (const [token, value] of replacementEntries) {
       if (!token) continue;
-      xml = xml.split(token).join(value);
+      if (xml.includes(token)) {
+        xml = xml.split(token).join(value);
+        continue;
+      }
+      let replaced = true;
+      while (replaced) {
+        const next = replaceTokenAcrossWordTextNodes(xml, token, value);
+        xml = next.xml;
+        replaced = next.replaced;
+      }
     }
     zip.file(fileName, xml);
   }
