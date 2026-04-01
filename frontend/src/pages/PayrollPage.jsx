@@ -46,11 +46,31 @@ function payslipEmployeeSelectOptions(employeeOptions, matchIds, legacyRowOption
   return [...head, ...tail];
 }
 
+function filterPayslipEmployeeOptions(options, query, selectedEmployeeRef) {
+  const all = Array.isArray(options) ? options : [];
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return all;
+
+  const filtered = all.filter((opt) => String(opt?.name || '').toLowerCase().includes(q));
+  if (!selectedEmployeeRef) return filtered;
+
+  const selected = all.find((opt) => String(opt?.id || '') === String(selectedEmployeeRef || ''));
+  if (!selected) return filtered;
+  if (filtered.some((opt) => String(opt?.id || '') === String(selected.id || ''))) return filtered;
+  return [selected, ...filtered];
+}
+
 function formatPayslipDocumentLabel(item) {
   if (item?.pageIndex && item?.pageCount) {
     return `${item.pageIndex}/${item.pageCount}`;
   }
   return '1/1';
+}
+
+function formatKpiValue(num) {
+  const n = Number(num);
+  if (Number.isNaN(n)) return 'â€”';
+  return n.toFixed(2);
 }
 
 export default function PayrollPage() {
@@ -107,6 +127,7 @@ export default function PayrollPage() {
   const [payslipLoading, setPayslipLoading] = useState(false);
   const [payslipImporting, setPayslipImporting] = useState(false);
   const [payslipNotice, setPayslipNotice] = useState('');
+  const [showBonusBreakdown, setShowBonusBreakdown] = useState(false);
 
   useEffect(() => {
     const [y, m] = month.split('-').map(Number);
@@ -678,6 +699,46 @@ export default function PayrollPage() {
   const addRecordMaxVerpfl = (Number(addRecordForm.working_days) || 0) * 14;
   const addRecordVerpflMehr = Math.round((addRecordAfterAbzug <= addRecordMaxVerpfl ? addRecordAfterAbzug : addRecordMaxVerpfl) * 100) / 100;
   const addRecordFahrtGeld = Math.round((addRecordAfterAbzug > addRecordMaxVerpfl ? addRecordAfterAbzug - addRecordMaxVerpfl : 0) * 100) / 100;
+  const payrollSummaryCards = useMemo(() => {
+    const rows = result?.rows || [];
+    const selectedMonth = String(result?.month || month || '').slice(0, 7);
+    const sums = rows.reduce(
+      (acc, row) => {
+        const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
+        acc.totalBonus += Number(row.total_bonus) || 0;
+        acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
+        acc.verpflMehr += Number(row.verpfl_mehr) || 0;
+        acc.fahrtGeld += Number(row.fahrt_geld) || 0;
+        acc.bonus += Number(row.bonus) || 0;
+        acc.kranktage += Number(row.krank_days) || 0;
+        acc.urlaubstage += Number(row.urlaub_days) || 0;
+        if (String(row.austrittsdatum || '').slice(0, 7) === selectedMonth) {
+          acc.maAustrit += 1;
+        }
+        return acc;
+      },
+      {
+        totalBonus: 0,
+        totalAbzug: 0,
+        verpflMehr: 0,
+        fahrtGeld: 0,
+        bonus: 0,
+        kranktage: 0,
+        urlaubstage: 0,
+        maAustrit: 0,
+      },
+    );
+    return [
+      { key: 'total-bonus', label: 'Total Bonus', value: formatCurrency(sums.totalBonus), accent: '#0f766e' },
+      { key: 'total-abzug', label: 'Total Abzug', value: formatCurrency(sums.totalAbzug), accent: '#b91c1c' },
+      { key: 'verpfl-mehr', label: 'Verpfl. mehr', value: formatCurrency(sums.verpflMehr), accent: '#1d4ed8' },
+      { key: 'fahrt-geld', label: 'Fahrtengeld', value: formatCurrency(sums.fahrtGeld), accent: '#7c3aed' },
+      { key: 'bonus', label: 'Bonus', value: formatCurrency(sums.bonus), accent: '#d97706' },
+      { key: 'kranktage', label: 'Kranktage', value: String(sums.kranktage), accent: '#475569' },
+      { key: 'urlaubstage', label: 'Urlaubstage', value: String(sums.urlaubstage), accent: '#059669' },
+      { key: 'ma-austrit', label: 'MA Austrit', value: String(sums.maAustrit), accent: '#be185d' },
+    ];
+  }, [result?.month, result?.rows, month]);
 
   return (
     <section className="card">
@@ -712,13 +773,14 @@ export default function PayrollPage() {
               {t('payroll.addAdvance')}
             </button>
             <button type="button" className="btn-secondary" onClick={openPayslipImport} style={{ width: 'auto', minWidth: 100 }}>
-              Import
+              Import payslips
             </button>
           </div>
         </div>
         <div className="payroll-period-calendar-wrap">
           <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>{t('payroll.periodKpi')}</label>
-          <div className="payroll-range-calendar">
+          <div className="payroll-period-side">
+            <div className="payroll-range-calendar">
             <div className="payroll-range-calendar-header">
               <button
                 type="button"
@@ -797,12 +859,40 @@ export default function PayrollPage() {
                   ? t('payroll.rangeHintFrom').replace('{from}', fromDate)
                   : t('payroll.rangeHintStart')}
             </p>
+            </div>
+            {result?.rows?.length > 0 && (
+              <div className="payroll-summary-grid">
+                {payrollSummaryCards.map((card) => (
+                  <button
+                    key={card.key}
+                    type="button"
+                    className={`payroll-summary-card ${card.key === 'total-bonus' && (result?.weekly_breakdown || []).length ? 'payroll-summary-card--interactive' : ''}`}
+                    style={{ borderTopColor: card.accent }}
+                    onClick={() => {
+                      if (card.key === 'total-bonus' && (result?.weekly_breakdown || []).length) {
+                        setShowBonusBreakdown(true);
+                      }
+                    }}
+                    disabled={!(card.key === 'total-bonus' && (result?.weekly_breakdown || []).length)}
+                  >
+                    <div className="payroll-summary-label">{card.label}</div>
+                    <div className="payroll-summary-value">{card.value}</div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       <style>{`
         .payroll-period-calendar-wrap { margin-bottom: 0.5rem; }
+        .payroll-period-side {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.85rem;
+          align-items: flex-start;
+        }
         .payroll-range-calendar {
           border: 1px solid var(--border);
           border-radius: 8px;
@@ -864,9 +954,100 @@ export default function PayrollPage() {
         .payroll-range-calendar-day--start:hover:not(:disabled),
         .payroll-range-calendar-day--end:hover:not(:disabled) { background: #1d4ed8; }
         .payroll-range-calendar-hint { margin: 0.5rem 0 0 0; font-size: 0.8rem; color: var(--text-muted); }
+        .payroll-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.55rem;
+          width: 320px;
+          min-width: 320px;
+        }
+        .payroll-summary-card {
+          border: 1px solid var(--border);
+          border-top: 4px solid #3b82f6;
+          border-radius: 10px;
+          background: var(--bg-card);
+          padding: 0.65rem 0.8rem;
+          box-shadow: 0 1px 4px var(--shadow);
+          text-align: left;
+        }
+        .payroll-summary-card:disabled {
+          cursor: default;
+        }
+        .payroll-summary-card--interactive {
+          cursor: pointer;
+          transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+        }
+        .payroll-summary-card--interactive:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+          border-color: rgba(59, 130, 246, 0.35);
+        }
+        .payroll-summary-label {
+          font-size: 0.78rem;
+          font-weight: 600;
+          color: var(--text-muted);
+          margin-bottom: 0.25rem;
+        }
+        .payroll-summary-value {
+          font-size: 1rem;
+          font-weight: 700;
+          color: var(--text);
+          line-height: 1.2;
+        }
       `}</style>
 
       {error && <p className="error-text" style={{ marginBottom: '1rem' }}>{error}</p>}
+
+      {showBonusBreakdown && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, width: 'min(920px, calc(100% - 2rem))', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: '0 0 0.35rem' }}>Total Bonus breakdown</h3>
+                <p className="muted" style={{ margin: 0 }}>
+                  Selected period: {result?.from || 'â€”'} â€” {result?.to || 'â€”'}
+                </p>
+              </div>
+              <button type="button" className="btn-secondary" onClick={() => setShowBonusBreakdown(false)}>
+                Close
+              </button>
+            </div>
+
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week</th>
+                  <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week period</th>
+                  <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Employees</th>
+                  <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Working days</th>
+                  <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Avg KPI</th>
+                  <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Weekly bonus</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(result?.weekly_breakdown || []).map((weekRow) => (
+                  <tr key={`${weekRow.year}-${weekRow.week}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '0.55rem 0.5rem' }}>
+                      {weekRow.year}-W{String(weekRow.week).padStart(2, '0')}
+                    </td>
+                    <td style={{ padding: '0.55rem 0.5rem' }}>
+                      {formatDateDDMMYYYY(weekRow.period_from)} â€” {formatDateDDMMYYYY(weekRow.period_to)}
+                    </td>
+                    <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{weekRow.employee_count ?? 0}</td>
+                    <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>
+                      {Number.isInteger(Number(weekRow.total_working_days))
+                        ? Number(weekRow.total_working_days || 0)
+                        : Number(weekRow.total_working_days || 0).toFixed(2)}
+                    </td>
+                    <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatKpiValue(weekRow.average_kpi)}</td>
+                    <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatCurrency(weekRow.total_bonus)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {result && result.rows && (
         <div style={{ overflowX: 'auto' }}>
@@ -1456,6 +1637,7 @@ export default function PayrollPage() {
                   items: sortedItems.map((it) => ({
                     ...it,
                     employeeRef: it.matchedEmployeeRef || '',
+                    employeeSearch: '',
                     action: 'import',
                   })),
                 });
@@ -1495,17 +1677,32 @@ export default function PayrollPage() {
                         </td>
                         <td style={{ padding: '0.5rem' }}>{it.detectedName || '—'}</td>
                         <td style={{ padding: '0.5rem' }}>
-                          <select
-                            value={it.employeeRef || ''}
-                            onChange={(e) => updatePayslipItem(it.fileId, { employeeRef: e.target.value })}
-                            disabled={it.action === 'delete'}
-                            style={{ minWidth: 220 }}
-                          >
-                            <option value="">— Select employee —</option>
-                            {payslipEmployeeSelectOptions(payslipPreview?.employeeOptions, it.matchIds, it.options).map((opt) => (
-                              <option key={opt.id} value={opt.id}>{opt.name}</option>
-                            ))}
-                          </select>
+                          <div style={{ display: 'grid', gap: '0.35rem' }}>
+                            {!it.employeeRef && it.action !== 'delete' && (
+                              <input
+                                type="text"
+                                value={it.employeeSearch || ''}
+                                onChange={(e) => updatePayslipItem(it.fileId, { employeeSearch: e.target.value })}
+                                placeholder="Type employee name..."
+                                style={{ minWidth: 220, padding: '0.35rem 0.5rem' }}
+                              />
+                            )}
+                            <select
+                              value={it.employeeRef || ''}
+                              onChange={(e) => updatePayslipItem(it.fileId, { employeeRef: e.target.value })}
+                              disabled={it.action === 'delete'}
+                              style={{ minWidth: 220 }}
+                            >
+                              <option value="">— Select employee —</option>
+                              {filterPayslipEmployeeOptions(
+                                payslipEmployeeSelectOptions(payslipPreview?.employeeOptions, it.matchIds, it.options),
+                                it.employeeSearch,
+                                it.employeeRef
+                              ).map((opt) => (
+                                <option key={opt.id} value={opt.id}>{opt.name}</option>
+                              ))}
+                            </select>
+                          </div>
                         </td>
                         <td style={{ padding: '0.5rem' }}>
                           <span

@@ -20,6 +20,28 @@ function getISOWeek(dateStr) {
   return { year, week };
 }
 
+function getISOWeekRange(year, week) {
+  const jan4 = new Date(Date.UTC(year, 0, 4, 12, 0, 0));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (week - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  return {
+    start: monday.toISOString().slice(0, 10),
+    end: sunday.toISOString().slice(0, 10),
+  };
+}
+
+function clampIsoDateRange(start, end, min, max) {
+  const clampedStart = start < min ? min : start;
+  const clampedEnd = end > max ? max : end;
+  return {
+    start: clampedStart,
+    end: clampedEnd,
+  };
+}
+
 /**
  * Get list of { year, week } for all weeks overlapping [fromDate, toDate].
  */
@@ -283,6 +305,25 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const DEBUG_SAMPLE_SIZE = 8;
   let employeesWithTransporterId = 0;
   let employeesWithNonZeroBonus = 0;
+  const weeklySummaryMap = new Map(
+    weeksInPeriod.map(({ year, week }) => {
+      const weekRange = clampIsoDateRange(getISOWeekRange(year, week).start, getISOWeekRange(year, week).end, from, to);
+      return [
+        `${year}-${week}`,
+        {
+          year,
+          week,
+          period_from: weekRange.start,
+          period_to: weekRange.end,
+          total_working_days: 0,
+          total_bonus: 0,
+          kpi_sum: 0,
+          kpi_count: 0,
+          employee_count: 0,
+        },
+      ];
+    })
+  );
 
   for (const u of users || []) {
     const uid = String(u._id || '').trim();
@@ -307,6 +348,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     let debugFirstWeek = null;
     for (const { year, week } of weeksInPeriod) {
       const weekKey = `${year}-${week}`;
+      const weekSummary = weeklySummaryMap.get(weekKey);
       const savedFact =
         weeklyFactsByKey.get(`${uidLower}-${year}-${week}`) ??
         weeklyFactsByKey.get(`${pnStrLower}-${year}-${week}`) ??
@@ -314,6 +356,13 @@ export async function calculatePayroll(month, fromDate, toDate) {
       // Use saved fact only if it has non-zero bonus; otherwise recalc from kpi_data (stale 0 would block correct bonus)
       if (savedFact && (savedFact.quality_bonus_week || 0) > 0) {
         totalBonus += savedFact.quality_bonus_week;
+        if (weekSummary) {
+          weekSummary.total_working_days += Number(savedFact.worked_days) || 0;
+          weekSummary.total_bonus += Number(savedFact.quality_bonus_week) || 0;
+          weekSummary.kpi_sum += Number(savedFact.kpi) || 0;
+          weekSummary.kpi_count += 1;
+          weekSummary.employee_count += 1;
+        }
         if (!debugFirstWeek) {
           debugFirstWeek = { year, week, source: 'weekly_facts', kpi: savedFact.kpi, daysInWeek: savedFact.worked_days, rate: null, qualityBonusWeek: savedFact.quality_bonus_week };
         }
@@ -342,6 +391,13 @@ export async function calculatePayroll(month, fromDate, toDate) {
       }
       const qualityBonusWeek = Math.round(daysInWeek * rate * 100) / 100;
       totalBonus += qualityBonusWeek;
+      if (weekSummary && (daysInWeek > 0 || kpiFromKpiData > 0 || qualityBonusWeek > 0)) {
+        weekSummary.total_working_days += Number(daysInWeek) || 0;
+        weekSummary.total_bonus += Number(qualityBonusWeek) || 0;
+        weekSummary.kpi_sum += Number(kpiFromKpiData) || 0;
+        weekSummary.kpi_count += 1;
+        weekSummary.employee_count += 1;
+      }
       if (!debugFirstWeek) {
         debugFirstWeek = { year, week, kpiByKenjo, kpiByPn, kpiByTrans, kpiUsed: kpiFromKpiData, daysInWeek, rate, qualityBonusWeek };
       }
@@ -525,7 +581,22 @@ export async function calculatePayroll(month, fromDate, toDate) {
     sample: debugSample,
   };
 
-  return { month: monthStr, from, to, period_days: periodDays, rows: rowsWithManual, debug };
+  const weekly_breakdown = weeksInPeriod.map(({ year, week }) => {
+    const item = weeklySummaryMap.get(`${year}-${week}`) || {};
+    const avgKpi = item.kpi_count ? item.kpi_sum / item.kpi_count : 0;
+    return {
+      year,
+      week,
+      period_from: item.period_from || from,
+      period_to: item.period_to || to,
+      employee_count: item.employee_count || 0,
+      total_working_days: Math.round((Number(item.total_working_days) || 0) * 100) / 100,
+      average_kpi: Math.round(avgKpi * 100) / 100,
+      total_bonus: Math.round((Number(item.total_bonus) || 0) * 100) / 100,
+    };
+  });
+
+  return { month: monthStr, from, to, period_days: periodDays, rows: rowsWithManual, weekly_breakdown, debug };
 }
 
 /**
@@ -982,6 +1053,7 @@ export async function previewPayslipImport(files) {
     const f = files[i];
     if (!f?.buffer?.length) continue;
     const baseFileName = f.originalname || `payslip-${i + 1}.pdf`;
+    const sourceKey = `${batchId}_src_${i + 1}`;
     const pageBuffers = await splitPdfToPageBuffers(f.buffer);
     for (let p = 0; p < pageBuffers.length; p++) {
       const fileId = `${batchId}_${docSeq}`;
@@ -994,6 +1066,9 @@ export async function previewPayslipImport(files) {
       const autoMatch = chooseAutoMatch(matches);
       docs.push({
         fileId,
+        importGroupId: batchId,
+        importSourceKey: sourceKey,
+        importSourceName: baseFileName,
         fileName: pageBuffers.length > 1 ? `${baseFileName} (page ${p + 1}/${pageBuffers.length})` : baseFileName,
         mimeType: f.mimetype || 'application/pdf',
         fileContent: pageBuffer,
@@ -1048,6 +1123,9 @@ export async function importPayslipBatch(batchId, resolutions) {
       fileName: doc.fileName,
       mimeType: doc.mimeType,
       fileContent: doc.fileContent,
+      importGroupId: doc.importGroupId,
+      importSourceKey: doc.importSourceKey,
+      importSourceName: doc.importSourceName,
     });
     imported++;
   }

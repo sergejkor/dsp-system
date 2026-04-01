@@ -136,6 +136,12 @@ function norm(v) {
   return String(v || '').trim().toLowerCase();
 }
 
+function addDays(dateStr, daysToAdd) {
+  const base = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`);
+  base.setDate(base.getDate() + Number(daysToAdd || 0));
+  return base.toISOString().slice(0, 10);
+}
+
 function findCandidate(items, employeeId) {
   const id = norm(employeeId);
   if (!id) return null;
@@ -584,23 +590,40 @@ export async function getKenjoAttendances(fromDate, toDate) {
   const from = typeof fromDate === 'string' ? fromDate.slice(0, 10) : '';
   const to = typeof toDate === 'string' ? toDate.slice(0, 10) : '';
   if (!from || !to) return [];
-  try {
-    const data = await kenjoGet('/attendances', { from, to });
-    const list = normalizeArrayPayload(data);
-    return Array.isArray(list) ? list : [];
-  } catch (err) {
-    const msg = String(err?.message || err || '');
-    // Kenjo returns 404 with message "Could not find attendance entries." when there are simply no rows.
-    // Treat this as "no attendances" instead of an error.
-    if (
-      msg.includes('/attendances') &&
-      msg.includes('404') &&
-      msg.toLowerCase().includes('could not find attendance entries')
-    ) {
-      return [];
-    }
-    throw err;
+
+  const chunks = [];
+  let chunkFrom = from;
+  while (chunkFrom <= to) {
+    const chunkToCandidate = addDays(chunkFrom, 30);
+    const chunkTo = chunkToCandidate < to ? chunkToCandidate : to;
+    chunks.push({ from: chunkFrom, to: chunkTo });
+    chunkFrom = addDays(chunkTo, 1);
   }
+
+  const merged = [];
+  for (const chunk of chunks) {
+    try {
+      const data = await kenjoGet('/attendances', { from: chunk.from, to: chunk.to });
+      const list = normalizeArrayPayload(data);
+      if (Array.isArray(list) && list.length) {
+        merged.push(...list);
+      }
+    } catch (err) {
+      const msg = String(err?.message || err || '');
+      // Kenjo returns 404 with message "Could not find attendance entries." when there are simply no rows.
+      // Treat this as "no attendances" instead of an error.
+      if (
+        msg.includes('/attendances') &&
+        msg.includes('404') &&
+        msg.toLowerCase().includes('could not find attendance entries')
+      ) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return merged;
 }
 
 export async function updateEmployeeWork(employeeId, body) {
