@@ -221,6 +221,17 @@ function normalizeDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
 }
 
+function normalizeDbDateOutput(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(value.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return normalizeDateOnly(value);
+}
+
 async function listEmployeeContractExtensions(employeeRef) {
   await ensureEmployeeContractExtensionsTable();
   const refs = await resolveEmployeeRefs(employeeRef);
@@ -291,7 +302,10 @@ async function listEmployeeRescues(employeeRef) {
      ORDER BY rescue_date DESC, id DESC`,
     params
   );
-  return res.rows || [];
+  return (res.rows || []).map((row) => ({
+    ...row,
+    rescue_date: normalizeDbDateOutput(row.rescue_date),
+  }));
 }
 
 async function addEmployeeRescue(employeeRef, { rescueDate }) {
@@ -315,7 +329,13 @@ async function addEmployeeRescue(employeeRef, { rescueDate }) {
      RETURNING id, employee_ref, kenjo_employee_id, rescue_date, amount, created_at`,
     [ref, target.kenjoEmployeeId || null, normalizedDate, rescueAmount]
   );
-  return res.rows[0] || null;
+  const row = res.rows[0] || null;
+  return row
+    ? {
+        ...row,
+        rescue_date: normalizeDbDateOutput(row.rescue_date),
+      }
+    : null;
 }
 
 async function deleteEmployeeRescue(employeeRef, rescueId) {
