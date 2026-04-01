@@ -1063,7 +1063,7 @@ export default function PayrollPage() {
               <div>
                 <h3 style={{ margin: '0 0 0.35rem' }}>Employee Total Bonus breakdown</h3>
                 <p className="muted" style={{ margin: 0 }}>
-                  {bonusBreakdownRow.name || '-'} | Selected period: {result?.from || '-'} - {result?.to || '-'}
+                  {bonusBreakdownRow.name || '-'} | KPI period: {result?.from || '-'} - {result?.to || '-'} | Payroll month: {result?.month || '-'}
                 </p>
               </div>
               <button type="button" className="btn-secondary" onClick={() => setBonusBreakdownRow(null)}>
@@ -1108,6 +1108,9 @@ export default function PayrollPage() {
                 {(bonusBreakdownRow.rescue_entries || []).length ? (
                   <div style={{ marginTop: '1rem' }}>
                     <h4 style={{ margin: '0 0 0.5rem' }}>Rescue</h4>
+                    <p className="muted" style={{ margin: '0 0 0.5rem' }}>
+                      Rescue entries are shown for the full selected payroll month.
+                    </p>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
                       <thead>
                         <tr style={{ borderBottom: '1px solid #e5e7eb' }}>

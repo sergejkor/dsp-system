@@ -183,10 +183,24 @@ export async function calculatePayroll(month, fromDate, toDate) {
       `SELECT kenjo_user_id, transporter_id FROM kenjo_employees WHERE transporter_id IS NOT NULL AND transporter_id != ''`
     ).catch(() => ({ rows: [] })),
     query(
-      `SELECT employee_ref, kenjo_employee_id, rescue_date, amount
-       FROM employee_rescues
+      `SELECT
+         r.employee_ref,
+         r.kenjo_employee_id,
+         COALESCE(NULLIF(r.kenjo_employee_id, ''), emp.kenjo_user_id) AS resolved_kenjo_employee_id,
+         r.rescue_date,
+         r.amount
+       FROM employee_rescues r
+       LEFT JOIN LATERAL (
+         SELECT e.kenjo_user_id
+         FROM employees e
+         WHERE e.employee_id = r.employee_ref
+            OR e.id::text = r.employee_ref
+            OR e.kenjo_user_id = r.employee_ref
+         ORDER BY CASE WHEN e.kenjo_user_id IS NOT NULL AND e.kenjo_user_id <> '' THEN 0 ELSE 1 END, e.id ASC
+         LIMIT 1
+       ) emp ON TRUE
        WHERE rescue_date >= $1::date AND rescue_date <= $2::date`,
-      [from, to]
+      [monthStart, monthEnd]
     ).catch(() => ({ rows: [] })),
   ]);
 
@@ -251,7 +265,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const bonusByEmployeeCorrect = new Map((bonusRows?.rows || []).map((r) => [String(r.employee_id).trim(), Number(r.total) || 0]));
   const rescuesByEmployee = new Map();
   for (const row of rescueRows?.rows || []) {
-    const employeeId = String(row.kenjo_employee_id || row.employee_ref || '').trim();
+    const employeeId = String(row.resolved_kenjo_employee_id || row.kenjo_employee_id || row.employee_ref || '').trim();
     const rescueDate = toDateStr(row.rescue_date);
     if (!employeeId || !rescueDate) continue;
     if (!rescuesByEmployee.has(employeeId)) rescuesByEmployee.set(employeeId, []);
