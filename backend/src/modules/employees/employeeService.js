@@ -1,4 +1,5 @@
 import { query } from '../../db.js';
+import settingsService from '../settings/settingsService.js';
 
 let docsTableReady = false;
 let contractExtensionsTableReady = false;
@@ -293,11 +294,19 @@ async function addEmployeeRescue(employeeRef, { rescueDate }) {
   const normalizedDate = normalizeDateOnly(rescueDate);
   if (!ref) throw new Error('employee_ref is required');
   if (!normalizedDate) throw new Error('Valid rescue date is required');
+  let rescueAmount = 20;
+  try {
+    const configured = await settingsService.getSetting('payroll', 'payroll_rescue_bonus_eur');
+    const parsed = Number(configured);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      rescueAmount = Math.round(parsed * 100) / 100;
+    }
+  } catch (_) {}
   const res = await query(
     `INSERT INTO employee_rescues (employee_ref, kenjo_employee_id, rescue_date, amount)
-     VALUES ($1, $2, $3, 20)
+     VALUES ($1, $2, $3, $4)
      RETURNING id, employee_ref, kenjo_employee_id, rescue_date, amount, created_at`,
-    [ref, target.kenjoEmployeeId || null, normalizedDate]
+    [ref, target.kenjoEmployeeId || null, normalizedDate, rescueAmount]
   );
   return res.rows[0] || null;
 }

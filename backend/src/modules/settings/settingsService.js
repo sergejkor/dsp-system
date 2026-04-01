@@ -75,6 +75,7 @@ const PAYROLL_ADDITIONAL_DEFAULT_ITEMS = [
   { key: 'payroll_fair_threshold', label: 'Fair threshold (<)', value_type: 'number', value_number: 85, default_value_json: '85', sort_order: 102 },
   { key: 'payroll_fantastic_plus_bonus_eur', label: 'Fantastic Plus Bonus per day', value_type: 'number', value_number: 17, default_value_json: '17', unit: 'EUR', sort_order: 103 },
   { key: 'payroll_fantastic_bonus_eur', label: 'Fantastic Bonus per day', value_type: 'number', value_number: 5, default_value_json: '5', unit: 'EUR', sort_order: 104 },
+  { key: 'payroll_rescue_bonus_eur', label: 'Rescue bonus', value_type: 'number', value_number: 20, default_value_json: '20', unit: 'EUR', sort_order: 105 },
 ];
 
 const PERSONALFRAGEBOGEN_SETTINGS_GROUP = {

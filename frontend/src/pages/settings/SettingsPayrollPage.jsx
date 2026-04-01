@@ -1,19 +1,39 @@
 import { useEffect, useState } from 'react';
 import { getSettingsByGroup, updateSettingsGroup, resetSettingsGroup } from '../../services/settingsApi';
 
+const REQUIRED_PAYROLL_ITEMS = {
+  payroll_fantastic_threshold: { key: 'payroll_fantastic_threshold', label: 'Fantastic threshold (>)', value_type: 'number', value: 93 },
+  payroll_great_threshold: { key: 'payroll_great_threshold', label: 'Great threshold (>)', value_type: 'number', value: 85 },
+  payroll_fair_threshold: { key: 'payroll_fair_threshold', label: 'Fair threshold (<)', value_type: 'number', value: 85 },
+  payroll_fantastic_plus_bonus_eur: { key: 'payroll_fantastic_plus_bonus_eur', label: 'Fantastic Plus Bonus', value_type: 'number', value: 17, unit: 'EUR' },
+  payroll_fantastic_bonus_eur: { key: 'payroll_fantastic_bonus_eur', label: 'Fantastic Bonus', value_type: 'number', value: 5, unit: 'EUR' },
+  payroll_rescue_bonus_eur: { key: 'payroll_rescue_bonus_eur', label: 'Rescue bonus', value_type: 'number', value: 20, unit: 'EUR' },
+};
+
+function withRequiredPayrollItems(obj) {
+  const base = obj || {};
+  const out = { ...base };
+  Object.entries(REQUIRED_PAYROLL_ITEMS).forEach(([key, defaults]) => {
+    if (!out[key]) out[key] = { ...defaults };
+  });
+  return out;
+}
+
 export default function SettingsPayrollPage() {
   const [data, setData] = useState(null);
   const [draft, setDraft] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     getSettingsByGroup('payroll')
       .then((obj) => {
-        setData(obj);
-        setDraft(obj);
+        const merged = withRequiredPayrollItems(obj);
+        setData(merged);
+        setDraft(merged);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -31,8 +51,10 @@ export default function SettingsPayrollPage() {
     setError('');
     updateSettingsGroup('payroll', payload)
       .then((updated) => {
-        setData(updated);
-        setDraft(updated);
+        const merged = withRequiredPayrollItems(updated);
+        setData(merged);
+        setDraft(merged);
+        setIsEditing(false);
         setMessage('Payroll settings saved.');
       })
       .catch((e) => setError(e.message))
@@ -44,8 +66,10 @@ export default function SettingsPayrollPage() {
     setSaving(true);
     resetSettingsGroup('payroll')
       .then((updated) => {
-        setData(updated);
-        setDraft(updated);
+        const merged = withRequiredPayrollItems(updated);
+        setData(merged);
+        setDraft(merged);
+        setIsEditing(false);
         setMessage('Defaults restored.');
       })
       .catch((e) => setError(e.message))
@@ -63,6 +87,20 @@ export default function SettingsPayrollPage() {
       <h3>Payroll Settings</h3>
       <p className="muted">Calculation format, currency, lock day, export behavior.</p>
       {message && <p className="settings-msg settings-msg--ok">{message}</p>}
+      <div className="settings-actions" style={{ marginTop: 0 }}>
+        <button
+          type="button"
+          onClick={() => {
+            if (isEditing) return;
+            if (!confirm('Are you sure you want to change KPIs?')) return;
+            setMessage('');
+            setIsEditing(true);
+          }}
+          disabled={isEditing || saving}
+        >
+          Edit
+        </button>
+      </div>
       <div className="settings-form">
         {items.map(([key, item]) => (
           <label key={key} className="settings-row">
@@ -72,6 +110,7 @@ export default function SettingsPayrollPage() {
                 type="number"
                 value={item.value ?? ''}
                 onChange={(e) => setDraft((d) => ({ ...d, [key]: { ...item, value: e.target.value === '' ? null : Number(e.target.value) } }))}
+                disabled={!isEditing || saving}
               />
             )}
             {item.value_type === 'boolean' && (
@@ -79,6 +118,7 @@ export default function SettingsPayrollPage() {
                 type="checkbox"
                 checked={!!item.value}
                 onChange={(e) => setDraft((d) => ({ ...d, [key]: { ...item, value: e.target.checked } }))}
+                disabled={!isEditing || saving}
               />
             )}
             {(item.value_type === 'string' || !item.value_type) && (
@@ -86,14 +126,15 @@ export default function SettingsPayrollPage() {
                 type="text"
                 value={item.value ?? ''}
                 onChange={(e) => setDraft((d) => ({ ...d, [key]: { ...item, value: e.target.value } }))}
+                disabled={!isEditing || saving}
               />
             )}
             {item.unit && <span className="settings-unit">{item.unit}</span>}
           </label>
         ))}
         <div className="settings-actions">
-          <button type="button" onClick={handleSave} disabled={!hasChanges || saving}>{saving ? 'Saving…' : 'Save'}</button>
-          <button type="button" onClick={handleReset} disabled={saving}>Restore defaults</button>
+          <button type="button" onClick={handleSave} disabled={!isEditing || !hasChanges || saving}>{saving ? 'Saving…' : 'Save'}</button>
+          <button type="button" onClick={handleReset} disabled={!isEditing || saving}>Restore defaults</button>
         </div>
       </div>
       <style>{`

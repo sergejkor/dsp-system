@@ -1522,7 +1522,7 @@ export default function EmployeeProfilePage() {
                     }}
                   >
                     <span>{formatDate(row.rescue_date)}</span>
-                    <strong>20.00 EUR</strong>
+                    <strong>{Number(row?.amount || 0).toFixed(2)} EUR</strong>
                     <button
                       type="button"
                       className="btn-secondary"
@@ -1659,7 +1659,7 @@ export default function EmployeeProfilePage() {
               <input type="date" value={rescueDate} onChange={(e) => setRescueDate(e.target.value)} />
             </label>
             <p style={{ margin: '0.85rem 0 0', color: '#666', fontSize: '0.9rem' }}>
-              Each saved rescue adds 20.00 EUR to Total Bonus.
+              Each saved rescue adds the configured Rescue bonus from Payroll Settings to Total Bonus.
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
               <button type="button" className="btn-secondary" onClick={closeRescueModal} disabled={rescueSaving}>
