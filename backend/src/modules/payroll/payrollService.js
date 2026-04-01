@@ -183,10 +183,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
       `SELECT kenjo_user_id, transporter_id FROM kenjo_employees WHERE transporter_id IS NOT NULL AND transporter_id != ''`
     ).catch(() => ({ rows: [] })),
     query(
-      `SELECT kenjo_employee_id, rescue_date, amount
+      `SELECT employee_ref, kenjo_employee_id, rescue_date, amount
        FROM employee_rescues
-       WHERE rescue_date >= $1::date AND rescue_date <= $2::date
-         AND kenjo_employee_id IS NOT NULL AND kenjo_employee_id <> ''`,
+       WHERE rescue_date >= $1::date AND rescue_date <= $2::date`,
       [from, to]
     ).catch(() => ({ rows: [] })),
   ]);
@@ -252,7 +251,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const bonusByEmployeeCorrect = new Map((bonusRows?.rows || []).map((r) => [String(r.employee_id).trim(), Number(r.total) || 0]));
   const rescuesByEmployee = new Map();
   for (const row of rescueRows?.rows || []) {
-    const employeeId = String(row.kenjo_employee_id || '').trim();
+    const employeeId = String(row.kenjo_employee_id || row.employee_ref || '').trim();
     const rescueDate = toDateStr(row.rescue_date);
     if (!employeeId || !rescueDate) continue;
     if (!rescuesByEmployee.has(employeeId)) rescuesByEmployee.set(employeeId, []);

@@ -5,6 +5,10 @@ let docsTableReady = false;
 let contractExtensionsTableReady = false;
 let rescueTableReady = false;
 
+function looksLikeKenjoId(value) {
+  return /^[a-f0-9]{24}$/i.test(String(value || '').trim());
+}
+
 async function ensureEmployeeDocumentsTable() {
   if (docsTableReady) return;
   await query(`
@@ -185,6 +189,9 @@ async function resolveEmployeeRescueTarget(employeeRef) {
       [allRefs]
     ).catch(() => ({ rows: [] }));
     kenjoEmployeeId = String(res.rows?.[0]?.kenjo_user_id || '').trim();
+  }
+  if (!kenjoEmployeeId && looksLikeKenjoId(ref)) {
+    kenjoEmployeeId = ref;
   }
   return {
     employeeRef: ref,
