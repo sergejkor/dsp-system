@@ -272,16 +272,23 @@ function createPdfSourceSummaryCards(form) {
   ];
 }
 
-function buildPdfSummaryCards(form, pdfSettings) {
+function buildPdfSummaryCards(form, detail, pdfSettings) {
   const sourceCards = createPdfSourceSummaryCards(form);
   const sourceCardsById = new Map(sourceCards.map((card) => [card.id, card]));
+  const templateValues = buildPdfTemplateValues(form, detail);
   const layoutCards = Array.isArray(pdfSettings?.pdf_layout_schema?.value?.summaryCards)
     ? pdfSettings.pdf_layout_schema.value.summaryCards
-    : sourceCards.map((card) => ({ id: card.id, sourceCardId: card.id, label: card.label, visible: true }));
+    : sourceCards.map((card) => ({ id: card.id, sourceCardId: card.id, label: card.label, visible: true, isCustom: false, manualValue: '' }));
 
   return layoutCards
     .filter((card) => card?.visible !== false)
     .map((card) => {
+      if (card?.isCustom) {
+        return {
+          label: card?.label || 'Custom card',
+          value: applyPdfTemplate(card?.manualValue, templateValues),
+        };
+      }
       const sourceCard = sourceCardsById.get(card?.sourceCardId);
       if (!sourceCard) return null;
       return {
@@ -849,7 +856,7 @@ export default function PersonalQuestionnaireReviewPage() {
   );
   const documentTemplateOptions = useMemo(() => buildDocumentTemplateOptions(form), [form]);
   const pdfSections = useMemo(() => buildPdfSections(form, detail, pdfCopy, pdfSettings), [form, detail, pdfCopy, pdfSettings]);
-  const pdfSummaryCards = useMemo(() => buildPdfSummaryCards(form, pdfSettings), [form, pdfSettings]);
+  const pdfSummaryCards = useMemo(() => buildPdfSummaryCards(form, detail, pdfSettings), [form, detail, pdfSettings]);
   const pdfConfig = useMemo(() => normalizePdfConfig(pdfSettings), [pdfSettings]);
 
   function setWorkField(key, nextValue) {

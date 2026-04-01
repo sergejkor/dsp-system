@@ -29,6 +29,8 @@ function createDefaultPdfLayoutSchema() {
       sourceCardId: cardId,
       label,
       visible: true,
+      isCustom: false,
+      manualValue: '',
     })),
     sections: PDF_SECTION_TEMPLATES.map(([sectionId, title, rows]) => ({
       id: sectionId,
@@ -62,6 +64,8 @@ function normalizeLayoutSchema(value) {
       sourceCardId: card?.sourceCardId || null,
       label: String(card?.label || `Card ${cardIndex + 1}`),
       visible: card?.visible !== false,
+      isCustom: card?.isCustom === true,
+      manualValue: String(card?.manualValue || ''),
     })),
     sections: sections.map((section, sectionIndex) => ({
       id: String(section?.id || `section-${sectionIndex + 1}`),
@@ -247,6 +251,7 @@ export default function SettingsPersonalfragebogenPage() {
               <button type="button" className="btn-secondary" onClick={() => setBuilderOpen(false)}>Close</button>
             </div>
             <div className="pdf-builder-toolbar">
+              <button type="button" onClick={() => updateLayout((layout) => { layout.summaryCards.push({ id: uid('custom-card'), sourceCardId: null, label: 'Custom card', visible: true, isCustom: true, manualValue: '' }); return layout; })}>Add custom card</button>
               <button type="button" onClick={() => updateLayout((layout) => { layout.sections.push({ id: uid('custom-section'), sourceSectionId: null, title: 'Custom block', visible: true, isCustom: true, rows: [{ id: uid('custom-row'), sourceRowId: null, label: 'Manual text', visible: true, isCustom: true, manualValue: '' }] }); return layout; })}>Add custom block</button>
             </div>
             <div className="pdf-builder-section-card">
@@ -264,7 +269,9 @@ export default function SettingsPersonalfragebogenPage() {
                     <div className="pdf-builder-controls">
                       <button type="button" onClick={() => updateLayout((layout) => { layout.summaryCards = moveItem(layout.summaryCards, cardIndex, -1); return layout; })} disabled={cardIndex === 0}>Up</button>
                       <button type="button" onClick={() => updateLayout((layout) => { layout.summaryCards = moveItem(layout.summaryCards, cardIndex, 1); return layout; })} disabled={cardIndex === summaryCards.length - 1}>Down</button>
+                      {card.isCustom && <button type="button" className="btn-danger-soft" onClick={() => updateLayout((layout) => { layout.summaryCards.splice(cardIndex, 1); return layout; })}>Delete card</button>}
                     </div>
+                    {card.isCustom && <textarea rows={3} value={card.manualValue || ''} placeholder="Write custom card text here. Variables like {{fullName}} or {{address}} are supported." onChange={(e) => updateLayout((layout) => { layout.summaryCards[cardIndex].manualValue = e.target.value; return layout; })} />}
                   </div>
                 ))}
               </div>
