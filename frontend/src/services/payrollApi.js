@@ -150,6 +150,26 @@ export async function exportPayrollToExcel(month, rows) {
   URL.revokeObjectURL(a.href);
 }
 
+export async function exportPayrollToPdf(month, rows) {
+  const response = await fetch(`${API_BASE}/api/payroll/export-pdf`, authOpts({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ month, rows }),
+  }));
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Export failed');
+  }
+  const blob = await response.blob();
+  const disp = response.headers.get('Content-Disposition') || '';
+  const filename = disp.match(/filename="?([^";]+)"?/)?.[1]?.trim() || `Payroll_${String(month).replace(/\D/g, '').slice(0, 6)}.pdf`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 export async function previewPayslipImport(files) {
   const form = new FormData();
   for (const f of files || []) form.append('files', f);

@@ -4,6 +4,7 @@ import {
   calculatePayroll,
   exportPayrollToAdp,
   exportPayrollToExcel,
+  exportPayrollToPdf,
   savePayrollAbzug,
   savePayrollBonus,
   savePayrollManualEntry,
@@ -116,6 +117,7 @@ export default function PayrollPage() {
   const [bonusSaving, setBonusSaving] = useState(false);
   const [exportAdpLoading, setExportAdpLoading] = useState(false);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
+  const [exportPdfLoading, setExportPdfLoading] = useState(false);
   const [showActiveOpen, setShowActiveOpen] = useState(false);
   const [activeDriversList, setActiveDriversList] = useState([]);
   const [activeDriversLoading, setActiveDriversLoading] = useState(false);
@@ -258,6 +260,22 @@ export default function PayrollPage() {
       setError(String(e?.message || e));
     } finally {
       setExportExcelLoading(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (!result?.month || !result?.rows?.length) {
+      setError('Load payroll first, then export.');
+      return;
+    }
+    setExportPdfLoading(true);
+    setError('');
+    try {
+      await exportPayrollToPdf(result.month, result.rows);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setExportPdfLoading(false);
     }
   };
 
@@ -775,8 +793,8 @@ export default function PayrollPage() {
           <button type="button" className="btn-secondary" onClick={handleExportExcel} disabled={exportExcelLoading || !result?.rows?.length}>
             {exportExcelLoading ? 'Exporting...' : 'Export to Excel'}
           </button>
-          <button type="button" className="btn-secondary" onClick={handleExportAdp} disabled={exportAdpLoading || !result?.rows?.length}>
-            {exportAdpLoading ? t('payroll.exporting') : t('payroll.exportToAdp')}
+          <button type="button" className="btn-secondary" onClick={handleExportPdf} disabled={exportPdfLoading || !result?.rows?.length}>
+            {exportPdfLoading ? 'Exporting...' : 'Export to PDF'}
           </button>
         </div>
       </div>
@@ -799,6 +817,9 @@ export default function PayrollPage() {
             </button>
             <button type="button" className="btn-secondary" onClick={openAddRecord} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.addRecord')}
+            </button>
+            <button type="button" className="btn-secondary" onClick={handleExportAdp} disabled={exportAdpLoading || !result?.rows?.length} style={{ width: 'auto', minWidth: 100 }}>
+              {exportAdpLoading ? t('payroll.exporting') : t('payroll.exportToAdp')}
             </button>
             <button type="button" className="btn-secondary" onClick={openShowActive} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.showActive')}

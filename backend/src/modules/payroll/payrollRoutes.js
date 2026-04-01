@@ -3,6 +3,7 @@ import multer from 'multer';
 import * as payrollService from './payrollService.js';
 import { exportPayrollToAdp } from './payrollExportAdp.js';
 import { exportPayrollTableToExcel } from './payrollExportTable.js';
+import { exportPayrollTableToPdf } from './payrollExportPdf.js';
 import authMiddleware from '../auth/authMiddleware.js';
 
 const router = Router();
@@ -140,6 +141,24 @@ router.post('/export-table', async (req, res) => {
     res.send(buffer);
   } catch (error) {
     console.error('POST /payroll/export-table error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.post('/export-pdf', async (req, res) => {
+  try {
+    const { month, rows } = req.body || {};
+    if (!month || !Array.isArray(rows)) {
+      return res.status(400).json({ error: 'Body must include month (YYYY-MM) and rows (array of payroll rows)' });
+    }
+    const buffer = await exportPayrollTableToPdf(month, rows);
+    const safeMonth = String(month).replace(/\D/g, '').slice(0, 6) || 'export';
+    const filename = `Payroll_${safeMonth}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error('POST /payroll/export-pdf error', error);
     res.status(500).json({ error: String(error?.message || error) });
   }
 });
