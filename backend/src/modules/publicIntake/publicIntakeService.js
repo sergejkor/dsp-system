@@ -5,6 +5,7 @@ import {
   getKenjoCompanies,
   getKenjoOffices,
   getKenjoUserAccounts,
+  getKenjoUsersList,
   updateEmployeeAccounts,
   updateEmployeeAddresses,
   updateEmployeeFinancials,
@@ -270,7 +271,7 @@ function extractDamageSummary(payload) {
 
 function sanitizeFileList(files) {
   return Array.isArray(files)
-    ? files.filter((file) => file?.buffer && file.originalname).slice(0, 12)
+    ? files.filter((file) => file?.buffer && file.originalname).slice(0, 15)
     : [];
 }
 
@@ -1017,6 +1018,53 @@ async function resolveKenjoEmployeeIdByEmail(email) {
   return null;
 }
 
+async function resolveKenjoEmployeeIdByIdentity({ email, employeeNumber, externalId, firstName, lastName }) {
+  const normalizedEmail = stringOrNull(email, 255)?.toLowerCase();
+  const normalizedEmployeeNumber = stringOrNull(employeeNumber, 255);
+  const normalizedExternalId = stringOrNull(externalId, 255);
+  const normalizedFullName = [stringOrNull(firstName, 255), stringOrNull(lastName, 255)].filter(Boolean).join(' ').trim().toLowerCase();
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const accounts = await getKenjoUserAccounts().catch(() => []);
+    const accountMatch = Array.isArray(accounts)
+      ? accounts.find((item) => {
+          const candidateEmail = stringOrNull(item?.email || item?.account?.email, 255)?.toLowerCase();
+          const candidateExternalId = stringOrNull(item?.externalId || item?.account?.externalId, 255);
+          return (
+            (normalizedEmail && candidateEmail === normalizedEmail) ||
+            (normalizedExternalId && candidateExternalId === normalizedExternalId)
+          );
+        })
+      : null;
+
+    const accountResolved = extractKenjoEmployeeId(accountMatch);
+    if (accountResolved) return accountResolved;
+
+    const users = await getKenjoUsersList().catch(() => []);
+    const userMatch = Array.isArray(users)
+      ? users.find((item) => {
+          const candidateEmail = stringOrNull(item?.email, 255)?.toLowerCase();
+          const candidateEmployeeNumber = stringOrNull(item?.employeeNumber, 255);
+          const candidateName = stringOrNull(item?.displayName || [item?.firstName, item?.lastName].filter(Boolean).join(' '), 255)?.toLowerCase();
+          return (
+            (normalizedEmail && candidateEmail === normalizedEmail) ||
+            (normalizedEmployeeNumber && candidateEmployeeNumber === normalizedEmployeeNumber) ||
+            (normalizedFullName && candidateName === normalizedFullName)
+          );
+        })
+      : null;
+
+    const userResolved = extractKenjoEmployeeId(userMatch);
+    if (userResolved) return userResolved;
+
+    if (attempt < 2) {
+      await sleep(1000);
+    }
+  }
+
+  return null;
+}
+
 async function resolveManagerKenjoIdByName(managerName) {
   const normalized = stringOrNull(managerName, 255);
   if (!normalized) return null;
@@ -1249,10 +1297,31 @@ export async function saveAndSendPersonalQuestionnaire(id) {
   };
 
   let createResponse;
+  let kenjoEmployeeIdFromConflict = null;
   try {
     createResponse = await createKenjoEmployee(createBody);
   } catch (error) {
     const message = String(error?.message || error);
+    if (message.toLowerCase().includes('conflict')) {
+      kenjoEmployeeIdFromConflict = await resolveKenjoEmployeeIdByIdentity({
+        email,
+        employeeNumber: work.employeeNumber || payload.externalId,
+        externalId: kenjoExternalId,
+        firstName,
+        lastName,
+      });
+      if (kenjoEmployeeIdFromConflict) {
+        createResponse = { id: kenjoEmployeeIdFromConflict };
+      } else {
+        await query(
+          `UPDATE personal_questionnaire_submissions
+           SET status = 'error', last_error = $2, updated_at = NOW()
+           WHERE id = $1`,
+          [Number(id), message]
+        );
+        throw error;
+      }
+    } else {
     await query(
       `UPDATE personal_questionnaire_submissions
        SET status = 'error', last_error = $2, updated_at = NOW()
@@ -1260,9 +1329,20 @@ export async function saveAndSendPersonalQuestionnaire(id) {
       [Number(id), message]
     );
     throw error;
+    }
   }
 
-  const kenjoEmployeeId = extractKenjoEmployeeId(createResponse) || await resolveKenjoEmployeeIdByEmail(email);
+  const kenjoEmployeeId =
+    extractKenjoEmployeeId(createResponse) ||
+    kenjoEmployeeIdFromConflict ||
+    await resolveKenjoEmployeeIdByIdentity({
+      email,
+      employeeNumber: work.employeeNumber || payload.externalId,
+      externalId: kenjoExternalId,
+      firstName,
+      lastName,
+    }) ||
+    await resolveKenjoEmployeeIdByEmail(email);
   if (!kenjoEmployeeId) {
     const message = `Kenjo create employee succeeded but returned no employee id for email ${email}`;
     await query(
