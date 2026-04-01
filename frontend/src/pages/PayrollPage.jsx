@@ -107,10 +107,13 @@ export default function PayrollPage() {
     working_days: 0,
     total_bonus: 0,
     abzug: 0,
+    verpfl_mehr: 0,
+    fahrt_geld: 0,
     bonus: 0,
     vorschuss: 0,
   });
   const [addRecordSaving, setAddRecordSaving] = useState(false);
+  const [manualEditTarget, setManualEditTarget] = useState(null);
   const [sortBy, setSortBy] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [bonusModal, setBonusModal] = useState(null);
@@ -440,6 +443,8 @@ export default function PayrollPage() {
           working_days: workingDays,
           total_bonus: totalBonus,
           abzug,
+          verpfl_mehr: verpflMehr,
+          fahrt_geld: fahrtGeld,
           bonus,
           vorschuss,
         });
@@ -456,6 +461,16 @@ export default function PayrollPage() {
           verpfl_mehr: verpflMehr,
           fahrt_geld: fahrtGeld,
           bonus,
+          is_manual: true,
+          manual_entry: {
+            working_days: workingDays,
+            total_bonus: totalBonus,
+            abzug,
+            verpfl_mehr: verpflMehr,
+            fahrt_geld: fahrtGeld,
+            bonus,
+            vorschuss,
+          },
           eintrittsdatum: null,
           austrittsdatum: null,
           vorschuss,
@@ -484,13 +499,40 @@ export default function PayrollPage() {
       working_days: 0,
       total_bonus: 0,
       abzug: 0,
+      verpfl_mehr: 0,
+      fahrt_geld: 0,
       bonus: 0,
       vorschuss: 0,
+    });
+    setManualEditTarget(null);
+    setAddRecordOpen(true);
+  };
+
+  const openEditManualRecord = (row) => {
+    const manual = row?.manual_entry || {};
+    setAddRecordForm({
+      employeeId: row?.kenjo_employee_id || '',
+      employeeName: row?.name || '',
+      pn: row?.pn || '',
+      working_days: Number(manual.working_days ?? row?.working_days) || 0,
+      total_bonus: Number(manual.total_bonus ?? row?.total_bonus) || 0,
+      abzug: Number(manual.abzug ?? row?.abzug) || 0,
+      verpfl_mehr: Number(manual.verpfl_mehr ?? row?.verpfl_mehr) || 0,
+      fahrt_geld: Number(manual.fahrt_geld ?? row?.fahrt_geld) || 0,
+      bonus: Number(manual.bonus ?? row?.bonus) || 0,
+      vorschuss: Number(manual.vorschuss ?? row?.vorschuss) || 0,
+    });
+    setManualEditTarget({
+      employeeId: row?.kenjo_employee_id || '',
+      name: row?.name || '',
     });
     setAddRecordOpen(true);
   };
 
-  const closeAddRecord = () => setAddRecordOpen(false);
+  const closeAddRecord = () => {
+    setAddRecordOpen(false);
+    setManualEditTarget(null);
+  };
 
   const updateAddRecordForm = (field, value) => {
     setAddRecordForm((prev) => {
@@ -501,6 +543,15 @@ export default function PayrollPage() {
           next.employeeName = emp.displayName || [emp.firstName, emp.lastName].filter(Boolean).join(' ') || '';
           next.pn = emp.employeeNumber || emp.employee_number || '';
         }
+      }
+      if (field === 'working_days' || field === 'total_bonus' || field === 'abzug') {
+        const workingDays = Number(field === 'working_days' ? value : next.working_days) || 0;
+        const totalBonus = Number(field === 'total_bonus' ? value : next.total_bonus) || 0;
+        const abzug = Number(field === 'abzug' ? value : next.abzug) || 0;
+        const afterAbzug = Math.round((totalBonus - abzug) * 100) / 100;
+        const maxVerpfl = workingDays * 14;
+        next.verpfl_mehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+        next.fahrt_geld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
       }
       return next;
     });
@@ -515,6 +566,8 @@ export default function PayrollPage() {
     const workingDays = Number(f.working_days) || 0;
     const totalBonus = Number(f.total_bonus) || 0;
     const abzug = Number(f.abzug) || 0;
+    const verpflMehr = Number(f.verpfl_mehr) || 0;
+    const fahrtGeld = Number(f.fahrt_geld) || 0;
     const bonus = Number(f.bonus) || 0;
     const vorschuss = Number(f.vorschuss) || 0;
     setAddRecordSaving(true);
@@ -524,6 +577,8 @@ export default function PayrollPage() {
         working_days: workingDays,
         total_bonus: totalBonus,
         abzug,
+        verpfl_mehr: verpflMehr,
+        fahrt_geld: fahrtGeld,
         bonus,
         vorschuss,
       });
@@ -533,8 +588,8 @@ export default function PayrollPage() {
       } else {
         const afterAbzug = Math.round((totalBonus - abzug) * 100) / 100;
         const maxVerpfl = workingDays * 14;
-        const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
-        const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+        const derivedVerpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+        const derivedFahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
         const newRow = {
           kenjo_employee_id: f.employeeId,
           name: f.employeeName,
@@ -544,9 +599,19 @@ export default function PayrollPage() {
           abzug,
           abzug_lines: [{ amount: abzug, comment: '' }, { amount: 0, comment: '' }, { amount: 0, comment: '' }],
           after_abzug: afterAbzug,
-          verpfl_mehr: verpflMehr,
-          fahrt_geld: fahrtGeld,
+          verpfl_mehr: verpflMehr || derivedVerpflMehr,
+          fahrt_geld: fahrtGeld || derivedFahrtGeld,
           bonus,
+          is_manual: true,
+          manual_entry: {
+            working_days: workingDays,
+            total_bonus: totalBonus,
+            abzug,
+            verpfl_mehr: verpflMehr || derivedVerpflMehr,
+            fahrt_geld: fahrtGeld || derivedFahrtGeld,
+            bonus,
+            vorschuss,
+          },
           eintrittsdatum: null,
           austrittsdatum: null,
           vorschuss,
@@ -752,7 +817,7 @@ export default function PayrollPage() {
         const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
         acc.totalBonus += Number(row.total_bonus) || 0;
         acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
-        acc.verpflMehr += Number(row.verpfl_mehr) || 0;
+        acc.verpflMehr += Math.max(0, Number(row.verpfl_mehr) || 0);
         acc.fahrtGeld += Number(row.fahrt_geld) || 0;
         acc.bonus += Number(row.bonus) || 0;
         acc.kranktage += Number(row.krank_days) || 0;
@@ -936,6 +1001,11 @@ export default function PayrollPage() {
                         : undefined
                     }
                   >
+                    {manualEditTarget ? (
+                      <option value={addRecordForm.employeeId}>
+                        {manualEditTarget.name || addRecordForm.employeeName || addRecordForm.employeeId}
+                      </option>
+                    ) : null}
                     <div className="payroll-summary-label">{card.label}</div>
                     <div className="payroll-summary-value">{card.value}</div>
                   </div>
@@ -1297,6 +1367,30 @@ export default function PayrollPage() {
                         </td>
                       );
                     }
+                    if (col.key === 'name' && row.kenjo_employee_id && row.is_manual) {
+                      return (
+                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
+                            <button
+                              type="button"
+                              onClick={() => navigate('/employee', { state: { kenjoEmployeeId: row.kenjo_employee_id } })}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#1976d2', textDecoration: 'underline', font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              title={row.name ?? 'Open employee profile'}
+                            >
+                              {row.name ?? '-'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditManualRecord(row)}
+                              title="Edit manual row"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0, lineHeight: 1 }}
+                            >
+                              âœŽ
+                            </button>
+                          </div>
+                        </td>
+                      );
+                    }
                     if (col.key === 'name' && row.kenjo_employee_id) {
                       return (
                         <td key={col.key} style={{ padding: '0.4rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1462,7 +1556,7 @@ export default function PayrollPage() {
       {addRecordOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, minWidth: 380, maxWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
-            <h3 style={{ margin: '0 0 1rem' }}>Add record</h3>
+            <h3 style={{ margin: '0 0 1rem' }}>{manualEditTarget ? 'Edit manual record' : 'Add record'}</h3>
             {addRecordLoading ? (
               <p style={{ color: '#666' }}>Loading employees…</p>
             ) : (
@@ -1472,6 +1566,7 @@ export default function PayrollPage() {
                   <select
                     value={addRecordForm.employeeId}
                     onChange={(e) => updateAddRecordForm('employeeId', e.target.value)}
+                    disabled={!!manualEditTarget}
                     style={{ width: '100%', padding: '0.5rem' }}
                   >
                     <option value="">— Select —</option>
@@ -1524,6 +1619,29 @@ export default function PayrollPage() {
                   <div style={{ marginBottom: '0.25rem' }}><strong>After Abzug:</strong> {addRecordAfterAbzug}</div>
                   <div style={{ marginBottom: '0.25rem' }}><strong>Verpfl. mehr.:</strong> {addRecordVerpflMehr}</div>
                   <div><strong>Fahrt. Geld:</strong> {addRecordFahrtGeld}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Verpfl. mehr.</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={addRecordForm.verpfl_mehr}
+                      onChange={(e) => updateAddRecordForm('verpfl_mehr', e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Fahrt. Geld</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={addRecordForm.fahrt_geld}
+                      onChange={(e) => updateAddRecordForm('fahrt_geld', e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    />
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
                   <div>

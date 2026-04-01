@@ -63,7 +63,7 @@ router.put('/bonus', async (req, res) => {
 
 router.post('/manual-entry', async (req, res) => {
   try {
-    const { period_id, periodId, employee_id, employeeId, working_days, total_bonus, abzug, bonus, vorschuss } = req.body || {};
+    const { period_id, periodId, employee_id, employeeId, working_days, total_bonus, abzug, verpfl_mehr, fahrt_geld, bonus, vorschuss } = req.body || {};
     const period = period_id || periodId;
     const employee = employee_id || employeeId;
     if (!period || !employee) {
@@ -73,6 +73,8 @@ router.post('/manual-entry', async (req, res) => {
       working_days,
       total_bonus,
       abzug,
+      verpfl_mehr,
+      fahrt_geld,
       bonus,
       vorschuss,
     });

@@ -545,8 +545,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
   rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
+  await ensurePayrollManualEntriesExtraColumns();
   const manualRows = await query(
-    `SELECT kenjo_employee_id, working_days, total_bonus, abzug, bonus, vorschuss FROM payroll_manual_entries WHERE period_id = $1`,
+    `SELECT kenjo_employee_id, working_days, total_bonus, abzug, verpfl_mehr, fahrt_geld, bonus, vorschuss FROM payroll_manual_entries WHERE period_id = $1`,
     [monthStr]
   ).catch(() => ({ rows: [] }));
 
@@ -558,6 +559,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
       working_days: Number(r.working_days) || 0,
       total_bonus: Number(r.total_bonus) || 0,
       abzug: Number(r.abzug) || 0,
+      verpfl_mehr: r.verpfl_mehr == null ? null : (Number(r.verpfl_mehr) || 0),
+      fahrt_geld: r.fahrt_geld == null ? null : (Number(r.fahrt_geld) || 0),
       bonus: Number(r.bonus) || 0,
       vorschuss: Number(r.vorschuss) || 0,
     });
@@ -577,8 +580,11 @@ export async function calculatePayroll(month, fromDate, toDate) {
       const effectiveTotalBonus = Math.round((manual.total_bonus + rescueTotal) * 100) / 100;
       const afterAbzug = Math.round((effectiveTotalBonus - manual.abzug) * 100) / 100;
       const maxVerpfl = manual.working_days * 14;
-      const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
-      const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+      const derivedVerpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+      const derivedFahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+      const hasManualSplit = manual.verpfl_mehr != null || manual.fahrt_geld != null;
+      const verpflMehr = hasManualSplit ? Math.round((Number(manual.verpfl_mehr) || 0) * 100) / 100 : derivedVerpflMehr;
+      const fahrtGeld = hasManualSplit ? Math.round((Number(manual.fahrt_geld) || 0) * 100) / 100 : derivedFahrtGeld;
       rowsWithManual.push({
         ...row,
         working_days: manual.working_days,
@@ -594,6 +600,16 @@ export async function calculatePayroll(month, fromDate, toDate) {
         fahrt_geld: fahrtGeld,
         bonus: Math.round(manual.bonus * 100) / 100,
         vorschuss: Math.round(manual.vorschuss * 100) / 100,
+        is_manual: true,
+        manual_entry: {
+          working_days: manual.working_days,
+          total_bonus: Math.round(manual.total_bonus * 100) / 100,
+          abzug: Math.round(manual.abzug * 100) / 100,
+          verpfl_mehr: verpflMehr,
+          fahrt_geld: fahrtGeld,
+          bonus: Math.round(manual.bonus * 100) / 100,
+          vorschuss: Math.round(manual.vorschuss * 100) / 100,
+        },
         krank_days: row.krank_days ?? 0,
         urlaub_days: row.urlaub_days ?? 0,
         krank_entries: row.krank_entries || [],
@@ -615,8 +631,11 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const effectiveTotalBonus = Math.round((manual.total_bonus + rescueTotal) * 100) / 100;
     const afterAbzug = Math.round((effectiveTotalBonus - manual.abzug) * 100) / 100;
     const maxVerpfl = manual.working_days * 14;
-    const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
-    const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+    const derivedVerpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+    const derivedFahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+    const hasManualSplit = manual.verpfl_mehr != null || manual.fahrt_geld != null;
+    const verpflMehr = hasManualSplit ? Math.round((Number(manual.verpfl_mehr) || 0) * 100) / 100 : derivedVerpflMehr;
+    const fahrtGeld = hasManualSplit ? Math.round((Number(manual.fahrt_geld) || 0) * 100) / 100 : derivedFahrtGeld;
     const timeOff = timeOffDaysByEmployee.get(eid) || { krank_days: 0, urlaub_days: 0, krank_entries: [], urlaub_entries: [] };
     rowsWithManual.push({
       kenjo_employee_id: eid,
@@ -638,6 +657,16 @@ export async function calculatePayroll(month, fromDate, toDate) {
       eintrittsdatum: u?.startDate || null,
       austrittsdatum: u?.contractEnd || null,
       vorschuss: Math.round(manual.vorschuss * 100) / 100,
+      is_manual: true,
+      manual_entry: {
+        working_days: manual.working_days,
+        total_bonus: Math.round(manual.total_bonus * 100) / 100,
+        abzug: Math.round(manual.abzug * 100) / 100,
+        verpfl_mehr: verpflMehr,
+        fahrt_geld: fahrtGeld,
+        bonus: Math.round(manual.bonus * 100) / 100,
+        vorschuss: Math.round(manual.vorschuss * 100) / 100,
+      },
       krank_days: timeOff.krank_days,
       urlaub_days: timeOff.urlaub_days,
       krank_entries: timeOff.krank_entries,
@@ -747,24 +776,34 @@ export async function saveManualEntry(periodId, employeeId, payload) {
   const period = String(periodId || '').trim().slice(0, 7);
   const empId = String(employeeId || '').trim();
   if (!period || !/^\d{4}-\d{2}$/.test(period) || !empId) throw new Error('period_id (YYYY-MM) and employee_id are required');
+  await ensurePayrollManualEntriesExtraColumns();
   const working_days = Number(payload.working_days) || 0;
   const total_bonus = Number(payload.total_bonus) || 0;
   const abzug = Number(payload.abzug) || 0;
+  const verpfl_mehr = Number(payload.verpfl_mehr) || 0;
+  const fahrt_geld = Number(payload.fahrt_geld) || 0;
   const bonus = Number(payload.bonus) || 0;
   const vorschuss = Number(payload.vorschuss) || 0;
   await query(
-    `INSERT INTO payroll_manual_entries (period_id, kenjo_employee_id, working_days, total_bonus, abzug, bonus, vorschuss, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+    `INSERT INTO payroll_manual_entries (period_id, kenjo_employee_id, working_days, total_bonus, abzug, verpfl_mehr, fahrt_geld, bonus, vorschuss, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
      ON CONFLICT (period_id, kenjo_employee_id) DO UPDATE SET
        working_days = EXCLUDED.working_days,
        total_bonus = EXCLUDED.total_bonus,
        abzug = EXCLUDED.abzug,
+       verpfl_mehr = EXCLUDED.verpfl_mehr,
+       fahrt_geld = EXCLUDED.fahrt_geld,
        bonus = EXCLUDED.bonus,
        vorschuss = EXCLUDED.vorschuss,
        updated_at = NOW()`,
-    [period, empId, working_days, total_bonus, abzug, bonus, vorschuss]
+    [period, empId, working_days, total_bonus, abzug, verpfl_mehr, fahrt_geld, bonus, vorschuss]
   );
   return { ok: true };
+}
+
+async function ensurePayrollManualEntriesExtraColumns() {
+  await query(`ALTER TABLE payroll_manual_entries ADD COLUMN IF NOT EXISTS verpfl_mehr numeric`);
+  await query(`ALTER TABLE payroll_manual_entries ADD COLUMN IF NOT EXISTS fahrt_geld numeric`);
 }
 
 /**

@@ -66,6 +66,8 @@ export async function savePayrollManualEntry(periodId, employeeId, payload) {
       working_days: payload.working_days,
       total_bonus: payload.total_bonus,
       abzug: payload.abzug,
+      verpfl_mehr: payload.verpfl_mehr,
+      fahrt_geld: payload.fahrt_geld,
       bonus: payload.bonus,
       vorschuss: payload.vorschuss,
     }),
