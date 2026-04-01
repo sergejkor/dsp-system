@@ -354,37 +354,15 @@ export async function calculatePayroll(month, fromDate, toDate) {
         weeklyFactsByKey.get(`${uidLower}-${year}-${week}`) ??
         weeklyFactsByKey.get(`${pnStrLower}-${year}-${week}`) ??
         weeklyFactsByKey.get(`${transLower}-${year}-${week}`);
-      // Use saved fact only if it has non-zero bonus; otherwise recalc from kpi_data (stale 0 would block correct bonus)
-      if (savedFact && (savedFact.quality_bonus_week || 0) > 0) {
-        totalBonus += savedFact.quality_bonus_week;
-        employeeWeeklyBreakdown.push({
-          year,
-          week,
-          period_from: weekSummary?.period_from || from,
-          period_to: weekSummary?.period_to || to,
-          working_days: Math.round((Number(savedFact.worked_days) || 0) * 100) / 100,
-          kpi: Math.round((Number(savedFact.kpi) || 0) * 100) / 100,
-          weekly_bonus: Math.round((Number(savedFact.quality_bonus_week) || 0) * 100) / 100,
-          source: 'weekly_facts',
-        });
-        if (weekSummary) {
-          weekSummary.total_working_days += Number(savedFact.worked_days) || 0;
-          weekSummary.total_bonus += Number(savedFact.quality_bonus_week) || 0;
-          weekSummary.kpi_sum += Number(savedFact.kpi) || 0;
-          weekSummary.kpi_count += 1;
-          weekSummary.employee_count += 1;
-        }
-        if (!debugFirstWeek) {
-          debugFirstWeek = { year, week, source: 'weekly_facts', kpi: savedFact.kpi, daysInWeek: savedFact.worked_days, rate: null, qualityBonusWeek: savedFact.quality_bonus_week };
-        }
-        continue;
-      }
       const daysFromDb =
         daysByEmployeeWeek.get(`${uidLower}-${year}-${week}`) ??
         daysByEmployeeWeek.get(`${pnStrLower}-${year}-${week}`) ??
         daysByEmployeeWeek.get(`${transLower}-${year}-${week}`);
       const daysFromKenjo = daysPerWeekUser?.get(weekKey) ?? 0;
-      let daysInWeek = daysFromDb ?? daysFromKenjo;
+      let daysInWeek =
+        (daysFromKenjo > 0 ? daysFromKenjo : null) ??
+        (daysFromDb > 0 ? daysFromDb : null) ??
+        (Number(savedFact?.worked_days) > 0 ? Number(savedFact.worked_days) : 0);
       const kpiKeyByKenjo = `${uidLower}-${year}-${week}`;
       const kpiKeyByPn = `${pnStrLower}-${year}-${week}`;
       const kpiKeyByTrans = `${transLower}-${year}-${week}`;
@@ -392,9 +370,10 @@ export async function calculatePayroll(month, fromDate, toDate) {
       const kpiByPn = kpiByKey.get(kpiKeyByPn) ?? 0;
       const kpiByTrans = kpiByKey.get(kpiKeyByTrans) ?? 0;
       const kpiFromKpiData = kpiByKenjo || kpiByPn || kpiByTrans || 0;
+      const kpiInWeek = kpiFromKpiData || (Number(savedFact?.kpi) || 0);
       let rate = 0;
-      if (kpiFromKpiData > payrollFormula.fantastic_threshold) rate = payrollFormula.fantastic_plus_bonus_eur;
-      else if (kpiFromKpiData > payrollFormula.great_threshold) rate = payrollFormula.fantastic_bonus_eur;
+      if (kpiInWeek > payrollFormula.fantastic_threshold) rate = payrollFormula.fantastic_plus_bonus_eur;
+      else if (kpiInWeek > payrollFormula.great_threshold) rate = payrollFormula.fantastic_bonus_eur;
       else if (kpiFromKpiData < payrollFormula.fair_threshold) rate = 0;
       else rate = 0;
       if (daysInWeek === 0 && rate > 0 && workingDays > 0 && numWeeks > 0) {
@@ -408,25 +387,39 @@ export async function calculatePayroll(month, fromDate, toDate) {
         period_from: weekSummary?.period_from || from,
         period_to: weekSummary?.period_to || to,
         working_days: Math.round((Number(daysInWeek) || 0) * 100) / 100,
-        kpi: Math.round((Number(kpiFromKpiData) || 0) * 100) / 100,
+        kpi: Math.round((Number(kpiInWeek) || 0) * 100) / 100,
         weekly_bonus: qualityBonusWeek,
-        source: 'calculated',
+        source: daysFromKenjo > 0 ? 'kenjo_attendances' : (daysFromDb > 0 ? 'work_days_data' : (savedFact ? 'weekly_facts_fallback' : 'calculated')),
       });
-      if (weekSummary && (daysInWeek > 0 || kpiFromKpiData > 0 || qualityBonusWeek > 0)) {
+      if (weekSummary && (daysInWeek > 0 || kpiInWeek > 0 || qualityBonusWeek > 0)) {
         weekSummary.total_working_days += Number(daysInWeek) || 0;
         weekSummary.total_bonus += Number(qualityBonusWeek) || 0;
-        weekSummary.kpi_sum += Number(kpiFromKpiData) || 0;
+        weekSummary.kpi_sum += Number(kpiInWeek) || 0;
         weekSummary.kpi_count += 1;
         weekSummary.employee_count += 1;
       }
       if (!debugFirstWeek) {
-        debugFirstWeek = { year, week, kpiByKenjo, kpiByPn, kpiByTrans, kpiUsed: kpiFromKpiData, daysInWeek, rate, qualityBonusWeek };
+        debugFirstWeek = {
+          year,
+          week,
+          kpiByKenjo,
+          kpiByPn,
+          kpiByTrans,
+          kpiFromWeeklyFacts: Number(savedFact?.kpi) || 0,
+          daysFromKenjo,
+          daysFromDb: Number(daysFromDb) || 0,
+          daysFromWeeklyFacts: Number(savedFact?.worked_days) || 0,
+          kpiUsed: kpiInWeek,
+          daysInWeek,
+          rate,
+          qualityBonusWeek,
+        };
       }
       weeklyFactsToUpsert.push({
         employee_id: uid,
         year,
         week,
-        kpi: kpiFromKpiData,
+        kpi: kpiInWeek,
         worked_days: daysInWeek,
         quality_bonus_week: qualityBonusWeek,
       });
