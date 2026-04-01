@@ -338,6 +338,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const bonus = bonusByEmployeeCorrect.get(uid) ?? 0;
 
     let totalBonus = 0;
+    const employeeWeeklyBreakdown = [];
     const daysPerWeekUser = daysPerWeekPeriod.get(uid);
     const pnStr = String(pn ?? '').trim();
     const uidLower = uid.toLowerCase();
@@ -356,6 +357,16 @@ export async function calculatePayroll(month, fromDate, toDate) {
       // Use saved fact only if it has non-zero bonus; otherwise recalc from kpi_data (stale 0 would block correct bonus)
       if (savedFact && (savedFact.quality_bonus_week || 0) > 0) {
         totalBonus += savedFact.quality_bonus_week;
+        employeeWeeklyBreakdown.push({
+          year,
+          week,
+          period_from: weekSummary?.period_from || from,
+          period_to: weekSummary?.period_to || to,
+          working_days: Math.round((Number(savedFact.worked_days) || 0) * 100) / 100,
+          kpi: Math.round((Number(savedFact.kpi) || 0) * 100) / 100,
+          weekly_bonus: Math.round((Number(savedFact.quality_bonus_week) || 0) * 100) / 100,
+          source: 'weekly_facts',
+        });
         if (weekSummary) {
           weekSummary.total_working_days += Number(savedFact.worked_days) || 0;
           weekSummary.total_bonus += Number(savedFact.quality_bonus_week) || 0;
@@ -391,6 +402,16 @@ export async function calculatePayroll(month, fromDate, toDate) {
       }
       const qualityBonusWeek = Math.round(daysInWeek * rate * 100) / 100;
       totalBonus += qualityBonusWeek;
+      employeeWeeklyBreakdown.push({
+        year,
+        week,
+        period_from: weekSummary?.period_from || from,
+        period_to: weekSummary?.period_to || to,
+        working_days: Math.round((Number(daysInWeek) || 0) * 100) / 100,
+        kpi: Math.round((Number(kpiFromKpiData) || 0) * 100) / 100,
+        weekly_bonus: qualityBonusWeek,
+        source: 'calculated',
+      });
       if (weekSummary && (daysInWeek > 0 || kpiFromKpiData > 0 || qualityBonusWeek > 0)) {
         weekSummary.total_working_days += Number(daysInWeek) || 0;
         weekSummary.total_bonus += Number(qualityBonusWeek) || 0;
@@ -457,6 +478,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
         vorschuss: Math.round(vorschuss * 100) / 100,
         krank_days: timeOff.krank_days,
         urlaub_days: timeOff.urlaub_days,
+        weekly_breakdown: employeeWeeklyBreakdown,
       });
     }
   }
@@ -511,6 +533,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
         vorschuss: Math.round(manual.vorschuss * 100) / 100,
         krank_days: row.krank_days ?? 0,
         urlaub_days: row.urlaub_days ?? 0,
+        weekly_breakdown: row.weekly_breakdown || [],
       });
     } else {
       rowsWithManual.push(row);
@@ -548,6 +571,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
       vorschuss: Math.round(manual.vorschuss * 100) / 100,
       krank_days: timeOff.krank_days,
       urlaub_days: timeOff.urlaub_days,
+      weekly_breakdown: [],
     });
   }
   rowsWithManual.sort((a, b) => (a.name || '').localeCompare(b.name || ''));

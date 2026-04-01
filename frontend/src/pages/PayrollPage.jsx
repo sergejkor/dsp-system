@@ -128,6 +128,7 @@ export default function PayrollPage() {
   const [payslipImporting, setPayslipImporting] = useState(false);
   const [payslipNotice, setPayslipNotice] = useState('');
   const [showBonusBreakdown, setShowBonusBreakdown] = useState(false);
+  const [bonusBreakdownRow, setBonusBreakdownRow] = useState(null);
 
   useEffect(() => {
     const [y, m] = month.split('-').map(Number);
@@ -863,21 +864,27 @@ export default function PayrollPage() {
             {result?.rows?.length > 0 && (
               <div className="payroll-summary-grid">
                 {payrollSummaryCards.map((card) => (
-                  <button
+                  <div
                     key={card.key}
-                    type="button"
-                    className={`payroll-summary-card ${card.key === 'total-bonus' && (result?.weekly_breakdown || []).length ? 'payroll-summary-card--interactive' : ''}`}
+                    role={card.key === 'total-bonus' ? 'button' : undefined}
+                    tabIndex={card.key === 'total-bonus' ? 0 : undefined}
+                    className={`payroll-summary-card ${card.key === 'total-bonus' ? 'payroll-summary-card--interactive' : ''}`}
                     style={{ borderTopColor: card.accent }}
-                    onClick={() => {
-                      if (card.key === 'total-bonus' && (result?.weekly_breakdown || []).length) {
-                        setShowBonusBreakdown(true);
-                      }
-                    }}
-                    disabled={!(card.key === 'total-bonus' && (result?.weekly_breakdown || []).length)}
+                    onClick={card.key === 'total-bonus' ? () => setShowBonusBreakdown(true) : undefined}
+                    onKeyDown={
+                      card.key === 'total-bonus'
+                        ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setShowBonusBreakdown(true);
+                            }
+                          }
+                        : undefined
+                    }
                   >
                     <div className="payroll-summary-label">{card.label}</div>
                     <div className="payroll-summary-value">{card.value}</div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -1049,6 +1056,61 @@ export default function PayrollPage() {
         </div>
       )}
 
+      {bonusBreakdownRow && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, width: 'min(920px, calc(100% - 2rem))', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: '0 0 0.35rem' }}>Employee Total Bonus breakdown</h3>
+                <p className="muted" style={{ margin: 0 }}>
+                  {bonusBreakdownRow.name || '-'} | Selected period: {result?.from || '-'} - {result?.to || '-'}
+                </p>
+              </div>
+              <button type="button" className="btn-secondary" onClick={() => setBonusBreakdownRow(null)}>
+                Close
+              </button>
+            </div>
+
+            {(bonusBreakdownRow.weekly_breakdown || []).length ? (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                    <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week</th>
+                    <th style={{ textAlign: 'left', padding: '0.55rem 0.5rem' }}>Week period</th>
+                    <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Working days</th>
+                    <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>KPI</th>
+                    <th style={{ textAlign: 'right', padding: '0.55rem 0.5rem' }}>Weekly bonus</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(bonusBreakdownRow.weekly_breakdown || []).map((weekRow) => (
+                    <tr key={`${bonusBreakdownRow.kenjo_employee_id}-${weekRow.year}-${weekRow.week}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.55rem 0.5rem' }}>
+                        {weekRow.year}-W{String(weekRow.week).padStart(2, '0')}
+                      </td>
+                      <td style={{ padding: '0.55rem 0.5rem' }}>
+                        {formatDateDDMMYYYY(weekRow.period_from)} - {formatDateDDMMYYYY(weekRow.period_to)}
+                      </td>
+                      <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>
+                        {Number.isInteger(Number(weekRow.working_days))
+                          ? Number(weekRow.working_days || 0)
+                          : Number(weekRow.working_days || 0).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatKpiValue(weekRow.kpi)}</td>
+                      <td style={{ padding: '0.55rem 0.5rem', textAlign: 'right' }}>{formatCurrency(weekRow.weekly_bonus)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="settings-msg settings-msg--err">
+                No weekly breakdown data is available for this employee in the loaded payroll response.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {result && result.rows && (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', tableLayout: 'fixed', minWidth: 960 }}>
@@ -1125,6 +1187,28 @@ export default function PayrollPage() {
                             style={{ marginLeft: '0.25rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}
                           >
                             ✎
+                          </button>
+                        </td>
+                      );
+                    }
+                    if (col.key === 'total_bonus') {
+                      return (
+                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            onClick={() => setBonusBreakdownRow(row)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                              padding: 0,
+                              color: '#1976d2',
+                              textDecoration: 'underline',
+                              font: 'inherit',
+                            }}
+                            title="Open weekly bonus breakdown"
+                          >
+                            {formatCurrency(row.total_bonus)}
                           </button>
                         </td>
                       );
