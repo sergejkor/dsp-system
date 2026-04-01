@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   calculatePayroll,
   exportPayrollToAdp,
+  exportPayrollToExcel,
   savePayrollAbzug,
   savePayrollBonus,
   savePayrollManualEntry,
@@ -114,6 +115,7 @@ export default function PayrollPage() {
   const [bonusModal, setBonusModal] = useState(null);
   const [bonusSaving, setBonusSaving] = useState(false);
   const [exportAdpLoading, setExportAdpLoading] = useState(false);
+  const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [showActiveOpen, setShowActiveOpen] = useState(false);
   const [activeDriversList, setActiveDriversList] = useState([]);
   const [activeDriversLoading, setActiveDriversLoading] = useState(false);
@@ -240,6 +242,22 @@ export default function PayrollPage() {
       setError(String(e?.message || e));
     } finally {
       setExportAdpLoading(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    if (!result?.month || !result?.rows?.length) {
+      setError('Load payroll first, then export.');
+      return;
+    }
+    setExportExcelLoading(true);
+    setError('');
+    try {
+      await exportPayrollToExcel(result.month, result.rows);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setExportExcelLoading(false);
     }
   };
 
@@ -751,7 +769,17 @@ export default function PayrollPage() {
 
   return (
     <section className="card">
-      <h2>{t('payroll.title')}</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+        <h2 style={{ margin: 0 }}>{t('payroll.title')}</h2>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn-secondary" onClick={handleExportExcel} disabled={exportExcelLoading || !result?.rows?.length}>
+            {exportExcelLoading ? 'Exporting...' : 'Export to Excel'}
+          </button>
+          <button type="button" className="btn-secondary" onClick={handleExportAdp} disabled={exportAdpLoading || !result?.rows?.length}>
+            {exportAdpLoading ? t('payroll.exporting') : t('payroll.exportToAdp')}
+          </button>
+        </div>
+      </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
         <div>
@@ -771,9 +799,6 @@ export default function PayrollPage() {
             </button>
             <button type="button" className="btn-secondary" onClick={openAddRecord} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.addRecord')}
-            </button>
-            <button type="button" className="btn-secondary" onClick={handleExportAdp} disabled={exportAdpLoading || !result?.rows?.length} style={{ width: 'auto', minWidth: 100 }}>
-              {exportAdpLoading ? t('payroll.exporting') : t('payroll.exportToAdp')}
             </button>
             <button type="button" className="btn-secondary" onClick={openShowActive} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.showActive')}

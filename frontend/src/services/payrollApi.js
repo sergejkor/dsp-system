@@ -1,6 +1,6 @@
 import { getAuthHeaders } from './authStore.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
+import { API_BASE } from '../config/apiBase.js';
 
 function authOpts(opts = {}) {
   return { ...opts, headers: { ...getAuthHeaders(), ...(opts.headers || {}) } };
@@ -44,8 +44,11 @@ export async function saveEmployeeKpiComment(employeeId, year, week, comment) {
 }
 
 export async function calculatePayroll(month, fromDate, toDate) {
-  const params = new URLSearchParams({ month, from: fromDate, to: toDate });
-  const response = await fetch(`${API_BASE}/api/payroll/calculate?${params}`, authOpts());
+  const params = new URLSearchParams({ month, from: fromDate, to: toDate, _ts: String(Date.now()) });
+  const response = await fetch(
+    `${API_BASE}/api/payroll/calculate?${params}`,
+    authOpts({ cache: 'no-store' })
+  );
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'Payroll calculation failed');
@@ -125,4 +128,57 @@ export async function exportPayrollToAdp(month, rows) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+export async function exportPayrollToExcel(month, rows) {
+  const response = await fetch(`${API_BASE}/api/payroll/export-table`, authOpts({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ month, rows }),
+  }));
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Export failed');
+  }
+  const blob = await response.blob();
+  const disp = response.headers.get('Content-Disposition') || '';
+  const filename = disp.match(/filename="?([^";]+)"?/)?.[1]?.trim() || `Payroll_${String(month).replace(/\D/g, '').slice(0, 6)}.xlsx`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+export async function previewPayslipImport(files) {
+  const form = new FormData();
+  for (const f of files || []) form.append('files', f);
+  const response = await fetch(`${API_BASE}/api/payroll/payslips/preview`, authOpts({
+    method: 'POST',
+    body: form,
+    headers: getAuthHeaders(),
+  }));
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {};
+  }
+  if (!response.ok) {
+    const msg = data?.error || (text && text.length < 400 ? text.trim() : '') || `HTTP ${response.status}`;
+    throw new Error(msg || 'Payslip preview failed');
+  }
+  return data;
+}
+
+export async function importPayslipBatch(batchId, resolutions) {
+  const response = await fetch(`${API_BASE}/api/payroll/payslips/import`, authOpts({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ batchId, resolutions }),
+  }));
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Payslip import failed');
+  return data;
 }
