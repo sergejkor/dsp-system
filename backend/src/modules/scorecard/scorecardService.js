@@ -38,23 +38,37 @@ async function getEmployeesForWeek(year, week) {
             COALESCE(
               NULLIF(TRIM(CONCAT_WS(' ', k.first_name, k.last_name)), ''),
               NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''),
-              NULLIF(TRIM(e.display_name), '')
+              NULLIF(TRIM(e.display_name), ''),
+              NULLIF(TRIM(d.driver_name), '')
             ) AS display_name
      FROM scorecard_employees s
+     LEFT JOIN weeks wk ON wk.year = $1 AND wk.week = $2
      LEFT JOIN LATERAL (
        SELECT first_name, last_name
        FROM kenjo_employees
-       WHERE transporter_id = s.transporter_id
+       WHERE LOWER(TRIM(COALESCE(transporter_id, ''))) = LOWER(TRIM(COALESCE(s.transporter_id, '')))
        ORDER BY updated_at DESC NULLS LAST, kenjo_user_id ASC
        LIMIT 1
      ) k ON true
      LEFT JOIN LATERAL (
        SELECT first_name, last_name, display_name
        FROM employees
-       WHERE transporter_id = s.transporter_id
+       WHERE LOWER(TRIM(COALESCE(transporter_id, ''))) = LOWER(TRIM(COALESCE(s.transporter_id, '')))
        ORDER BY is_active DESC, id DESC
        LIMIT 1
      ) e ON true
+     LEFT JOIN LATERAL (
+       SELECT driver_name
+       FROM daily_upload_rows
+       WHERE wk.week_start IS NOT NULL
+         AND wk.week_end IS NOT NULL
+         AND day_key >= wk.week_start
+         AND day_key <= wk.week_end
+         AND LOWER(TRIM(COALESCE(transporter_id, ''))) = LOWER(TRIM(COALESCE(s.transporter_id, '')))
+         AND NULLIF(TRIM(COALESCE(driver_name, '')), '') IS NOT NULL
+       ORDER BY day_key DESC, row_index DESC
+       LIMIT 1
+     ) d ON true
      WHERE s.year = $1 AND s.week = $2
      ORDER BY s.total_score DESC NULLS LAST, s.transporter_id ASC, s.id ASC`,
     [y, w]
