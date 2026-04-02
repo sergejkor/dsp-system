@@ -365,8 +365,12 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
   let timeOffDaysByEmployee = new Map();
   try {
-    const liveTimeOffRows = await getTimeOffRequests(expandedMonthStart, expandedMonthEnd);
+    let liveTimeOffRows = await getTimeOffRequests(expandedMonthStart, expandedMonthEnd);
     timeOffDaysByEmployee = buildTimeOffDaysByEmployee(liveTimeOffRows, monthStart, monthEnd, KENJO_TYPE_KRANK, KENJO_TYPE_URLAUB);
+    if (timeOffDaysByEmployee.size === 0) {
+      liveTimeOffRows = await getTimeOffRequests(monthStart, monthEnd);
+      timeOffDaysByEmployee = buildTimeOffDaysByEmployee(liveTimeOffRows, monthStart, monthEnd, KENJO_TYPE_KRANK, KENJO_TYPE_URLAUB);
+    }
   } catch (error) {
     console.error('Payroll live Kenjo time-off fetch failed, falling back to local cache', error);
     const timeOffRows = await query(

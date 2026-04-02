@@ -227,6 +227,35 @@ function overlapsDateRange(startDate, endDate, rangeStart, rangeEnd) {
   return start <= to && end >= from;
 }
 
+function mapKenjoTimeOffRows(list, nameById, rangeStart, rangeEnd) {
+  return (list || []).map((item) => {
+    const reqId = String(item._id || item.id || '').trim();
+    const userId = String(item._userId ?? item.userId ?? item.user_id ?? '').trim();
+    const fromVal = item.from ?? item.startDate ?? item.start;
+    const toVal = item.to ?? item.endDate ?? item.end;
+    const startDate = toDateOnly(fromVal);
+    const endDate = toDateOnly(toVal);
+    const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
+    const typeName = String(item.description ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item._timeOffType?.name ?? '').trim() || null;
+    const status = String(item.status ?? '').trim() || null;
+    const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
+    const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;
+    const employeeName = (userId && nameById.get(userId)) || null;
+    return {
+      kenjo_request_id: reqId || null,
+      kenjo_user_id: userId || null,
+      employee_name: employeeName,
+      start_date: startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : null,
+      end_date: endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : null,
+      time_off_type: typeId,
+      time_off_type_name: typeName,
+      status,
+      part_of_day_from: partFrom,
+      part_of_day_to: partTo,
+    };
+  }).filter((r) => r.start_date && r.end_date && overlapsDateRange(r.start_date, r.end_date, rangeStart, rangeEnd));
+}
+
 router.put('/employees/:id/profile', requireEmployeeAccess, async (req, res) => {
   try {
     const { id } = req.params;
@@ -421,24 +450,15 @@ async function syncTimeOffMonth(year, month, nameById) {
     [firstDay, to],
   );
 
-  const list = await getTimeOffRequests(expandedFrom, expandedTo);
+  let list = await getTimeOffRequests(expandedFrom, expandedTo);
+  let mappedRows = mapKenjoTimeOffRows(list, nameById, firstDay, to);
+  if (!mappedRows.length) {
+    list = await getTimeOffRequests(firstDay, to);
+    mappedRows = mapKenjoTimeOffRows(list, nameById, firstDay, to);
+  }
   let total = 0;
-  for (const item of list || []) {
-    const reqId = String(item._id || item.id || '').trim();
-    if (!reqId) continue;
-    const userId = String(item._userId ?? item.userId ?? item.user_id ?? '').trim();
-    const fromVal = item.from ?? item.startDate ?? item.start;
-    const toVal = item.to ?? item.endDate ?? item.end;
-    const startDate = toDateOnly(fromVal);
-    const endDate = toDateOnly(toVal);
-    if (!overlapsDateRange(startDate, endDate, firstDay, to)) continue;
-    const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
-    const typeName = String(item.description ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item._timeOffType?.name ?? '').trim() || null;
-    const status = String(item.status ?? '').trim() || null;
-    const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
-    const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;
-    const employeeName = (userId && nameById.get(userId)) || null;
-
+  for (const row of mappedRows) {
+    if (!row.kenjo_request_id) continue;
     await query(
       `INSERT INTO kenjo_time_off (
         kenjo_request_id, kenjo_user_id, employee_name, start_date, end_date,
@@ -456,16 +476,16 @@ async function syncTimeOffMonth(year, month, nameById) {
         part_of_day_to = EXCLUDED.part_of_day_to,
         synced_at = NOW()`,
       [
-        reqId,
-        userId || null,
-        employeeName,
-        startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : null,
-        endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : null,
-        typeId,
-        typeName,
-        status,
-        partFrom,
-        partTo,
+        row.kenjo_request_id,
+        row.kenjo_user_id,
+        row.employee_name,
+        row.start_date,
+        row.end_date,
+        row.time_off_type,
+        row.time_off_type_name,
+        row.status,
+        row.part_of_day_from,
+        row.part_of_day_to,
       ],
     );
     total++;
@@ -539,33 +559,12 @@ router.get('/time-off', requireKenjoTimeOffAccess, async (req, res) => {
     // Always fetch live month data from Kenjo and return it directly.
     // This avoids stale DB cache being shown in UI.
     const nameById = await buildKenjoNameMap();
-    const liveList = await getTimeOffRequests(expandedFrom, expandedTo);
-    const rows = (liveList || []).map((item) => {
-      const reqId = String(item._id || item.id || '').trim();
-      const userId = String(item._userId ?? item.userId ?? item.user_id ?? '').trim();
-      const fromVal = item.from ?? item.startDate ?? item.start;
-      const toVal = item.to ?? item.endDate ?? item.end;
-      const startDate = toDateOnly(fromVal);
-      const endDate = toDateOnly(toVal);
-      const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
-      const typeName = String(item.description ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item._timeOffType?.name ?? '').trim() || null;
-      const status = String(item.status ?? '').trim() || null;
-      const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
-      const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;
-      const employeeName = (userId && nameById.get(userId)) || null;
-      return {
-        kenjo_request_id: reqId || null,
-        kenjo_user_id: userId || null,
-        employee_name: employeeName,
-        start_date: startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : null,
-        end_date: endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : null,
-        time_off_type: typeId,
-        time_off_type_name: typeName,
-        status,
-        part_of_day_from: partFrom,
-        part_of_day_to: partTo,
-      };
-    }).filter((r) => r.start_date && r.end_date && overlapsDateRange(r.start_date, r.end_date, firstDay, lastDayStr));
+    let liveList = await getTimeOffRequests(expandedFrom, expandedTo);
+    let rows = mapKenjoTimeOffRows(liveList, nameById, firstDay, lastDayStr);
+    if (!rows.length) {
+      liveList = await getTimeOffRequests(firstDay, lastDayStr);
+      rows = mapKenjoTimeOffRows(liveList, nameById, firstDay, lastDayStr);
+    }
 
     rows.sort((a, b) => {
       const da = String(a.start_date || '');
