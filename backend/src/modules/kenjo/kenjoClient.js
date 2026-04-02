@@ -238,19 +238,74 @@ export async function getKenjoOffices() {
  * @param {string} from - YYYY-MM-DD
  * @param {string} to - YYYY-MM-DD
  */
+function getPaginationInfo(json, currentItemsLength) {
+  const totalPages = Number(
+    json?.pagination?.totalPages
+      ?? json?.meta?.totalPages
+      ?? json?.totalPages
+      ?? 1
+  );
+  const total = Number(
+    json?.pagination?.total
+      ?? json?.meta?.total
+      ?? json?.total
+      ?? 0
+  );
+  const perPage = Number(
+    json?.pagination?.perPage
+      ?? json?.meta?.perPage
+      ?? json?.perPage
+      ?? currentItemsLength
+      ?? 0
+  );
+  return {
+    totalPages: Number.isFinite(totalPages) && totalPages > 0 ? totalPages : 1,
+    total: Number.isFinite(total) && total >= 0 ? total : 0,
+    perPage: Number.isFinite(perPage) && perPage > 0 ? perPage : currentItemsLength,
+  };
+}
+
+function dedupeTimeOffItems(items) {
+  const out = [];
+  const seen = new Set();
+  for (const item of items || []) {
+    const key = String(item?._id || item?.id || '').trim()
+      || [
+        String(item?._userId ?? item?.userId ?? item?.user_id ?? '').trim(),
+        String(item?.from ?? item?.startDate ?? item?.start ?? '').trim(),
+        String(item?.to ?? item?.endDate ?? item?.end ?? '').trim(),
+        String(item?._timeOffTypeId ?? item?.timeOffTypeId ?? item?.time_off_type_id ?? item?.type ?? '').trim(),
+      ].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 export async function getTimeOffRequests(from, to) {
   const fromStr = String(from || '').trim().slice(0, 10);
   const toStr = String(to || '').trim().slice(0, 10);
   if (!fromStr || !toStr) throw new Error('from and to (YYYY-MM-DD) are required');
   try {
-    const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit: 100 });
-    return normalizeArrayPayload(data);
+    const firstPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit: 100, page: 1 });
+    const items = normalizeArrayPayload(firstPage);
+    const pagination = getPaginationInfo(firstPage, items.length);
+    if (pagination.totalPages <= 1 && (!pagination.total || items.length >= pagination.total || !pagination.perPage)) {
+      return dedupeTimeOffItems(items);
+    }
+    const all = [...items];
+    for (let page = 2; page <= pagination.totalPages; page += 1) {
+      const nextPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit: 100, page });
+      all.push(...normalizeArrayPayload(nextPage));
+    }
+    return dedupeTimeOffItems(all);
   } catch (err) {
     // Some Kenjo tenants reject `limit`; fallback to strict minimal filters.
     const msg = String(err?.message || err || '');
     if (msg.includes('/time-off/requests') && msg.includes('400')) {
       const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr });
-      return normalizeArrayPayload(data);
+      return dedupeTimeOffItems(normalizeArrayPayload(data));
     }
     throw err;
   }

@@ -1,5 +1,5 @@
 import { query } from '../../db.js';
-import { getKenjoUsersList, getKenjoAttendances } from '../kenjo/kenjoClient.js';
+import { getKenjoUsersList, getKenjoAttendances, getTimeOffRequests } from '../kenjo/kenjoClient.js';
 import settingsService from '../settings/settingsService.js';
 import { PDFDocument } from 'pdf-lib';
 import { PDFParse } from 'pdf-parse';
@@ -95,6 +95,67 @@ function countWorkingDaysFromAttendances(attendances, fromDate, toDate) {
     daysPerWeek.set(uid, weekCounts);
   }
   return { workingDaysInRange, daysPerWeek };
+}
+
+function toDateStr(val) {
+  if (val == null) return '';
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10);
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  const s = String(val).trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
+}
+
+function buildTimeOffDaysByEmployee(timeOffRows, monthStart, monthEnd, krankTypeId, urlaubTypeId) {
+  const timeOffDaysByEmployee = new Map();
+  const monthStartT = new Date(monthStart + 'T12:00:00').getTime();
+  const monthEndT = new Date(monthEnd + 'T12:00:00').getTime();
+
+  for (const r of timeOffRows || []) {
+    const eid = String(r.kenjo_user_id ?? r._userId ?? r.userId ?? r.user_id ?? '').trim();
+    if (!eid) continue;
+    const typeId = String(r.time_off_type ?? r._timeOffTypeId ?? r.timeOffTypeId ?? r.time_off_type_id ?? r.type ?? '').trim();
+    if (typeId !== krankTypeId && typeId !== urlaubTypeId) continue;
+    const status = String(r.status ?? '').trim().toLowerCase();
+    if (status && ['rejected', 'cancelled', 'canceled', 'declined'].includes(status)) continue;
+
+    const start = toDateStr(r.start_date ?? r.from ?? r.startDate ?? r.start);
+    const end = toDateStr(r.end_date ?? r.to ?? r.endDate ?? r.end);
+    if (!start || !end) continue;
+
+    const startT = new Date(start + 'T12:00:00').getTime();
+    const endT = new Date(end + 'T12:00:00').getTime();
+    const clampedStartT = Math.max(startT, monthStartT);
+    const clampedEndT = Math.min(endT, monthEndT);
+    if (clampedStartT > clampedEndT) continue;
+    const clampedStart = new Date(clampedStartT).toISOString().slice(0, 10);
+    const clampedEnd = new Date(clampedEndT).toISOString().slice(0, 10);
+
+    let count = 0;
+    for (let t = clampedStartT; t <= clampedEndT; t += 86400000) {
+      const d = new Date(t);
+      const dayOfWeek = d.getDay();
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
+    }
+
+    if (!timeOffDaysByEmployee.has(eid)) {
+      timeOffDaysByEmployee.set(eid, {
+        krank_days: 0,
+        urlaub_days: 0,
+        krank_entries: [],
+        urlaub_entries: [],
+      });
+    }
+    const rec = timeOffDaysByEmployee.get(eid);
+    if (typeId === krankTypeId) {
+      rec.krank_days += count;
+      rec.krank_entries.push({ from: clampedStart, to: clampedEnd, days: count });
+    } else if (typeId === urlaubTypeId) {
+      rec.urlaub_days += count;
+      rec.urlaub_entries.push({ from: clampedStart, to: clampedEnd, days: count });
+    }
+  }
+
+  return timeOffDaysByEmployee;
 }
 
 /**
@@ -291,64 +352,23 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
   const KENJO_TYPE_URLAUB = '685e7223e6bac64cb0a27e38';
 
-  const timeOffRows = await query(
-    `SELECT kenjo_user_id,
-            to_char(start_date, 'YYYY-MM-DD') AS start_date,
-            to_char(end_date, 'YYYY-MM-DD') AS end_date,
-            time_off_type FROM kenjo_time_off
-     WHERE start_date <= $2::date AND end_date >= $1::date
-       AND (status IS NULL OR status = 'Processed')`,
-    [monthStart, monthEnd]
-  ).catch(() => ({ rows: [] }));
-
-  function toDateStr(val) {
-    if (val == null) return '';
-    if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10);
-    if (val instanceof Date) return val.toISOString().slice(0, 10);
-    const s = String(val).trim();
-    return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
-  }
-
-  const timeOffDaysByEmployee = new Map();
-  for (const r of timeOffRows?.rows || []) {
-    const eid = String(r.kenjo_user_id ?? '').trim();
-    if (!eid) continue;
-    const typeId = String(r.time_off_type ?? '').trim();
-    if (typeId !== KENJO_TYPE_KRANK && typeId !== KENJO_TYPE_URLAUB) continue;
-    const start = toDateStr(r.start_date);
-    const end = toDateStr(r.end_date);
-    if (!start || !end) continue;
-    const startT = new Date(start + 'T12:00:00').getTime();
-    const endT = new Date(end + 'T12:00:00').getTime();
-    const monthStartT = new Date(monthStart + 'T12:00:00').getTime();
-    const monthEndT = new Date(monthEnd + 'T12:00:00').getTime();
-    const clampedStartT = Math.max(startT, monthStartT);
-    const clampedEndT = Math.min(endT, monthEndT);
-    if (clampedStartT > clampedEndT) continue;
-    const clampedStart = new Date(clampedStartT).toISOString().slice(0, 10);
-    const clampedEnd = new Date(clampedEndT).toISOString().slice(0, 10);
-    let count = 0;
-    for (let t = clampedStartT; t <= clampedEndT; t += 86400000) {
-      const d = new Date(t);
-      const dayOfWeek = d.getDay();
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
-    }
-    if (!timeOffDaysByEmployee.has(eid)) {
-      timeOffDaysByEmployee.set(eid, {
-        krank_days: 0,
-        urlaub_days: 0,
-        krank_entries: [],
-        urlaub_entries: [],
-      });
-    }
-    const rec = timeOffDaysByEmployee.get(eid);
-    if (typeId === KENJO_TYPE_KRANK) {
-      rec.krank_days += count;
-      rec.krank_entries.push({ from: clampedStart, to: clampedEnd, days: count });
-    } else if (typeId === KENJO_TYPE_URLAUB) {
-      rec.urlaub_days += count;
-      rec.urlaub_entries.push({ from: clampedStart, to: clampedEnd, days: count });
-    }
+  let timeOffDaysByEmployee = new Map();
+  try {
+    const liveTimeOffRows = await getTimeOffRequests(monthStart, monthEnd);
+    timeOffDaysByEmployee = buildTimeOffDaysByEmployee(liveTimeOffRows, monthStart, monthEnd, KENJO_TYPE_KRANK, KENJO_TYPE_URLAUB);
+  } catch (error) {
+    console.error('Payroll live Kenjo time-off fetch failed, falling back to local cache', error);
+    const timeOffRows = await query(
+      `SELECT kenjo_user_id,
+              to_char(start_date, 'YYYY-MM-DD') AS start_date,
+              to_char(end_date, 'YYYY-MM-DD') AS end_date,
+              time_off_type,
+              status
+       FROM kenjo_time_off
+       WHERE start_date <= $2::date AND end_date >= $1::date`,
+      [monthStart, monthEnd]
+    ).catch(() => ({ rows: [] }));
+    timeOffDaysByEmployee = buildTimeOffDaysByEmployee(timeOffRows?.rows || [], monthStart, monthEnd, KENJO_TYPE_KRANK, KENJO_TYPE_URLAUB);
   }
 
   const rows = [];
