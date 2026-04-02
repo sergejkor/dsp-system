@@ -209,6 +209,24 @@ function toDateOnly(v) {
   return iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : undefined;
 }
 
+function shiftDate(dateStr, days) {
+  const base = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`);
+  base.setDate(base.getDate() + Number(days || 0));
+  const y = base.getFullYear();
+  const m = String(base.getMonth() + 1).padStart(2, '0');
+  const d = String(base.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function overlapsDateRange(startDate, endDate, rangeStart, rangeEnd) {
+  const start = String(startDate || '').slice(0, 10);
+  const end = String(endDate || '').slice(0, 10);
+  const from = String(rangeStart || '').slice(0, 10);
+  const to = String(rangeEnd || '').slice(0, 10);
+  if (!start || !end || !from || !to) return false;
+  return start <= to && end >= from;
+}
+
 router.put('/employees/:id/profile', requireEmployeeAccess, async (req, res) => {
   try {
     const { id } = req.params;
@@ -392,6 +410,8 @@ async function syncTimeOffMonth(year, month, nameById) {
   const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
   const lastDate = new Date(year, month, 0).getDate();
   const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDate).padStart(2, '0')}`;
+  const expandedFrom = shiftDate(firstDay, -31);
+  const expandedTo = shiftDate(to, 31);
 
   // Keep month data fully fresh: remove existing rows overlapping this month,
   // then reinsert what Kenjo currently returns for the same range.
@@ -401,7 +421,7 @@ async function syncTimeOffMonth(year, month, nameById) {
     [firstDay, to],
   );
 
-  const list = await getTimeOffRequests(firstDay, to);
+  const list = await getTimeOffRequests(expandedFrom, expandedTo);
   let total = 0;
   for (const item of list || []) {
     const reqId = String(item._id || item.id || '').trim();
@@ -411,6 +431,7 @@ async function syncTimeOffMonth(year, month, nameById) {
     const toVal = item.to ?? item.endDate ?? item.end;
     const startDate = toDateOnly(fromVal);
     const endDate = toDateOnly(toVal);
+    if (!overlapsDateRange(startDate, endDate, firstDay, to)) continue;
     const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
     const typeName = String(item.description ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item._timeOffType?.name ?? '').trim() || null;
     const status = String(item.status ?? '').trim() || null;
@@ -512,11 +533,13 @@ router.get('/time-off', requireKenjoTimeOffAccess, async (req, res) => {
     const firstDay = `${y}-${String(m).padStart(2, '0')}-01`;
     const lastDay = new Date(y, m, 0);
     const lastDayStr = `${y}-${String(m).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+    const expandedFrom = shiftDate(firstDay, -31);
+    const expandedTo = shiftDate(lastDayStr, 31);
 
     // Always fetch live month data from Kenjo and return it directly.
     // This avoids stale DB cache being shown in UI.
     const nameById = await buildKenjoNameMap();
-    const liveList = await getTimeOffRequests(firstDay, lastDayStr);
+    const liveList = await getTimeOffRequests(expandedFrom, expandedTo);
     const rows = (liveList || []).map((item) => {
       const reqId = String(item._id || item.id || '').trim();
       const userId = String(item._userId ?? item.userId ?? item.user_id ?? '').trim();
@@ -542,7 +565,7 @@ router.get('/time-off', requireKenjoTimeOffAccess, async (req, res) => {
         part_of_day_from: partFrom,
         part_of_day_to: partTo,
       };
-    }).filter((r) => r.start_date && r.end_date);
+    }).filter((r) => r.start_date && r.end_date && overlapsDateRange(r.start_date, r.end_date, firstDay, lastDayStr));
 
     rows.sort((a, b) => {
       const da = String(a.start_date || '');

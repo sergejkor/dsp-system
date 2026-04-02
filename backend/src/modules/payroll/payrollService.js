@@ -105,6 +105,15 @@ function toDateStr(val) {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
 }
 
+function shiftDate(dateStr, days) {
+  const base = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`);
+  base.setDate(base.getDate() + Number(days || 0));
+  const y = base.getFullYear();
+  const m = String(base.getMonth() + 1).padStart(2, '0');
+  const d = String(base.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function buildTimeOffDaysByEmployee(timeOffRows, monthStart, monthEnd, krankTypeId, urlaubTypeId) {
   const timeOffDaysByEmployee = new Map();
   const monthStartT = new Date(monthStart + 'T12:00:00').getTime();
@@ -351,10 +360,12 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
   const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
   const KENJO_TYPE_URLAUB = '685e7223e6bac64cb0a27e38';
+  const expandedMonthStart = shiftDate(monthStart, -31);
+  const expandedMonthEnd = shiftDate(monthEnd, 31);
 
   let timeOffDaysByEmployee = new Map();
   try {
-    const liveTimeOffRows = await getTimeOffRequests(monthStart, monthEnd);
+    const liveTimeOffRows = await getTimeOffRequests(expandedMonthStart, expandedMonthEnd);
     timeOffDaysByEmployee = buildTimeOffDaysByEmployee(liveTimeOffRows, monthStart, monthEnd, KENJO_TYPE_KRANK, KENJO_TYPE_URLAUB);
   } catch (error) {
     console.error('Payroll live Kenjo time-off fetch failed, falling back to local cache', error);
