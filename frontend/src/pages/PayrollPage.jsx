@@ -179,6 +179,8 @@ export default function PayrollPage() {
   const [selectedPayrollHistory, setSelectedPayrollHistory] = useState('');
   const [payrollHistoryModal, setPayrollHistoryModal] = useState(null);
   const [payrollHistoryModalLoading, setPayrollHistoryModalLoading] = useState(false);
+  const [payrollSavedNoticeOpen, setPayrollSavedNoticeOpen] = useState(false);
+  const [frozenPayrollPeriodId, setFrozenPayrollPeriodId] = useState('');
   const [showAllTerminations, setShowAllTerminations] = useState(false);
   const [showActiveOpen, setShowActiveOpen] = useState(false);
   const [activeDriversList, setActiveDriversList] = useState([]);
@@ -292,8 +294,26 @@ export default function PayrollPage() {
     setError('');
     setResult(null);
     try {
-      const data = await calculatePayroll(month, fromDate, toDate);
-      setResult(data);
+      const periodId = String(month || '').slice(0, 7);
+      const hasFrozenSnapshot = payrollHistory.some((item) => String(item?.period_id || '') === periodId);
+      if (hasFrozenSnapshot) {
+        const snapshot = await getPayrollHistorySnapshot(periodId);
+        const payload = snapshot?.payload || null;
+        if (payload) {
+          setResult(payload);
+          setFromDate(String(payload.from || snapshot?.period_from || fromDate).slice(0, 10));
+          setToDate(String(payload.to || snapshot?.period_to || toDate).slice(0, 10));
+          setFrozenPayrollPeriodId(periodId);
+        } else {
+          const data = await calculatePayroll(month, fromDate, toDate);
+          setResult(data);
+          setFrozenPayrollPeriodId('');
+        }
+      } else {
+        const data = await calculatePayroll(month, fromDate, toDate);
+        setResult(data);
+        setFrozenPayrollPeriodId('');
+      }
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -312,6 +332,8 @@ export default function PayrollPage() {
       await exportPayrollToAdp(result.month, result.rows, result);
       const history = await getPayrollHistory().catch(() => []);
       setPayrollHistory(Array.isArray(history) ? history : []);
+      setFrozenPayrollPeriodId(String(result.month || '').slice(0, 7));
+      setPayrollSavedNoticeOpen(true);
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -372,6 +394,11 @@ export default function PayrollPage() {
     }
   };
 
+  const isFrozenPayroll = Boolean(
+    frozenPayrollPeriodId &&
+    String(result?.month || month || '').slice(0, 7) === String(frozenPayrollPeriodId || '').slice(0, 7)
+  );
+
   const handleOpenPayrollHistory = async (periodId) => {
     const id = String(periodId || '').trim();
     setSelectedPayrollHistory(id);
@@ -401,9 +428,11 @@ export default function PayrollPage() {
     setResult(payload);
     setPayrollHistoryModal(null);
     setSelectedPayrollHistory('');
+    setFrozenPayrollPeriodId('');
   };
 
   const openShowActive = () => {
+    if (isFrozenPayroll) return;
     setShowActiveOpen(true);
     setActiveDriversLoading(true);
     setActiveDriversList([]);
@@ -463,6 +492,7 @@ export default function PayrollPage() {
   }, []);
 
   const openAdvanceDialog = () => {
+    if (isFrozenPayroll) return;
     const d = new Date();
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -507,6 +537,7 @@ export default function PayrollPage() {
   };
 
   const openPayslipImport = () => {
+    if (isFrozenPayroll) return;
     setShowPayslipImport(true);
     setPayslipPreview(null);
     setPayslipNotice('');
@@ -613,6 +644,7 @@ export default function PayrollPage() {
   };
 
   const openAddRecord = () => {
+    if (isFrozenPayroll) return;
     setAddRecordForm({
       employeeId: '',
       employeeName: '',
@@ -630,6 +662,7 @@ export default function PayrollPage() {
   };
 
   const openEditManualRecord = (row) => {
+    if (isFrozenPayroll) return;
     const manual = row?.manual_entry || {};
     setAddRecordForm({
       employeeId: row?.kenjo_employee_id || '',
@@ -760,6 +793,7 @@ export default function PayrollPage() {
   ];
 
   const openAbzug = (row) => {
+    if (isFrozenPayroll) return;
     const lines = (row.abzug_lines && row.abzug_lines.length >= 3)
       ? row.abzug_lines.map((l) => ({ amount: Number(l.amount) || 0, comment: String(l.comment ?? '').trim() }))
       : defaultAbzugLines();
@@ -839,6 +873,7 @@ export default function PayrollPage() {
   };
 
   const openBonus = (row) => {
+    if (isFrozenPayroll) return;
     setBonusModal({
       kenjo_employee_id: row.kenjo_employee_id,
       name: row.name,
@@ -1014,19 +1049,19 @@ export default function PayrollPage() {
             <button type="button" className="btn-primary" onClick={handleLoad} disabled={loading} style={{ width: 'auto', minWidth: 100 }}>
               {loading ? t('payroll.loading') : t('payroll.load')}
             </button>
-            <button type="button" className="btn-secondary" onClick={openAddRecord} style={{ width: 'auto', minWidth: 100 }}>
+            <button type="button" className="btn-secondary" onClick={openAddRecord} disabled={isFrozenPayroll} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.addRecord')}
             </button>
-            <button type="button" className="btn-secondary" onClick={handleExportAdp} disabled={exportAdpLoading || !result?.rows?.length} style={{ width: 'auto', minWidth: 100 }}>
+            <button type="button" className="btn-secondary" onClick={handleExportAdp} disabled={isFrozenPayroll || exportAdpLoading || !result?.rows?.length} style={{ width: 'auto', minWidth: 100 }}>
               {exportAdpLoading ? t('payroll.exporting') : t('payroll.exportToAdp')}
             </button>
-            <button type="button" className="btn-secondary" onClick={openShowActive} style={{ width: 'auto', minWidth: 100 }}>
+            <button type="button" className="btn-secondary" onClick={openShowActive} disabled={isFrozenPayroll} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.showActive')}
             </button>
-            <button type="button" className="btn-secondary" onClick={openAdvanceDialog} style={{ width: 'auto', minWidth: 100 }}>
+            <button type="button" className="btn-secondary" onClick={openAdvanceDialog} disabled={isFrozenPayroll} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.addAdvance')}
             </button>
-            <button type="button" className="btn-secondary" onClick={openPayslipImport} style={{ width: 'auto', minWidth: 100 }}>
+            <button type="button" className="btn-secondary" onClick={openPayslipImport} disabled={isFrozenPayroll} style={{ width: 'auto', minWidth: 100 }}>
               Import payslips
             </button>
           </div>
@@ -1262,6 +1297,11 @@ export default function PayrollPage() {
       `}</style>
 
       {error && <p className="error-text" style={{ marginBottom: '1rem' }}>{error}</p>}
+        {isFrozenPayroll && (
+          <p style={{ marginBottom: '1rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', padding: '0.65rem 0.8rem', borderRadius: 8 }}>
+            Frozen payroll snapshot loaded. Use Payroll history / Edit to reopen this month in editable mode.
+          </p>
+        )}
 
       {showBonusBreakdown && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
@@ -2054,13 +2094,15 @@ export default function PayrollPage() {
               </div>
             </div>
 
-            <div className="payroll-summary-grid" style={{ marginBottom: '1rem' }}>
-              {buildPayrollSummaryCards(payrollHistoryModal?.payload?.rows, payrollHistoryModal?.payload?.month || payrollHistoryModal?.period_id).map((card) => (
-                <div key={card.key} className="payroll-summary-card" style={{ borderTopColor: card.accent }}>
-                  <div className="payroll-summary-label">{card.label}</div>
-                  <div className="payroll-summary-value">{card.value}</div>
-                </div>
-              ))}
+            <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+                {buildPayrollSummaryCards(payrollHistoryModal?.payload?.rows, payrollHistoryModal?.payload?.month || payrollHistoryModal?.period_id).map((card) => (
+                  <div key={card.key} className="payroll-summary-card" style={{ borderTopColor: card.accent, minWidth: 138 }}>
+                    <div className="payroll-summary-label">{card.label}</div>
+                    <div className="payroll-summary-value">{card.value}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div style={{ overflowX: 'auto' }}>
@@ -2092,6 +2134,22 @@ export default function PayrollPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {payrollSavedNoticeOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.25rem', borderRadius: 12, width: '92vw', maxWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ margin: '0 0 0.5rem' }}>Payroll saved</h3>
+            <p style={{ margin: 0, color: '#374151' }}>
+              The payroll was exported to ADP and saved in the database.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button type="button" className="btn-secondary" onClick={() => setPayrollSavedNoticeOpen(false)}>
+                Close
+              </button>
             </div>
           </div>
         </div>
