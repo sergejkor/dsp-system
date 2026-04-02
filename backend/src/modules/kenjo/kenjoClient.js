@@ -122,6 +122,18 @@ function normalizeArrayPayload(json) {
   if (Array.isArray(json)) return json;
   if (Array.isArray(json?.data)) return json.data;
   if (Array.isArray(json?.items)) return json.items;
+  if (Array.isArray(json?.results)) return json.results;
+  if (Array.isArray(json?.rows)) return json.rows;
+  if (Array.isArray(json?.requests)) return json.requests;
+  if (Array.isArray(json?.timeOffRequests)) return json.timeOffRequests;
+  if (Array.isArray(json?.attendances)) return json.attendances;
+  if (Array.isArray(json?.userAccounts)) return json.userAccounts;
+  if (Array.isArray(json?.employees)) return json.employees;
+  if (Array.isArray(json?.records)) return json.records;
+  if (json && typeof json === 'object') {
+    const firstArrayEntry = Object.values(json).find((value) => Array.isArray(value));
+    if (Array.isArray(firstArrayEntry)) return firstArrayEntry;
+  }
   return [];
 }
 
@@ -241,8 +253,11 @@ export async function getKenjoOffices() {
 function getPaginationInfo(json, currentItemsLength) {
   const totalPages = Number(
     json?.pagination?.totalPages
+      ?? json?.pagination?.total_pages
       ?? json?.meta?.totalPages
+      ?? json?.meta?.total_pages
       ?? json?.totalPages
+      ?? json?.total_pages
       ?? 1
   );
   const total = Number(
@@ -253,8 +268,11 @@ function getPaginationInfo(json, currentItemsLength) {
   );
   const perPage = Number(
     json?.pagination?.perPage
+      ?? json?.pagination?.per_page
       ?? json?.meta?.perPage
+      ?? json?.meta?.per_page
       ?? json?.perPage
+      ?? json?.per_page
       ?? currentItemsLength
       ?? 0
   );
