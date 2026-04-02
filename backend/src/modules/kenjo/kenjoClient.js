@@ -305,33 +305,48 @@ export async function getTimeOffRequests(from, to) {
   const fromStr = String(from || '').trim().slice(0, 10);
   const toStr = String(to || '').trim().slice(0, 10);
   if (!fromStr || !toStr) throw new Error('from and to (YYYY-MM-DD) are required');
-  try {
-    const limit = 100;
-    const firstPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit, page: 1 });
-    const items = normalizeArrayPayload(firstPage);
-    const pagination = getPaginationInfo(firstPage, items.length);
-    const all = [...items];
-    const hasReliableTotalPages = Number.isFinite(pagination.totalPages) && pagination.totalPages > 1;
-    const maxPages = hasReliableTotalPages ? pagination.totalPages : 20;
 
-    for (let page = 2; page <= maxPages; page += 1) {
-      const nextPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit, page });
-      const nextItems = normalizeArrayPayload(nextPage);
-      if (!nextItems.length) break;
-      all.push(...nextItems);
-      if (hasReliableTotalPages) continue;
-      if (nextItems.length < limit) break;
+  async function fetchTimeOffWindow(windowFrom, windowTo) {
+    const limit = 100;
+    try {
+      const firstPage = await kenjoGet('/time-off/requests', { from: windowFrom, to: windowTo, limit, page: 1 });
+      const items = normalizeArrayPayload(firstPage);
+      const pagination = getPaginationInfo(firstPage, items.length);
+      const all = [...items];
+      const hasReliableTotalPages = Number.isFinite(pagination.totalPages) && pagination.totalPages > 1;
+      const maxPages = hasReliableTotalPages ? pagination.totalPages : 20;
+
+      for (let page = 2; page <= maxPages; page += 1) {
+        const nextPage = await kenjoGet('/time-off/requests', { from: windowFrom, to: windowTo, limit, page });
+        const nextItems = normalizeArrayPayload(nextPage);
+        if (!nextItems.length) break;
+        all.push(...nextItems);
+        if (hasReliableTotalPages) continue;
+        if (nextItems.length < limit) break;
+      }
+      return all;
+    } catch (err) {
+      // Some Kenjo tenants reject `limit`; fallback to strict minimal filters.
+      const msg = String(err?.message || err || '');
+      if (msg.includes('/time-off/requests') && msg.includes('400')) {
+        const data = await kenjoGet('/time-off/requests', { from: windowFrom, to: windowTo });
+        return normalizeArrayPayload(data);
+      }
+      throw err;
     }
-    return dedupeTimeOffItems(all);
-  } catch (err) {
-    // Some Kenjo tenants reject `limit`; fallback to strict minimal filters.
-    const msg = String(err?.message || err || '');
-    if (msg.includes('/time-off/requests') && msg.includes('400')) {
-      const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr });
-      return dedupeTimeOffItems(normalizeArrayPayload(data));
-    }
-    throw err;
   }
+
+  const merged = [];
+  let windowFrom = fromStr;
+  while (windowFrom <= toStr) {
+    const windowToCandidate = addDays(windowFrom, 13);
+    const windowTo = windowToCandidate < toStr ? windowToCandidate : toStr;
+    const chunkItems = await fetchTimeOffWindow(windowFrom, windowTo);
+    if (Array.isArray(chunkItems) && chunkItems.length) merged.push(...chunkItems);
+    windowFrom = addDays(windowTo, 1);
+  }
+
+  return dedupeTimeOffItems(merged);
 }
 
 /** User-accounts plus work data (transportationId, employeeNumber) for matching Cortex rows. */
