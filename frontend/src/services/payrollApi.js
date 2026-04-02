@@ -111,12 +111,36 @@ export async function savePayrollBonus(periodId, employeeId, amount, comment) {
   return response.json();
 }
 
+export async function getPayrollHistory() {
+  const response = await fetch(`${API_BASE}/api/payroll/history`, authOpts({ cache: 'no-store' }));
+  const data = await response.json().catch(() => ([]));
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to load payroll history');
+  }
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getPayrollHistorySnapshot(periodId) {
+  const response = await fetch(`${API_BASE}/api/payroll/history/${encodeURIComponent(periodId)}`, authOpts({ cache: 'no-store' }));
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to load payroll history snapshot');
+  }
+  return data;
+}
+
 /** Export payroll table to ADP/Alfamile Excel; triggers download. */
-export async function exportPayrollToAdp(month, rows) {
+export async function exportPayrollToAdp(month, rows, result) {
   const response = await fetch(`${API_BASE}/api/payroll/export-adp`, authOpts({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ month, rows }),
+    body: JSON.stringify({
+      month,
+      rows,
+      from: result?.from || null,
+      to: result?.to || null,
+      result: result || null,
+    }),
   }));
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));

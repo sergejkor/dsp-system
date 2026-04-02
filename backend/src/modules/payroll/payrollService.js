@@ -5,6 +5,24 @@ import { PDFDocument } from 'pdf-lib';
 import { PDFParse } from 'pdf-parse';
 import employeeService, { ensureEmployeeRescuesTable } from '../employees/employeeService.js';
 
+let payrollHistoryTableReady = false;
+
+async function ensurePayrollHistoryTable() {
+  if (payrollHistoryTableReady) return;
+  await query(`
+    CREATE TABLE IF NOT EXISTS payroll_history (
+      period_id VARCHAR(7) PRIMARY KEY,
+      period_from DATE,
+      period_to DATE,
+      payload_json JSONB NOT NULL,
+      frozen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_payroll_history_frozen_at ON payroll_history (frozen_at DESC)`);
+  payrollHistoryTableReady = true;
+}
+
 /**
  * Get ISO year and week number for a date string YYYY-MM-DD.
  */
@@ -757,6 +775,76 @@ export async function calculatePayroll(month, fromDate, toDate) {
   });
 
   return { month: monthStr, from, to, period_days: periodDays, rows: rowsWithManual, weekly_breakdown, debug };
+}
+
+export async function savePayrollHistorySnapshot({ month, from, to, result }) {
+  const periodId = String(month || result?.month || '').trim().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(periodId)) throw new Error('month (YYYY-MM) is required');
+  await ensurePayrollHistoryTable();
+  const payload = {
+    ...(result && typeof result === 'object' ? result : {}),
+    month: periodId,
+    from: String(from || result?.from || '').slice(0, 10),
+    to: String(to || result?.to || '').slice(0, 10),
+  };
+  await query(
+    `INSERT INTO payroll_history (period_id, period_from, period_to, payload_json, frozen_at, updated_at)
+     VALUES ($1, $2::date, $3::date, $4::jsonb, NOW(), NOW())
+     ON CONFLICT (period_id) DO UPDATE SET
+       period_from = EXCLUDED.period_from,
+       period_to = EXCLUDED.period_to,
+       payload_json = EXCLUDED.payload_json,
+       frozen_at = NOW(),
+       updated_at = NOW()`,
+    [
+      periodId,
+      payload.from || null,
+      payload.to || null,
+      JSON.stringify(payload),
+    ]
+  );
+  return { ok: true, period_id: periodId };
+}
+
+export async function listPayrollHistory() {
+  await ensurePayrollHistoryTable();
+  const res = await query(
+    `SELECT period_id, period_from, period_to, payload_json, frozen_at
+     FROM payroll_history
+     ORDER BY period_id DESC, frozen_at DESC`
+  );
+  return (res.rows || []).map((row) => {
+    const payload = row.payload_json && typeof row.payload_json === 'object' ? row.payload_json : {};
+    return {
+      period_id: String(row.period_id || '').trim(),
+      period_from: row.period_from ? String(row.period_from).slice(0, 10) : '',
+      period_to: row.period_to ? String(row.period_to).slice(0, 10) : '',
+      frozen_at: row.frozen_at || null,
+      row_count: Array.isArray(payload?.rows) ? payload.rows.length : 0,
+    };
+  });
+}
+
+export async function getPayrollHistorySnapshot(periodId) {
+  const id = String(periodId || '').trim().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(id)) throw new Error('period_id (YYYY-MM) is required');
+  await ensurePayrollHistoryTable();
+  const res = await query(
+    `SELECT period_id, period_from, period_to, payload_json, frozen_at
+     FROM payroll_history
+     WHERE period_id = $1
+     LIMIT 1`,
+    [id]
+  );
+  const row = res.rows?.[0];
+  if (!row) return null;
+  return {
+    period_id: String(row.period_id || '').trim(),
+    period_from: row.period_from ? String(row.period_from).slice(0, 10) : '',
+    period_to: row.period_to ? String(row.period_to).slice(0, 10) : '',
+    frozen_at: row.frozen_at || null,
+    payload: row.payload_json && typeof row.payload_json === 'object' ? row.payload_json : {},
+  };
 }
 
 /**

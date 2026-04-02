@@ -5,6 +5,8 @@ import {
   exportPayrollToAdp,
   exportPayrollToExcel,
   exportPayrollToPdf,
+  getPayrollHistory,
+  getPayrollHistorySnapshot,
   savePayrollAbzug,
   savePayrollBonus,
   savePayrollManualEntry,
@@ -83,6 +85,56 @@ function formatKpiValue(num) {
   return n.toFixed(2);
 }
 
+function buildPayrollSummaryCards(rows, selectedMonth) {
+  const list = Array.isArray(rows) ? rows : [];
+  const month = String(selectedMonth || '').slice(0, 7);
+  const sums = list.reduce(
+    (acc, row) => {
+      const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
+      acc.totalBonus += Number(row.total_bonus) || 0;
+      acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
+      acc.verpflMehr += Math.max(0, Number(row.verpfl_mehr) || 0);
+      acc.fahrtGeld += Number(row.fahrt_geld) || 0;
+      acc.bonus += Number(row.bonus) || 0;
+      acc.kranktage += Number(row.krank_days) || 0;
+      acc.urlaubstage += Number(row.urlaub_days) || 0;
+      if (String(row.austritsdatum || row.austrittsdatum || '').slice(0, 7) === month) {
+        acc.maAustrit += 1;
+      }
+      return acc;
+    },
+    {
+      totalBonus: 0,
+      totalAbzug: 0,
+      verpflMehr: 0,
+      fahrtGeld: 0,
+      bonus: 0,
+      kranktage: 0,
+      urlaubstage: 0,
+      maAustrit: 0,
+    },
+  );
+  return [
+    { key: 'total-bonus', label: 'Total Bonus', value: formatCurrency(sums.totalBonus), accent: '#0f766e' },
+    { key: 'total-abzug', label: 'Total Abzug', value: formatCurrency(sums.totalAbzug), accent: '#b91c1c' },
+    { key: 'verpfl-mehr', label: 'Verpfl. mehr', value: formatCurrency(sums.verpflMehr), accent: '#1d4ed8' },
+    { key: 'fahrt-geld', label: 'Fahrtengeld', value: formatCurrency(sums.fahrtGeld), accent: '#7c3aed' },
+    { key: 'bonus', label: 'Bonus', value: formatCurrency(sums.bonus), accent: '#d97706' },
+    { key: 'kranktage', label: 'Kranktage', value: String(sums.kranktage), accent: '#475569' },
+    { key: 'urlaubstage', label: 'Urlaubstage', value: String(sums.urlaubstage), accent: '#059669' },
+    { key: 'ma-austrit', label: 'MA Austrit', value: String(sums.maAustrit), accent: '#be185d' },
+  ];
+}
+
+function formatPayrollHistoryLabel(item) {
+  const periodId = String(item?.period_id || '').slice(0, 7);
+  const match = periodId.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return periodId || 'Saved payroll';
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  return `${MONTH_NAMES[monthIndex]} ${year}`;
+}
+
 export default function PayrollPage() {
   const navigate = useNavigate();
   const { t } = useAppSettings();
@@ -121,6 +173,13 @@ export default function PayrollPage() {
   const [exportAdpLoading, setExportAdpLoading] = useState(false);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
+  const [exportReportsLoading, setExportReportsLoading] = useState(false);
+  const [payrollHistory, setPayrollHistory] = useState([]);
+  const [payrollHistoryLoading, setPayrollHistoryLoading] = useState(false);
+  const [selectedPayrollHistory, setSelectedPayrollHistory] = useState('');
+  const [payrollHistoryModal, setPayrollHistoryModal] = useState(null);
+  const [payrollHistoryModalLoading, setPayrollHistoryModalLoading] = useState(false);
+  const [showAllTerminations, setShowAllTerminations] = useState(false);
   const [showActiveOpen, setShowActiveOpen] = useState(false);
   const [activeDriversList, setActiveDriversList] = useState([]);
   const [activeDriversLoading, setActiveDriversLoading] = useState(false);
@@ -174,6 +233,14 @@ export default function PayrollPage() {
       })
       .catch(() => setAddRecordEmployees([]));
   }, [showAdvanceDialog]);
+
+  useEffect(() => {
+    setPayrollHistoryLoading(true);
+    getPayrollHistory()
+      .then((items) => setPayrollHistory(Array.isArray(items) ? items : []))
+      .catch(() => setPayrollHistory([]))
+      .finally(() => setPayrollHistoryLoading(false));
+  }, []);
 
   const handleCalendarDayClick = (dayKey) => {
     if (!dayKey) return;
@@ -242,7 +309,9 @@ export default function PayrollPage() {
     setExportAdpLoading(true);
     setError('');
     try {
-      await exportPayrollToAdp(result.month, result.rows);
+      await exportPayrollToAdp(result.month, result.rows, result);
+      const history = await getPayrollHistory().catch(() => []);
+      setPayrollHistory(Array.isArray(history) ? history : []);
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -280,6 +349,58 @@ export default function PayrollPage() {
     } finally {
       setExportPdfLoading(false);
     }
+  };
+
+  const handleExportReports = async () => {
+    if (!result?.month || !result?.rows?.length) {
+      setError('Load payroll first, then export.');
+      return;
+    }
+    setExportReportsLoading(true);
+    setExportExcelLoading(true);
+    setExportPdfLoading(true);
+    setError('');
+    try {
+      await exportPayrollToExcel(result.month, result.rows);
+      await exportPayrollToPdf(result.month, result.rows);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setExportReportsLoading(false);
+      setExportExcelLoading(false);
+      setExportPdfLoading(false);
+    }
+  };
+
+  const handleOpenPayrollHistory = async (periodId) => {
+    const id = String(periodId || '').trim();
+    setSelectedPayrollHistory(id);
+    if (!id) {
+      setPayrollHistoryModal(null);
+      return;
+    }
+    setPayrollHistoryModalLoading(true);
+    setError('');
+    try {
+      const snapshot = await getPayrollHistorySnapshot(id);
+      setPayrollHistoryModal(snapshot);
+    } catch (e) {
+      setError(String(e?.message || e));
+      setPayrollHistoryModal(null);
+    } finally {
+      setPayrollHistoryModalLoading(false);
+    }
+  };
+
+  const handleEditPayrollHistory = () => {
+    const payload = payrollHistoryModal?.payload;
+    if (!payload) return;
+    setMonth(String(payload.month || payrollHistoryModal?.period_id || month).slice(0, 7));
+    setFromDate(String(payload.from || payrollHistoryModal?.period_from || '').slice(0, 10));
+    setToDate(String(payload.to || payrollHistoryModal?.period_to || '').slice(0, 10));
+    setResult(payload);
+    setPayrollHistoryModal(null);
+    setSelectedPayrollHistory('');
   };
 
   const openShowActive = () => {
@@ -810,57 +931,70 @@ export default function PayrollPage() {
   const addRecordVerpflMehr = Math.round((addRecordAfterAbzug <= addRecordMaxVerpfl ? addRecordAfterAbzug : addRecordMaxVerpfl) * 100) / 100;
   const addRecordFahrtGeld = Math.round((addRecordAfterAbzug > addRecordMaxVerpfl ? addRecordAfterAbzug - addRecordMaxVerpfl : 0) * 100) / 100;
   const payrollSummaryCards = useMemo(() => {
-    const rows = result?.rows || [];
-    const selectedMonth = String(result?.month || month || '').slice(0, 7);
-    const sums = rows.reduce(
-      (acc, row) => {
-        const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
-        acc.totalBonus += Number(row.total_bonus) || 0;
-        acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
-        acc.verpflMehr += Math.max(0, Number(row.verpfl_mehr) || 0);
-        acc.fahrtGeld += Number(row.fahrt_geld) || 0;
-        acc.bonus += Number(row.bonus) || 0;
-        acc.kranktage += Number(row.krank_days) || 0;
-        acc.urlaubstage += Number(row.urlaub_days) || 0;
-        if (String(row.austrittsdatum || '').slice(0, 7) === selectedMonth) {
-          acc.maAustrit += 1;
-        }
-        return acc;
-      },
-      {
-        totalBonus: 0,
-        totalAbzug: 0,
-        verpflMehr: 0,
-        fahrtGeld: 0,
-        bonus: 0,
-        kranktage: 0,
-        urlaubstage: 0,
-        maAustrit: 0,
-      },
-    );
-    return [
-      { key: 'total-bonus', label: 'Total Bonus', value: formatCurrency(sums.totalBonus), accent: '#0f766e' },
-      { key: 'total-abzug', label: 'Total Abzug', value: formatCurrency(sums.totalAbzug), accent: '#b91c1c' },
-      { key: 'verpfl-mehr', label: 'Verpfl. mehr', value: formatCurrency(sums.verpflMehr), accent: '#1d4ed8' },
-      { key: 'fahrt-geld', label: 'Fahrtengeld', value: formatCurrency(sums.fahrtGeld), accent: '#7c3aed' },
-      { key: 'bonus', label: 'Bonus', value: formatCurrency(sums.bonus), accent: '#d97706' },
-      { key: 'kranktage', label: 'Kranktage', value: String(sums.kranktage), accent: '#475569' },
-      { key: 'urlaubstage', label: 'Urlaubstage', value: String(sums.urlaubstage), accent: '#059669' },
-      { key: 'ma-austrit', label: 'MA Austrit', value: String(sums.maAustrit), accent: '#be185d' },
-    ];
+    return buildPayrollSummaryCards(result?.rows, result?.month || month);
   }, [result?.month, result?.rows, month]);
+
+  const visibleTerminationWindow = useMemo(() => {
+    const monthValue = String(result?.month || month || '').trim();
+    const match = monthValue.match(/^(\d{4})-(\d{2})$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const monthIndex = Number(match[2]) - 1;
+    const start = `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+    const end = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    return { start, end };
+  }, [result?.month, month]);
+
+  const shouldShowTerminationDate = (value) => {
+    const iso = String(value || '').slice(0, 10);
+    if (!iso) return false;
+    if (showAllTerminations) return true;
+    if (!visibleTerminationWindow) return false;
+    return iso >= visibleTerminationWindow.start && iso <= visibleTerminationWindow.end;
+  };
 
   return (
     <section className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
         <h2 style={{ margin: 0 }}>{t('payroll.title')}</h2>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button type="button" className="btn-secondary" onClick={handleExportExcel} disabled={exportExcelLoading || !result?.rows?.length}>
-            {exportExcelLoading ? 'Exporting...' : 'Export to Excel'}
-          </button>
-          <button type="button" className="btn-secondary" onClick={handleExportPdf} disabled={exportPdfLoading || !result?.rows?.length}>
-            {exportPdfLoading ? 'Exporting...' : 'Export to PDF'}
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.2rem' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', color: 'var(--text)' }}>
+              <input
+                type="checkbox"
+                checked={showAllTerminations}
+                onChange={(e) => setShowAllTerminations(e.target.checked)}
+              />
+              Show all Terminations
+            </label>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+              Default shows only termination dates from the selected calculation month.
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleExportReports}
+              disabled={exportReportsLoading || !result?.rows?.length}
+            >
+              {exportReportsLoading ? 'Exporting...' : 'Export Reports'}
+            </button>
+            <select
+              value={selectedPayrollHistory}
+              onChange={(e) => handleOpenPayrollHistory(e.target.value)}
+              disabled={payrollHistoryLoading}
+              style={{ minWidth: 220, padding: '0.45rem 0.6rem' }}
+            >
+              <option value="">{payrollHistoryLoading ? 'Loading payroll history...' : 'Payroll history'}</option>
+              {payrollHistory.map((item) => (
+                <option key={item.period_id} value={item.period_id}>
+                  {formatPayrollHistoryLabel(item)}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -1383,7 +1517,15 @@ export default function PayrollPage() {
                               type="button"
                               onClick={() => openEditManualRecord(row)}
                               title="Edit manual row"
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0, lineHeight: 1 }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: 0, lineHeight: 1, color: '#1976d2', textDecoration: 'underline' }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditManualRecord(row)}
+                              title="Edit manual row"
+                              style={{ display: 'none' }}
                             >
                               âœŽ
                             </button>
@@ -1430,6 +1572,9 @@ export default function PayrollPage() {
                       if (title) cellStyle = { ...cellStyle, cursor: 'help' };
                     }
                     if (col.key === 'austrittsdatum' && val) {
+                      if (!shouldShowTerminationDate(val)) {
+                        content = '—';
+                      } else {
                       const today = new Date();
                       today.setHours(0, 0, 0, 0);
                       const d = new Date(val + 'T12:00:00');
@@ -1438,6 +1583,7 @@ export default function PayrollPage() {
                         cellStyle = { ...cellStyle, color: '#b91c1c' };
                       } else if (d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth()) {
                         content = <span style={{ backgroundColor: '#fef08a', color: '#854d0e', padding: '0.1em 0.2em' }}>{display}</span>;
+                      }
                       }
                     }
                     return (
@@ -1883,6 +2029,69 @@ export default function PayrollPage() {
               <button type="button" className="btn-primary" onClick={submitAdvance} disabled={advanceSaving}>
                 {advanceSaving ? 'Saving…' : 'Save'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {payrollHistoryModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '1.25rem', borderRadius: 12, width: '94vw', maxWidth: 1200, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Payroll History</h3>
+                <p style={{ margin: '0.35rem 0 0', color: '#6b7280' }}>
+                  {formatPayrollHistoryLabel(payrollHistoryModal)} | {String(payrollHistoryModal?.payload?.from || payrollHistoryModal?.period_from || '').slice(0, 10)} {'->'} {String(payrollHistoryModal?.payload?.to || payrollHistoryModal?.period_to || '').slice(0, 10)}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button type="button" className="btn-secondary" onClick={handleEditPayrollHistory}>
+                  Edit
+                </button>
+                <button type="button" className="btn-secondary" onClick={() => { setPayrollHistoryModal(null); setSelectedPayrollHistory(''); }}>
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="payroll-summary-grid" style={{ marginBottom: '1rem' }}>
+              {buildPayrollSummaryCards(payrollHistoryModal?.payload?.rows, payrollHistoryModal?.payload?.month || payrollHistoryModal?.period_id).map((card) => (
+                <div key={card.key} className="payroll-summary-card" style={{ borderTopColor: card.accent }}>
+                  <div className="payroll-summary-label">{card.label}</div>
+                  <div className="payroll-summary-value">{card.value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                    {columns.map((col) => (
+                      <th key={col.key} style={{ padding: '0.5rem 0.35rem', whiteSpace: 'nowrap' }}>{col.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(payrollHistoryModal?.payload?.rows || []).map((row, index) => (
+                    <tr key={`${row.kenjo_employee_id || row.name || 'row'}-${index}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.name || '—'}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.pn || '—'}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.working_days ?? '—'}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.krank_days ?? 0}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.urlaub_days ?? 0}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.total_bonus)}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.abzug)}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.verpfl_mehr)}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.fahrt_geld)}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.bonus)}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatDateDDMMYYYY(row.eintrittsdatum)}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatDateDDMMYYYY(row.austrittsdatum)}</td>
+                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.vorschuss)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

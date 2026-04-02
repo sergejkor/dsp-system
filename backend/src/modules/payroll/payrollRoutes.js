@@ -29,6 +29,27 @@ router.get('/calculate', async (req, res) => {
   }
 });
 
+router.get('/history', async (_req, res) => {
+  try {
+    const rows = await payrollService.listPayrollHistory();
+    res.json(rows);
+  } catch (error) {
+    console.error('GET /payroll/history error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.get('/history/:periodId', async (req, res) => {
+  try {
+    const snapshot = await payrollService.getPayrollHistorySnapshot(req.params.periodId);
+    if (!snapshot) return res.status(404).json({ error: 'Payroll history not found' });
+    res.json(snapshot);
+  } catch (error) {
+    console.error('GET /payroll/history/:periodId error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
 router.put('/abzug', async (req, res) => {
   try {
     const { period_id, periodId, employee_id, employeeId, lines } = req.body || {};
@@ -113,10 +134,16 @@ router.post('/kpi/comment', async (req, res) => {
 
 router.post('/export-adp', async (req, res) => {
   try {
-    const { month, rows } = req.body || {};
+    const { month, from, to, rows, result } = req.body || {};
     if (!month || !Array.isArray(rows)) {
       return res.status(400).json({ error: 'Body must include month (YYYY-MM) and rows (array of payroll rows)' });
     }
+    await payrollService.savePayrollHistorySnapshot({
+      month,
+      from,
+      to,
+      result: result && typeof result === 'object' ? result : { month, from, to, rows },
+    });
     const buffer = await exportPayrollToAdp(month, rows);
     const safeMonth = String(month).replace(/\D/g, '').slice(0, 6) || 'export';
     const filename = `Variable_Daten_Alfamile_${safeMonth}.xlsx`;
