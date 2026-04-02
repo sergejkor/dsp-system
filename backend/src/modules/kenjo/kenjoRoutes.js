@@ -410,8 +410,8 @@ async function syncTimeOffMonth(year, month, nameById) {
   const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
   const lastDate = new Date(year, month, 0).getDate();
   const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDate).padStart(2, '0')}`;
-  const expandedFrom = shiftDate(firstDay, -31);
-  const expandedTo = shiftDate(to, 31);
+  const expandedFrom = shiftDate(firstDay, -30);
+  const expandedTo = shiftDate(to, 30);
 
   // Keep month data fully fresh: remove existing rows overlapping this month,
   // then reinsert what Kenjo currently returns for the same range.
@@ -533,8 +533,8 @@ router.get('/time-off', requireKenjoTimeOffAccess, async (req, res) => {
     const firstDay = `${y}-${String(m).padStart(2, '0')}-01`;
     const lastDay = new Date(y, m, 0);
     const lastDayStr = `${y}-${String(m).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
-    const expandedFrom = shiftDate(firstDay, -31);
-    const expandedTo = shiftDate(lastDayStr, 31);
+    const expandedFrom = shiftDate(firstDay, -30);
+    const expandedTo = shiftDate(lastDayStr, 30);
 
     // Always fetch live month data from Kenjo and return it directly.
     // This avoids stale DB cache being shown in UI.

@@ -360,8 +360,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
   const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
   const KENJO_TYPE_URLAUB = '685e7223e6bac64cb0a27e38';
-  const expandedMonthStart = shiftDate(monthStart, -31);
-  const expandedMonthEnd = shiftDate(monthEnd, 31);
+  const expandedMonthStart = shiftDate(monthStart, -30);
+  const expandedMonthEnd = shiftDate(monthEnd, 30);
 
   let timeOffDaysByEmployee = new Map();
   try {
