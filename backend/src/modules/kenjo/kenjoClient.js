@@ -306,16 +306,21 @@ export async function getTimeOffRequests(from, to) {
   const toStr = String(to || '').trim().slice(0, 10);
   if (!fromStr || !toStr) throw new Error('from and to (YYYY-MM-DD) are required');
   try {
-    const firstPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit: 100, page: 1 });
+    const limit = 100;
+    const firstPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit, page: 1 });
     const items = normalizeArrayPayload(firstPage);
     const pagination = getPaginationInfo(firstPage, items.length);
-    if (pagination.totalPages <= 1 && (!pagination.total || items.length >= pagination.total || !pagination.perPage)) {
-      return dedupeTimeOffItems(items);
-    }
     const all = [...items];
-    for (let page = 2; page <= pagination.totalPages; page += 1) {
-      const nextPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit: 100, page });
-      all.push(...normalizeArrayPayload(nextPage));
+    const hasReliableTotalPages = Number.isFinite(pagination.totalPages) && pagination.totalPages > 1;
+    const maxPages = hasReliableTotalPages ? pagination.totalPages : 20;
+
+    for (let page = 2; page <= maxPages; page += 1) {
+      const nextPage = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit, page });
+      const nextItems = normalizeArrayPayload(nextPage);
+      if (!nextItems.length) break;
+      all.push(...nextItems);
+      if (hasReliableTotalPages) continue;
+      if (nextItems.length < limit) break;
     }
     return dedupeTimeOffItems(all);
   } catch (err) {
