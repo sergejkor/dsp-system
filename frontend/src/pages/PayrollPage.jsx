@@ -2076,7 +2076,7 @@ export default function PayrollPage() {
 
       {payrollHistoryModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: '1.25rem', borderRadius: 12, width: '94vw', maxWidth: 1200, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+          <div style={{ background: 'white', padding: '1rem', borderRadius: 12, width: 'calc(100vw - 24px)', maxWidth: 1680, maxHeight: '92vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
               <div>
                 <h3 style={{ margin: 0 }}>Payroll History</h3>
@@ -2106,30 +2106,30 @@ export default function PayrollPage() {
             </div>
 
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
                     {columns.map((col) => (
-                      <th key={col.key} style={{ padding: '0.5rem 0.35rem', whiteSpace: 'nowrap' }}>{col.label}</th>
+                      <th key={col.key} style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{col.label}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {(payrollHistoryModal?.payload?.rows || []).map((row, index) => (
                     <tr key={`${row.kenjo_employee_id || row.name || 'row'}-${index}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.name || '—'}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.pn || '—'}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.working_days ?? '—'}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.krank_days ?? 0}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{row.urlaub_days ?? 0}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.total_bonus)}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.abzug)}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.verpfl_mehr)}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.fahrt_geld)}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.bonus)}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatDateDDMMYYYY(row.eintrittsdatum)}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatDateDDMMYYYY(row.austrittsdatum)}</td>
-                      <td style={{ padding: '0.5rem 0.35rem' }}>{formatCurrency(row.vorschuss)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.name || '—'}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.pn || '—'}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.working_days ?? '—'}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.krank_days ?? 0}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.urlaub_days ?? 0}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.total_bonus)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.abzug)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.verpfl_mehr)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.fahrt_geld)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.bonus)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatDateDDMMYYYY(row.eintrittsdatum)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatDateDDMMYYYY(row.austrittsdatum)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.vorschuss)}</td>
                     </tr>
                   ))}
                 </tbody>
