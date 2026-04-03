@@ -114,7 +114,7 @@ router.delete('/saved-views/:id', async (req, res) => {
 /**
  * GET /api/analytics/operations, /drivers, /payroll, /attendance, /routes, /performance, /safety, /fleet, /hr, /compliance
  */
-const domainKeys = ['operations', 'drivers', 'payroll', 'attendance', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages'];
+const domainKeys = ['operations', 'drivers', 'payroll', 'attendance', 'timeoff', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages'];
 domainKeys.forEach((domain) => {
   router.get(`/${domain}`, async (req, res) => {
     try {
@@ -126,6 +126,8 @@ domainKeys.forEach((domain) => {
         payrollMonth: req.query.payrollMonth,
         insuranceYear: req.query.insuranceYear,
         question: req.query.question,
+        year: req.query.year,
+        employeeIds: req.query.employeeIds,
       };
       const data = await analyticsService.getDomainData(domain, params);
       res.json(data);
@@ -169,6 +171,8 @@ router.get('/export/csv', async (req, res) => {
       endDate: req.query.endDate,
       payrollMonth: req.query.payrollMonth,
       insuranceYear: req.query.insuranceYear,
+      year: req.query.year,
+      employeeIds: req.query.employeeIds,
       limit: 5000,
     };
     let table = [];
@@ -186,6 +190,30 @@ router.get('/export/csv', async (req, res) => {
     res.send('\uFEFF' + csv);
   } catch (error) {
     console.error('GET /api/analytics/export/csv', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.post('/export/block', async (req, res) => {
+  try {
+    const format = String(req.body?.format || 'xlsx').trim().toLowerCase();
+    const title = String(req.body?.title || 'analytics-block').trim() || 'analytics-block';
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const safeName = title.replace(/[^\w\-]+/g, '_').slice(0, 80) || 'analytics-block';
+
+    if (format === 'pdf') {
+      const buffer = await analyticsService.buildAnalyticsPdfBuffer(title, rows);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.pdf"`);
+      return res.send(buffer);
+    }
+
+    const buffer = analyticsService.rowsToWorksheetBuffer(title, rows);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.xlsx"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('POST /api/analytics/export/block', error);
     res.status(500).json({ error: String(error?.message || error) });
   }
 });
