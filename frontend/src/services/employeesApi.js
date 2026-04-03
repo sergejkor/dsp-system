@@ -31,6 +31,22 @@ export async function getEmployee(employeeId) {
   return response.json();
 }
 
+export async function updateEmployeeLocalSettings(employeeId, payload) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeId)}/local-settings`,
+    authOpts({
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vacationDaysOverride: payload?.vacationDaysOverride ?? null,
+      }),
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee local settings update failed');
+  return out;
+}
+
 export async function getEmployeeContractExtensions(employeeRef) {
   const response = await fetch(
     `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contract-extensions`,

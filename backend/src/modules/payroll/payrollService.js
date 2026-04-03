@@ -6,6 +6,7 @@ import { PDFParse } from 'pdf-parse';
 import employeeService, { ensureEmployeeRescuesTable } from '../employees/employeeService.js';
 
 let payrollHistoryTableReady = false;
+let payrollEmployeeVacationColumnsReady = false;
 
 async function ensurePayrollHistoryTable() {
   if (payrollHistoryTableReady) return;
@@ -21,6 +22,13 @@ async function ensurePayrollHistoryTable() {
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_payroll_history_frozen_at ON payroll_history (frozen_at DESC)`);
   payrollHistoryTableReady = true;
+}
+
+async function ensurePayrollEmployeeVacationColumns() {
+  if (payrollEmployeeVacationColumnsReady) return;
+  await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_days_override NUMERIC(10,2)`).catch(() => null);
+  await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_days_override_year INTEGER`).catch(() => null);
+  payrollEmployeeVacationColumnsReady = true;
 }
 
 /**
@@ -132,6 +140,135 @@ function shiftDate(dateStr, days) {
   return `${y}-${m}-${d}`;
 }
 
+function round2(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+function endOfMonthIso(year, monthIndexZeroBased) {
+  const lastDay = new Date(year, monthIndexZeroBased + 1, 0).getDate();
+  return `${year}-${String(monthIndexZeroBased + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+}
+
+function overlapsIsoRange(start, end, rangeStart, rangeEnd) {
+  const s = String(start || '').slice(0, 10);
+  const e = String(end || '').slice(0, 10);
+  const from = String(rangeStart || '').slice(0, 10);
+  const to = String(rangeEnd || '').slice(0, 10);
+  if (!s || !from || !to) return false;
+  const actualEnd = e || '9999-12-31';
+  return s <= to && actualEnd >= from;
+}
+
+function mergeIntervals(intervals) {
+  const normalized = (Array.isArray(intervals) ? intervals : [])
+    .map((item) => ({
+      start: toDateStr(item?.start),
+      end: toDateStr(item?.end) || '9999-12-31',
+    }))
+    .filter((item) => item.start)
+    .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
+
+  const out = [];
+  for (const interval of normalized) {
+    const prev = out[out.length - 1];
+    if (!prev) {
+      out.push({ ...interval });
+      continue;
+    }
+    const prevExtendedEnd = shiftDate(prev.end, 1);
+    if (interval.start <= prevExtendedEnd) {
+      if (interval.end > prev.end) prev.end = interval.end;
+      continue;
+    }
+    out.push({ ...interval });
+  }
+  return out;
+}
+
+function countCoveredMonthsInYear(intervals, year) {
+  const merged = mergeIntervals(intervals);
+  let count = 0;
+  for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+    const monthStart = `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+    const monthEnd = endOfMonthIso(year, monthIndex);
+    if (merged.some((interval) => overlapsIsoRange(interval.start, interval.end, monthStart, monthEnd))) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function buildVacationIntervalsForEmployee(user, localEmployee, contractExtensions) {
+  const startDate = toDateStr(
+    localEmployee?.start_date ||
+    user?.startDate ||
+    user?.start_date
+  );
+  if (!startDate) return [];
+
+  const intervals = [{
+    start: startDate,
+    end: toDateStr(localEmployee?.contract_end || user?.contractEnd || user?.contract_end) || null,
+  }];
+
+  for (const ext of contractExtensions || []) {
+    const extStart = toDateStr(ext?.start_date);
+    const extEnd = toDateStr(ext?.end_date);
+    if (!extStart || !extEnd) continue;
+    intervals.push({ start: extStart, end: extEnd });
+  }
+  return mergeIntervals(intervals);
+}
+
+function getYearVacationEntitlementForEmployee(user, localEmployee, contractExtensions, year) {
+  const overrideYear = Number(localEmployee?.vacation_days_override_year);
+  const overrideValue = Number(localEmployee?.vacation_days_override);
+  if (Number.isFinite(overrideYear) && overrideYear === Number(year) && Number.isFinite(overrideValue) && overrideValue >= 0) {
+    return round2(overrideValue);
+  }
+  const coveredMonths = countCoveredMonthsInYear(
+    buildVacationIntervalsForEmployee(user, localEmployee, contractExtensions),
+    year,
+  );
+  return round2(coveredMonths * 1.67);
+}
+
+function buildVacationUsageByEmployee(timeOffRows, rangeStart, rangeEnd, urlaubTypeId) {
+  const usage = new Map();
+  for (const r of timeOffRows || []) {
+    const eid = String(r.kenjo_user_id ?? r._userId ?? r.userId ?? r.user_id ?? '').trim();
+    if (!eid) continue;
+    const typeId = String(r.time_off_type ?? r._timeOffTypeId ?? r.timeOffTypeId ?? r.time_off_type_id ?? r.type ?? '').trim();
+    if (typeId !== urlaubTypeId) continue;
+    const status = String(r.status ?? '').trim().toLowerCase();
+    if (status && ['rejected', 'cancelled', 'canceled', 'declined'].includes(status)) continue;
+
+    const start = toDateStr(r.start_date ?? r.from ?? r.startDate ?? r.start);
+    const end = toDateStr(r.end_date ?? r.to ?? r.endDate ?? r.end);
+    if (!start || !end) continue;
+    if (!usage.has(eid)) usage.set(eid, 0);
+
+    const startT = new Date(`${start}T12:00:00`).getTime();
+    const endT = new Date(`${end}T12:00:00`).getTime();
+    const rangeStartT = new Date(`${rangeStart}T12:00:00`).getTime();
+    const rangeEndT = new Date(`${rangeEnd}T12:00:00`).getTime();
+    const clampedStartT = Math.max(startT, rangeStartT);
+    const clampedEndT = Math.min(endT, rangeEndT);
+    if (clampedStartT > clampedEndT) continue;
+
+    let count = 0;
+    for (let t = clampedStartT; t <= clampedEndT; t += 86400000) {
+      const d = new Date(t);
+      const dayOfWeek = d.getDay();
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) count += 1;
+    }
+    usage.set(eid, (usage.get(eid) || 0) + count);
+  }
+  return usage;
+}
+
 function buildTimeOffDaysByEmployee(timeOffRows, monthStart, monthEnd, krankTypeId, urlaubTypeId) {
   const timeOffDaysByEmployee = new Map();
   const monthStartT = new Date(monthStart + 'T12:00:00').getTime();
@@ -195,11 +332,17 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const to = String(toDate || '').trim().slice(0, 10);
   if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) throw new Error('month (YYYY-MM) is required');
   if (!from || !to || from > to) throw new Error('from and to dates (YYYY-MM-DD) are required');
+  await ensurePayrollEmployeeVacationColumns();
 
   const [y, m] = monthStr.split('-').map(Number);
   const monthStart = `${monthStr}-01`;
   const lastDay = new Date(y, m, 0).getDate();
   const monthEnd = `${monthStr}-${String(lastDay).padStart(2, '0')}`;
+  const yearStart = `${y}-01-01`;
+  const prevYear = y - 1;
+  const prevYearStart = `${prevYear}-01-01`;
+  const prevYearEnd = `${prevYear}-12-31`;
+  const carryoverCutoff = `${y}-03-31`;
   const weeksInPeriod = getWeeksInRange(from, to);
   const numWeeks = weeksInPeriod.length;
   await ensureEmployeeRescuesTable();
@@ -251,7 +394,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     weeklyFactsRows = weeklyFactsRes;
   }
 
-  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows, rescueRows] = await Promise.all([
+  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows, rescueRows, localEmployeesRows, contractExtensionRows] = await Promise.all([
     getKenjoUsersList(),
     getKenjoAttendances(monthStart, monthEnd),
     getKenjoAttendances(from, to),
@@ -289,6 +432,22 @@ export async function calculatePayroll(month, fromDate, toDate) {
        ) emp ON TRUE
        WHERE rescue_date >= $1::date AND rescue_date <= $2::date`,
       [monthStart, monthEnd]
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT
+         id::text AS local_id,
+         employee_id,
+         pn,
+         kenjo_user_id,
+         start_date,
+         contract_end,
+         vacation_days_override,
+         vacation_days_override_year
+       FROM employees`
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT employee_ref, start_date, end_date
+       FROM employee_contract_extensions`
     ).catch(() => ({ rows: [] })),
   ]);
 
@@ -374,6 +533,61 @@ export async function calculatePayroll(month, fromDate, toDate) {
     if (kid && tid) transporterIdByKenjoId.set(kid.toLowerCase(), tid);
   }
 
+  const localEmployeeByKenjoId = new Map();
+  const localEmployeeByEmployeeId = new Map();
+  const localEmployeeByLocalId = new Map();
+  const localEmployeeByPn = new Map();
+  for (const row of localEmployeesRows?.rows || []) {
+    const normalized = {
+      ...row,
+      local_id: String(row.local_id || '').trim(),
+      employee_id: String(row.employee_id || '').trim(),
+      kenjo_user_id: String(row.kenjo_user_id || '').trim(),
+      pn: String(row.pn || '').trim(),
+    };
+    if (normalized.kenjo_user_id) localEmployeeByKenjoId.set(normalized.kenjo_user_id, normalized);
+    if (normalized.employee_id) localEmployeeByEmployeeId.set(normalized.employee_id, normalized);
+    if (normalized.local_id) localEmployeeByLocalId.set(normalized.local_id, normalized);
+    if (normalized.pn) localEmployeeByPn.set(normalized.pn, normalized);
+  }
+
+  const contractExtensionsByRef = new Map();
+  for (const row of contractExtensionRows?.rows || []) {
+    const ref = String(row.employee_ref || '').trim();
+    if (!ref) continue;
+    if (!contractExtensionsByRef.has(ref)) contractExtensionsByRef.set(ref, []);
+    contractExtensionsByRef.get(ref).push(row);
+  }
+
+  const resolveLocalEmployee = (kenjoUserId, employeeNumber) => {
+    const uid = String(kenjoUserId || '').trim();
+    const pn = String(employeeNumber || '').trim();
+    return (
+      (uid && localEmployeeByKenjoId.get(uid)) ||
+      (pn && localEmployeeByPn.get(pn)) ||
+      null
+    );
+  };
+
+  const getEmployeeContractExtensions = (kenjoUserId, localEmployee) => {
+    const refs = [
+      String(kenjoUserId || '').trim(),
+      String(localEmployee?.employee_id || '').trim(),
+      String(localEmployee?.local_id || '').trim(),
+    ].filter(Boolean);
+    const all = [];
+    const seen = new Set();
+    for (const ref of refs) {
+      for (const row of contractExtensionsByRef.get(ref) || []) {
+        const key = `${ref}|${toDateStr(row.start_date)}|${toDateStr(row.end_date)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        all.push(row);
+      }
+    }
+    return all;
+  };
+
   const periodDays = Math.round((new Date(to + 'T12:00:00') - new Date(from + 'T12:00:00')) / 86400000) + 1;
 
   const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
@@ -404,6 +618,36 @@ export async function calculatePayroll(month, fromDate, toDate) {
     timeOffDaysByEmployee = buildTimeOffDaysByEmployee(timeOffRows?.rows || [], monthStart, monthEnd, KENJO_TYPE_KRANK, KENJO_TYPE_URLAUB);
   }
 
+  async function loadVacationUsage(rangeStart, rangeEnd) {
+    try {
+      const liveRows = await getTimeOffRequests(rangeStart, rangeEnd);
+      return buildVacationUsageByEmployee(liveRows, rangeStart, rangeEnd, KENJO_TYPE_URLAUB);
+    } catch (error) {
+      console.error('Payroll live Kenjo vacation usage fetch failed, falling back to local cache', error);
+      const cachedRows = await query(
+        `SELECT kenjo_user_id,
+                to_char(start_date, 'YYYY-MM-DD') AS start_date,
+                to_char(end_date, 'YYYY-MM-DD') AS end_date,
+                time_off_type,
+                status
+         FROM kenjo_time_off
+         WHERE start_date <= $2::date AND end_date >= $1::date`,
+        [rangeStart, rangeEnd]
+      ).catch(() => ({ rows: [] }));
+      return buildVacationUsageByEmployee(cachedRows?.rows || [], rangeStart, rangeEnd, KENJO_TYPE_URLAUB);
+    }
+  }
+
+  const [
+    currentYearVacationUsage,
+    prevYearVacationUsage,
+    currentYearVacationUsageUntilCarryoverCutoff,
+  ] = await Promise.all([
+    loadVacationUsage(yearStart, monthEnd),
+    loadVacationUsage(prevYearStart, prevYearEnd),
+    loadVacationUsage(yearStart, monthEnd < carryoverCutoff ? monthEnd : carryoverCutoff),
+  ]);
+
   const rows = [];
   const weeklyFactsToUpsert = [];
   const debugSample = [];
@@ -433,6 +677,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
   for (const u of users || []) {
     const uid = String(u._id || '').trim();
     const pn = u.employeeNumber ?? u.employee_number ?? '';
+    const localEmployee = resolveLocalEmployee(uid, pn);
+    const contractExtensions = getEmployeeContractExtensions(uid, localEmployee);
     const fromApi = (u.transportationId || u.transporterId || '').trim();
     const fromLocal = transporterIdByKenjoId.get(uid.toLowerCase());
     const transporterId = (fromLocal || fromApi).trim();
@@ -542,6 +788,21 @@ export async function calculatePayroll(month, fromDate, toDate) {
     }
     totalBonus += rescueTotal;
 
+    const currentYearEntitlement = getYearVacationEntitlementForEmployee(u, localEmployee, contractExtensions, y);
+    const previousYearEntitlement = getYearVacationEntitlementForEmployee(u, localEmployee, contractExtensions, prevYear);
+    const previousYearUsed = Number(prevYearVacationUsage.get(uid) || 0);
+    const previousYearCarryoverOriginal = Math.max(0, round2(previousYearEntitlement - previousYearUsed));
+    const currentYearUsedToDate = Number(currentYearVacationUsage.get(uid) || 0);
+    const currentYearUsedUntilCarryoverCutoff = Number(currentYearVacationUsageUntilCarryoverCutoff.get(uid) || 0);
+    const carryoverUsed = monthEnd <= carryoverCutoff
+      ? Math.min(previousYearCarryoverOriginal, currentYearUsedToDate)
+      : Math.min(previousYearCarryoverOriginal, currentYearUsedUntilCarryoverCutoff);
+    const carryoverDays = monthEnd <= carryoverCutoff
+      ? Math.max(0, round2(previousYearCarryoverOriginal - carryoverUsed))
+      : 0;
+    const currentYearConsumed = Math.max(0, round2(currentYearUsedToDate - carryoverUsed));
+    const restUrlaub = Math.max(0, round2(currentYearEntitlement - currentYearConsumed + carryoverDays));
+
     if (totalBonus > 0) employeesWithNonZeroBonus++;
 
     if (debugSample.length < DEBUG_SAMPLE_SIZE) {
@@ -588,6 +849,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
         vorschuss: Math.round(vorschuss * 100) / 100,
         krank_days: timeOff.krank_days,
         urlaub_days: timeOff.urlaub_days,
+        carryover_days: carryoverDays,
+        rest_urlaub: restUrlaub,
         krank_entries: timeOff.krank_entries,
         urlaub_entries: timeOff.urlaub_entries,
         rescue_entries: rescueEntries,
@@ -679,6 +942,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const u = userIdToUser.get(eid);
     const name = u?.displayName || [u?.firstName, u?.lastName].filter(Boolean).join(' ') || eid;
     const pn = u?.employeeNumber ?? u?.employee_number ?? '';
+    const localEmployee = resolveLocalEmployee(eid, pn);
+    const contractExtensions = getEmployeeContractExtensions(eid, localEmployee);
     const rescueEntries = (rescuesByEmployee.get(eid) || []).map((entry) => ({ ...entry }));
     const rescueTotal = rescueEntries.reduce((sum, entry) => sum + (Number(entry?.amount) || 0), 0);
     const effectiveTotalBonus = Math.round((manual.total_bonus + rescueTotal) * 100) / 100;
@@ -690,6 +955,20 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const verpflMehr = hasManualSplit ? Math.round((Number(manual.verpfl_mehr) || 0) * 100) / 100 : derivedVerpflMehr;
     const fahrtGeld = hasManualSplit ? Math.round((Number(manual.fahrt_geld) || 0) * 100) / 100 : derivedFahrtGeld;
     const timeOff = timeOffDaysByEmployee.get(eid) || { krank_days: 0, urlaub_days: 0, krank_entries: [], urlaub_entries: [] };
+    const currentYearEntitlement = getYearVacationEntitlementForEmployee(u, localEmployee, contractExtensions, y);
+    const previousYearEntitlement = getYearVacationEntitlementForEmployee(u, localEmployee, contractExtensions, prevYear);
+    const previousYearUsed = Number(prevYearVacationUsage.get(eid) || 0);
+    const previousYearCarryoverOriginal = Math.max(0, round2(previousYearEntitlement - previousYearUsed));
+    const currentYearUsedToDate = Number(currentYearVacationUsage.get(eid) || 0);
+    const currentYearUsedUntilCarryoverCutoff = Number(currentYearVacationUsageUntilCarryoverCutoff.get(eid) || 0);
+    const carryoverUsed = monthEnd <= carryoverCutoff
+      ? Math.min(previousYearCarryoverOriginal, currentYearUsedToDate)
+      : Math.min(previousYearCarryoverOriginal, currentYearUsedUntilCarryoverCutoff);
+    const carryoverDays = monthEnd <= carryoverCutoff
+      ? Math.max(0, round2(previousYearCarryoverOriginal - carryoverUsed))
+      : 0;
+    const currentYearConsumed = Math.max(0, round2(currentYearUsedToDate - carryoverUsed));
+    const restUrlaub = Math.max(0, round2(currentYearEntitlement - currentYearConsumed + carryoverDays));
     rowsWithManual.push({
       kenjo_employee_id: eid,
       name,
@@ -710,6 +989,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
       eintrittsdatum: u?.startDate || null,
       austrittsdatum: u?.contractEnd || null,
       vorschuss: Math.round(manual.vorschuss * 100) / 100,
+      carryover_days: carryoverDays,
+      rest_urlaub: restUrlaub,
       is_manual: true,
       manual_entry: {
         working_days: manual.working_days,

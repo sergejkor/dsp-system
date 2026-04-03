@@ -626,6 +626,8 @@ export default function PayrollPage() {
           eintrittsdatum: null,
           austrittsdatum: null,
           vorschuss,
+          carryover_days: 0,
+          rest_urlaub: 0,
           krank_days: 0,
           urlaub_days: 0,
         });
@@ -769,6 +771,8 @@ export default function PayrollPage() {
           eintrittsdatum: null,
           austrittsdatum: null,
           vorschuss,
+          carryover_days: 0,
+          rest_urlaub: 0,
           krank_days: 0,
           urlaub_days: 0,
         };
@@ -918,6 +922,8 @@ export default function PayrollPage() {
     { key: 'working_days', label: t('payroll.columns.working_days') },
     { key: 'krank_days', label: t('payroll.columns.krank_days') },
     { key: 'urlaub_days', label: t('payroll.columns.urlaub_days') },
+    { key: 'carryover_days', label: 'Carryover days' },
+    { key: 'rest_urlaub', label: 'Rest Urlaub' },
     { key: 'total_bonus', label: t('payroll.columns.total_bonus') },
     { key: 'abzug', label: t('payroll.columns.abzug') },
     { key: 'verpfl_mehr', label: t('payroll.columns.verpfl_mehr') },
@@ -1463,7 +1469,7 @@ export default function PayrollPage() {
                   <th
                     key={col.key}
                     style={{
-                      textAlign: ['pn', 'working_days', 'krank_days', 'urlaub_days'].includes(col.key) ? 'right' : 'left',
+                      textAlign: ['pn', 'working_days', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub'].includes(col.key) ? 'right' : 'left',
                       padding: '0.4rem 0.5rem',
                       whiteSpace: 'nowrap',
                       cursor: 'pointer',
@@ -1591,7 +1597,7 @@ export default function PayrollPage() {
                       ? (row[col.key] ?? 0)
                       : row[col.key];
                     const isCurrency = ['total_bonus', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
-                    const isNumericCol = ['pn', 'working_days', 'krank_days', 'urlaub_days', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
+                    const isNumericCol = ['pn', 'working_days', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
                     const display =
                       col.key === 'eintrittsdatum' || col.key === 'austrittsdatum'
                         ? formatDateDDMMYYYY(val)
@@ -1599,6 +1605,8 @@ export default function PayrollPage() {
                           ? formatCurrency(val)
                           : (col.key === 'krank_days' || col.key === 'urlaub_days')
                             ? Number(val)
+                            : (col.key === 'carryover_days' || col.key === 'rest_urlaub')
+                              ? Number.isFinite(Number(val)) ? Number(val).toFixed(2) : '0.00'
                             : typeof val === 'number' ? (Number.isInteger(val) ? val : val.toFixed(2)) : val ?? '—';
                     let cellStyle = { padding: '0.4rem 0.5rem', textAlign: isNumericCol ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
                     let content = display;
@@ -2122,6 +2130,8 @@ export default function PayrollPage() {
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.working_days ?? '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.krank_days ?? 0}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.urlaub_days ?? 0}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{Number(row.carryover_days ?? 0).toFixed(2)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{Number(row.rest_urlaub ?? 0).toFixed(2)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.total_bonus)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.abzug)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.verpfl_mehr)}</td>

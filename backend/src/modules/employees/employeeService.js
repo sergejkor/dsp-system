@@ -4,6 +4,7 @@ import settingsService from '../settings/settingsService.js';
 let docsTableReady = false;
 let contractExtensionsTableReady = false;
 let rescueTableReady = false;
+let employeeVacationColumnsReady = false;
 
 function looksLikeKenjoId(value) {
   return /^[a-f0-9]{24}$/i.test(String(value || '').trim());
@@ -70,7 +71,15 @@ export async function ensureEmployeeRescuesTable() {
   rescueTableReady = true;
 }
 
+async function ensureEmployeeVacationColumns() {
+  if (employeeVacationColumnsReady) return;
+  await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_days_override NUMERIC(10,2)`);
+  await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_days_override_year INTEGER`);
+  employeeVacationColumnsReady = true;
+}
+
 async function listEmployees({ search, onlyActive } = {}) {
+  await ensureEmployeeVacationColumns();
   const params = [];
   const where = [];
 
@@ -101,6 +110,8 @@ async function listEmployees({ search, onlyActive } = {}) {
       contract_end,
       transporter_id,
       kenjo_user_id,
+      vacation_days_override,
+      vacation_days_override_year,
       is_active
     FROM employees
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
@@ -113,6 +124,7 @@ async function listEmployees({ search, onlyActive } = {}) {
 }
 
 async function getEmployeeById(employeeId) {
+  await ensureEmployeeVacationColumns();
   const res = await query(
     `SELECT
       id,
@@ -127,11 +139,61 @@ async function getEmployeeById(employeeId) {
       contract_end,
       transporter_id,
       kenjo_user_id,
+      vacation_days_override,
+      vacation_days_override_year,
       is_active
      FROM employees
-     WHERE employee_id = $1 OR id::text = $1
+     WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
      LIMIT 1`,
     [String(employeeId)]
+  );
+  return res.rows[0] || null;
+}
+
+async function updateEmployeeLocalSettings(employeeId, payload = {}) {
+  await ensureEmployeeVacationColumns();
+  const id = String(employeeId || '').trim();
+  if (!id) throw new Error('employee_id is required');
+
+  if (!Object.prototype.hasOwnProperty.call(payload || {}, 'vacationDaysOverride')) {
+    throw new Error('No supported local settings provided');
+  }
+
+  let vacationDaysOverride = null;
+  let vacationDaysOverrideYear = null;
+  const rawOverride = payload?.vacationDaysOverride;
+  if (rawOverride !== '' && rawOverride != null) {
+    const parsed = Number(rawOverride);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error('Vacation days override must be a non-negative number');
+    }
+    vacationDaysOverride = Math.round(parsed * 100) / 100;
+    vacationDaysOverrideYear = Number(new Date().getFullYear());
+  }
+
+  const res = await query(
+    `UPDATE employees
+     SET vacation_days_override = $2,
+         vacation_days_override_year = $3,
+         updated_at = NOW()
+     WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
+     RETURNING
+       id,
+       employee_id,
+       pn,
+       first_name,
+       last_name,
+       display_name,
+       email,
+       phone,
+       start_date,
+       contract_end,
+       transporter_id,
+       kenjo_user_id,
+       vacation_days_override,
+       vacation_days_override_year,
+       is_active`,
+    [id, vacationDaysOverride, vacationDaysOverrideYear]
   );
   return res.rows[0] || null;
 }
@@ -464,6 +526,7 @@ async function deleteImportedSourceDocuments(employeeRef, docId) {
 const employeeService = {
   listEmployees,
   getEmployeeById,
+  updateEmployeeLocalSettings,
   listEmployeeDocuments,
   listEmployeeRescues,
   listEmployeeContractExtensions,

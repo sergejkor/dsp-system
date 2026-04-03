@@ -41,6 +41,29 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+router.put('/:id/local-settings', async (req, res) => {
+  try {
+    const row = await employeeService.updateEmployeeLocalSettings(req.params.id, {
+      vacationDaysOverride: req.body?.vacationDaysOverride,
+    });
+    if (!row) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+    res.json(row);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_id is required' ||
+      message === 'No supported local settings provided' ||
+      message === 'Vacation days override must be a non-negative number'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('PUT /api/employees/:id/local-settings error', error);
+    res.status(500).json({ error: 'Failed to update employee local settings' });
+  }
+});
+
 router.get('/:id/contract-extensions', async (req, res) => {
   try {
     const rows = await employeeService.listEmployeeContractExtensions(req.params.id);

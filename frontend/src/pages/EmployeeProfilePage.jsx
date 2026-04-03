@@ -8,6 +8,7 @@ import {
   getEmployeeDocuments,
   addEmployeeContractExtension,
   addEmployeeRescue,
+  updateEmployeeLocalSettings,
   uploadEmployeeDocument,
   viewEmployeeDocument,
   downloadEmployeeDocument,
@@ -142,6 +143,9 @@ export default function EmployeeProfilePage() {
   const [showRescueModal, setShowRescueModal] = useState(false);
   const [rescueDate, setRescueDate] = useState('');
   const [rescueSaving, setRescueSaving] = useState(false);
+  const [vacationDaysOverrideDraft, setVacationDaysOverrideDraft] = useState('');
+  const [vacationDaysOverrideSaving, setVacationDaysOverrideSaving] = useState(false);
+  const [vacationDaysOverrideError, setVacationDaysOverrideError] = useState('');
   const contractFileInputRef = useRef(null);
 
   useEffect(() => {
@@ -154,9 +158,13 @@ export default function EmployeeProfilePage() {
           const data = await getKenjoEmployeeProfile(kenjoEmployeeId);
           setEmployee(data);
         }
-        if (localEmployeeId) {
-          const loc = await getEmployee(localEmployeeId);
-          setLocalEmployee(loc);
+        if (localEmployeeId || kenjoEmployeeId) {
+          try {
+            const loc = await getEmployee(localEmployeeId || kenjoEmployeeId);
+            setLocalEmployee(loc);
+          } catch (_) {
+            setLocalEmployee(null);
+          }
         }
       } catch (e) {
         setError(String(e?.message || e));
@@ -189,6 +197,11 @@ export default function EmployeeProfilePage() {
       setIsEditing(false);
     }
   }, [employee]);
+
+  useEffect(() => {
+    const value = localEmployee?.vacation_days_override;
+    setVacationDaysOverrideDraft(value == null || value === '' ? '' : String(value));
+  }, [localEmployee?.vacation_days_override]);
 
   useEffect(() => {
     const availableTypes = normalizeEmployeeDocumentTypeSettings(employeeDocumentTypeSettings).map((item) => item.type);
@@ -289,6 +302,32 @@ export default function EmployeeProfilePage() {
     }
   };
 
+  const saveVacationDaysOverride = async () => {
+    const employeeRef = String(localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || '').trim();
+    if (!employeeRef) {
+      setVacationDaysOverrideError('Employee reference is missing.');
+      return;
+    }
+    setVacationDaysOverrideSaving(true);
+    setVacationDaysOverrideError('');
+    try {
+      const payloadValue = String(vacationDaysOverrideDraft || '').trim();
+      const updated = await updateEmployeeLocalSettings(employeeRef, {
+        vacationDaysOverride: payloadValue === '' ? null : payloadValue,
+      });
+      setLocalEmployee(updated);
+      setVacationDaysOverrideDraft(
+        updated?.vacation_days_override == null || updated?.vacation_days_override === ''
+          ? ''
+          : String(updated.vacation_days_override)
+      );
+    } catch (e) {
+      setVacationDaysOverrideError(String(e?.message || e));
+    } finally {
+      setVacationDaysOverrideSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!kenjoEmployeeId) return;
     getPaveSessions({ driver_id: kenjoEmployeeId }).then(setPaveSessions).catch(() => setPaveSessions([]));
@@ -366,6 +405,16 @@ export default function EmployeeProfilePage() {
     employeeDocsFilterType && employeeDocsFilterType.trim()
       ? employeeDocs.filter((d) => String(d?.document_type || '') === employeeDocsFilterType)
       : employeeDocs;
+  const visibleRescues = (() => {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const previousMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const previousMonth = `${previousMonthDate.getFullYear()}-${String(previousMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    return (rescues || []).filter((row) => {
+      const rescueMonth = String(row?.rescue_date || '').slice(0, 7);
+      return rescueMonth === currentMonth || rescueMonth === previousMonth;
+    });
+  })();
 
   if (!kenjoEmployeeId && !localEmployeeId) {
     return (
@@ -418,6 +467,7 @@ export default function EmployeeProfilePage() {
 
   const fullName =
     displayName || personal?.displayName || [firstName, lastName].filter(Boolean).join(' ');
+  const currentVacationYear = new Date().getFullYear();
   const employeeDocTypeConfigs = normalizeEmployeeDocumentTypeSettings(employeeDocumentTypeSettings);
   const employeeDocTypeOptions = employeeDocTypeConfigs.map((item) => item.type);
   const selectedEmployeeDocTypeConfig =
@@ -764,6 +814,11 @@ export default function EmployeeProfilePage() {
               {kenjoEmployeeId && (
                 <button type="button" className="btn-secondary" onClick={openDaPerformance}>
                   DA Performance
+                </button>
+              )}
+              {kenjoEmployeeId && (
+                <button type="button" className="btn-secondary" onClick={openRescueModal} disabled={rescueSaving}>
+                  Add Rescue
                 </button>
               )}
               {kenjoEmployeeId && (
@@ -1484,19 +1539,41 @@ export default function EmployeeProfilePage() {
           </div>
           <div style={{ marginBottom: '1rem' }}>
             <p style={{ margin: '0 0 0.35rem' }}>
-              <strong>Rescue</strong>
+              <strong>Urlaub total override ({currentVacationYear})</strong>
             </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 180px) auto', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={vacationDaysOverrideDraft}
+                onChange={(e) => setVacationDaysOverrideDraft(e.target.value)}
+                placeholder="Auto"
+                style={{ padding: '0.5rem' }}
+              />
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={openRescueModal}
-                disabled={rescueSaving}
+                onClick={saveVacationDaysOverride}
+                disabled={vacationDaysOverrideSaving}
               >
-                Add Rescue
+                {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
               </button>
+            </div>
+            <p style={{ margin: '0.45rem 0 0', color: '#666', fontSize: '0.9rem' }}>
+              Leave empty to calculate automatically from start date, contract end, and saved extensions.
+            </p>
+            {vacationDaysOverrideError ? (
+              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationDaysOverrideError}</p>
+            ) : null}
+          </div>
+          <div style={{ marginBottom: '1rem' }}>
+            <p style={{ margin: '0 0 0.35rem' }}>
+              <strong>Rescue</strong>
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               <span style={{ color: '#666', fontSize: '0.9rem' }}>
-                {rescues.length} saved
+                {visibleRescues.length} shown
               </span>
             </div>
             {rescuesLoading ? (
@@ -1505,9 +1582,9 @@ export default function EmployeeProfilePage() {
             {rescueError ? (
               <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{rescueError}</p>
             ) : null}
-            {!rescuesLoading && rescues.length > 0 ? (
+            {!rescuesLoading && visibleRescues.length > 0 ? (
               <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.45rem' }}>
-                {rescues.map((row) => (
+                {visibleRescues.map((row) => (
                   <div
                     key={row.id}
                     style={{
@@ -1533,6 +1610,8 @@ export default function EmployeeProfilePage() {
                   </div>
                 ))}
               </div>
+            ) : !rescuesLoading ? (
+              <p style={{ margin: '0.35rem 0 0', color: '#666' }}>No rescues in current or last month.</p>
             ) : null}
           </div>
           {renderText(
