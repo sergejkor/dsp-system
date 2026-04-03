@@ -566,14 +566,16 @@ export default function CarPlanningPage() {
   const buildPayload = () => {
     const slotList = [];
     cars.forEach((car) => {
-      if (isCarUnavailableForPlanning(car, newDayDate)) return;
-      const key = `${car.id}_${newDayDate}`;
-      const s = slots[key];
-      slotList.push({
-        car_id: car.id,
-        plan_date: newDayDate,
-        driver_identifier: (s?.driver_identifier || '').toString().trim(),
-        abfahrtskontrolle: !!s?.abfahrtskontrolle,
+      allPlanningDates.forEach((date) => {
+        if (isCarUnavailableForPlanning(car, date)) return;
+        const key = `${car.id}_${date}`;
+        const s = slots[key];
+        slotList.push({
+          car_id: car.id,
+          plan_date: date,
+          driver_identifier: (s?.driver_identifier || '').toString().trim(),
+          abfahrtskontrolle: !!s?.abfahrtskontrolle,
+        });
       });
     });
     return { carStates, slots: slotList };
