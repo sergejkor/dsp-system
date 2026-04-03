@@ -658,6 +658,124 @@ export async function getDomainData(domain, params = {}) {
     });
   }
 
+  if (domain === 'drivers' && params.question !== '__legacy__') {
+    const [res, endingSoonRes, noRoutesRes, recentStartersRes] = await Promise.all([
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.email, k.transporter_id, k.start_date::date AS start_date,
+          k.contract_end::date AS contract_end, k.is_active,
+          (SELECT COUNT(*) FROM daily_upload_rows d WHERE d.transporter_id = k.transporter_id AND d.day_key >= $1 AND d.day_key <= $2) AS routes_completed
+         FROM kenjo_employees k
+         WHERE k.transporter_id IS NOT NULL AND k.transporter_id != ''
+         ORDER BY k.last_name, k.first_name
+         LIMIT $3`,
+        [start, end, limit]
+      ),
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.contract_end::date AS contract_end, k.is_active
+         FROM kenjo_employees k
+         WHERE k.contract_end::date IS NOT NULL
+           AND k.contract_end::date >= CURRENT_DATE
+           AND k.contract_end::date <= CURRENT_DATE + INTERVAL '60 days'
+         ORDER BY k.contract_end::date ASC, k.last_name, k.first_name
+         LIMIT 12`
+      ),
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.transporter_id, k.start_date::date AS start_date, k.is_active
+         FROM kenjo_employees k
+         WHERE k.transporter_id IS NOT NULL AND k.transporter_id != ''
+           AND NOT EXISTS (
+             SELECT 1
+             FROM daily_upload_rows d
+             WHERE d.transporter_id = k.transporter_id
+               AND d.day_key >= $1
+               AND d.day_key <= $2
+           )
+         ORDER BY k.last_name, k.first_name
+         LIMIT 12`,
+        [start, end]
+      ),
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.start_date::date AS start_date, k.contract_end::date AS contract_end
+         FROM kenjo_employees k
+         WHERE k.start_date::date IS NOT NULL
+           AND k.start_date::date >= CURRENT_DATE - INTERVAL '45 days'
+         ORDER BY k.start_date::date DESC, k.last_name, k.first_name
+         LIMIT 12`
+      ),
+    ]);
+    const rows = (res.rows || []).map((r) => ({
+      pn: formatPersonalNumber(r.employee_number) ?? '—',
+      name: [r.first_name, r.last_name].filter(Boolean).join(' ') || '—',
+      email: r.email || '—',
+      transporter_id: r.transporter_id || '—',
+      start_date: r.start_date,
+      contract_end: r.contract_end,
+      is_active: r.is_active,
+      routes_completed: Number(r.routes_completed) || 0,
+    }));
+    const activeCount = rows.filter((row) => row.is_active).length;
+    const inactiveCount = rows.length - activeCount;
+    const avgRoutes = rows.length ? roundTo(rows.reduce((sum, row) => sum + toNumber(row.routes_completed), 0) / rows.length, 1) : 0;
+    const topRoutesRows = [...rows].sort((a, b) => toNumber(b.routes_completed) - toNumber(a.routes_completed)).slice(0, 10);
+    return {
+      table: rows,
+      summary: { total: rows.length },
+      charts: {
+        activeMix: [
+          { label: 'Active', value: activeCount },
+          { label: 'Inactive', value: inactiveCount },
+        ],
+        topRoutesByDriver: topRoutesRows.map((row) => ({
+          label: row.name,
+          value: toNumber(row.routes_completed),
+        })),
+      },
+      insightTables: [
+        { title: 'Top drivers by routes', rows: topRoutesRows },
+        {
+          title: 'Contracts ending in next 60 days',
+          rows: (endingSoonRes.rows || []).map((row) => ({
+            pn: formatPersonalNumber(row.employee_number) ?? '—',
+            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
+            contract_end: row.contract_end,
+            is_active: row.is_active,
+          })),
+        },
+        {
+          title: 'Drivers with zero routes in selected period',
+          rows: (noRoutesRes.rows || []).map((row) => ({
+            pn: formatPersonalNumber(row.employee_number) ?? '—',
+            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
+            transporter_id: row.transporter_id || '—',
+            start_date: row.start_date,
+            is_active: row.is_active,
+          })),
+        },
+        {
+          title: 'Recent starters',
+          rows: (recentStartersRes.rows || []).map((row) => ({
+            pn: formatPersonalNumber(row.employee_number) ?? '—',
+            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
+            start_date: row.start_date,
+            contract_end: row.contract_end,
+          })),
+        },
+      ],
+      kpis: [
+        { key: 'drivers_total', label: 'Drivers in analytics set', value: rows.length, format: 'number' },
+        { key: 'drivers_active', label: 'Active drivers', value: activeCount, format: 'number' },
+        { key: 'drivers_inactive', label: 'Inactive drivers', value: inactiveCount, format: 'number' },
+        { key: 'drivers_avg_routes', label: 'Average routes per driver', value: avgRoutes, format: 'number' },
+        { key: 'drivers_contracts_ending_soon', label: 'Contracts ending soon', value: endingSoonRes.rows?.length || 0, format: 'number' },
+        { key: 'drivers_zero_routes', label: 'Drivers with zero routes', value: noRoutesRes.rows?.length || 0, format: 'number' },
+      ],
+    };
+  }
+
   if (domain === 'drivers') {
     const res = await query(
       `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
@@ -899,6 +1017,70 @@ export async function getDomainData(domain, params = {}) {
     };
   }
 
+  if (domain === 'fleet' && params.question !== '__legacy__') {
+    const [res, totalsRes, withoutDriverRes, workshopRes] = await Promise.all([
+      query(`SELECT status, COUNT(*)::int AS count FROM cars GROUP BY status`),
+      query(`
+        SELECT
+          COUNT(*)::int AS total_vehicles,
+          COUNT(*) FILTER (WHERE assigned_driver_id IS NULL OR assigned_driver_id = '')::int AS without_driver,
+          COUNT(*) FILTER (WHERE status = $1)::int AS active_vehicles,
+          COUNT(*) FILTER (WHERE status = $2)::int AS maintenance_vehicles
+        FROM cars
+      `, [CAR_STATUS_ACTIVE, CAR_STATUS_MAINTENANCE]),
+      query(
+        `SELECT vehicle_id, license_plate, status, assigned_driver_id
+         FROM cars
+         WHERE assigned_driver_id IS NULL OR assigned_driver_id = ''
+         ORDER BY status, vehicle_id
+         LIMIT 20`
+      ),
+      query(
+        `SELECT vehicle_id, license_plate, planned_workshop_from::date AS planned_workshop_from,
+                planned_workshop_to::date AS planned_workshop_to, planned_workshop_name, status
+         FROM cars
+         WHERE planned_workshop_from IS NOT NULL
+           AND planned_workshop_from <= CURRENT_DATE + INTERVAL '45 days'
+           AND COALESCE(planned_workshop_to::date, planned_workshop_from::date) >= CURRENT_DATE
+         ORDER BY planned_workshop_from ASC, vehicle_id
+         LIMIT 20`
+      ),
+    ]);
+    const totalsRow = totalsRes.rows[0] || {};
+    const totalVehicles = toNumber(totalsRow.total_vehicles);
+    const withoutDriver = toNumber(totalsRow.without_driver);
+    const assignmentCoverage = totalVehicles > 0 ? roundTo(((totalVehicles - withoutDriver) / totalVehicles) * 100, 1) : 0;
+    return {
+      table: res.rows || [],
+      summary: res.rows?.reduce((a, r) => ({ ...a, [r.status]: r.count }), {}) || {},
+      charts: {
+        statusDistribution: (res.rows || []).map((row) => ({ label: row.status || 'Unknown', value: toNumber(row.count) })),
+        assignmentCoverage: [
+          { label: 'Assigned', value: Math.max(0, totalVehicles - withoutDriver) },
+          { label: 'Without driver', value: withoutDriver },
+        ],
+        workshopTimeline: (workshopRes.rows || []).map((row) => ({
+          label: row.license_plate || row.vehicle_id || '—',
+          value: 1,
+          planned_workshop_from: row.planned_workshop_from,
+          planned_workshop_to: row.planned_workshop_to,
+        })),
+      },
+      insightTables: [
+        { title: 'Vehicles without driver assignment', rows: withoutDriverRes.rows || [] },
+        { title: 'Upcoming workshops', rows: workshopRes.rows || [] },
+      ],
+      kpis: [
+        { key: 'fleet_total_vehicles', label: 'Total fleet vehicles', value: totalVehicles, format: 'number' },
+        { key: 'fleet_active_vehicles', label: 'Active vehicles', value: toNumber(totalsRow.active_vehicles), format: 'number' },
+        { key: 'fleet_maintenance_vehicles', label: 'Vehicles in maintenance', value: toNumber(totalsRow.maintenance_vehicles), format: 'number' },
+        { key: 'fleet_assignment_coverage', label: 'Assignment coverage', value: assignmentCoverage, format: 'percent' },
+        { key: 'fleet_without_driver', label: 'Vehicles without driver', value: withoutDriver, format: 'number' },
+        { key: 'fleet_upcoming_workshops', label: 'Upcoming workshops', value: workshopRes.rows?.length || 0, format: 'number' },
+      ],
+    };
+  }
+
   if (domain === 'fleet') {
     const [res, totalsRes] = await Promise.all([
       query(`SELECT status, COUNT(*)::int AS count FROM cars GROUP BY status`),
@@ -1033,6 +1215,62 @@ export async function getDomainData(domain, params = {}) {
         { key: 'safety_total_inspections', label: 'PAVE inspections in range', value: totalInspections, format: 'number' },
         { key: 'safety_avg_per_day', label: 'Average inspections per day', value: dailyRows.length ? roundTo(totalInspections / dailyRows.length, 1) : 0, format: 'number' },
         { key: 'safety_status_count', label: 'Distinct inspection statuses', value: statusRows.length, format: 'number' },
+      ],
+    };
+  }
+
+  if (domain === 'compliance' && params.question !== '__legacy__') {
+    const [res, typeRes, urgentRes] = await Promise.all([
+      query(`
+        SELECT document_type, expiry_date, COUNT(*)::int AS cnt FROM car_documents
+        WHERE expiry_date IS NOT NULL AND expiry_date <= CURRENT_DATE + INTERVAL '90 days'
+        GROUP BY document_type, expiry_date ORDER BY expiry_date
+      `),
+      query(`
+        SELECT document_type, COUNT(*)::int AS cnt
+        FROM car_documents
+        WHERE expiry_date IS NOT NULL
+          AND expiry_date <= CURRENT_DATE + INTERVAL '90 days'
+          AND expiry_date >= CURRENT_DATE
+        GROUP BY document_type
+        ORDER BY cnt DESC, document_type
+      `),
+      query(`
+        SELECT car_id, document_type, expiry_date
+        FROM car_documents
+        WHERE expiry_date IS NOT NULL
+          AND expiry_date <= CURRENT_DATE + INTERVAL '30 days'
+          AND expiry_date >= CURRENT_DATE
+        ORDER BY expiry_date ASC, document_type
+        LIMIT 25
+      `),
+    ]);
+    const rows = (res.rows || []).map((row) => ({
+      document_type: row.document_type,
+      expiry_date: row.expiry_date,
+      cnt: toNumber(row.cnt),
+    }));
+    const totalExpiring = rows.reduce((sum, row) => sum + row.cnt, 0);
+    return {
+      table: rows,
+      charts: {
+        expiringByType: (typeRes.rows || []).map((row) => ({
+          label: row.document_type || 'Unknown',
+          value: toNumber(row.cnt),
+        })),
+        expiriesTimeline: rows.map((row) => ({
+          date: row.expiry_date,
+          count: row.cnt,
+          document_type: row.document_type,
+        })),
+      },
+      insightTables: [
+        { title: 'Urgent renewals in next 30 days', rows: urgentRes.rows || [] },
+      ],
+      kpis: [
+        { key: 'compliance_expiring_docs', label: 'Expiring documents in next 90 days', value: totalExpiring, format: 'number' },
+        { key: 'compliance_document_types', label: 'Document types affected', value: new Set(rows.map((row) => row.document_type)).size, format: 'number' },
+        { key: 'compliance_urgent_30d', label: 'Urgent renewals in 30 days', value: urgentRes.rows?.length || 0, format: 'number' },
       ],
     };
   }

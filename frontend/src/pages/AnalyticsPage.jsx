@@ -258,6 +258,12 @@ function renderAnalyticsTooltipLabel(label) {
   return formatAnalyticsDate(label);
 }
 
+function formatAnalyticsPeriod(start, end) {
+  if (!start && !end) return 'No period selected';
+  if (start && end && start !== end) return `${formatAnalyticsDate(start)} - ${formatAnalyticsDate(end)}`;
+  return formatAnalyticsDate(start || end);
+}
+
 export default function AnalyticsPage() {
   const { t } = useAppSettings();
   const [activeTab, setActiveTab] = useState('overview');
@@ -432,17 +438,41 @@ export default function AnalyticsPage() {
     () => buildForecastLineData(domainData?.charts?.inspectionsByDay || [], { labelKey: 'date', valueKey: 'inspections', step: 'day', count: 7, decimals: 0 }),
     [domainData?.charts?.inspectionsByDay],
   );
+  const pagePeriodLabel = formatAnalyticsPeriod(overview?.period?.start || startDate, overview?.period?.end || endDate);
+  const comparisonPeriodLabel = overview?.comparison ? formatAnalyticsPeriod(overview.comparison.start, overview.comparison.end) : '';
+  const overviewPrimaryKpis = (overview?.kpis || []).slice(0, 4);
+  const overviewSecondaryKpis = (overview?.kpis || []).slice(4);
+  const visibleSavedViews = savedViews.slice(0, 4);
 
   return (
     <section className="analytics-page">
-      <header className="analytics-header">
-        <h1>{t('analytics.title')}</h1>
-        <p className="muted" style={{ margin: '0.25rem 0 0' }}>
-          operational and business insights
-        </p>
+      <header className="analytics-header analytics-hero">
+        <div className="analytics-hero-copy">
+          <div className="analytics-eyebrow">Management intelligence</div>
+          <h1>{t('analytics.title')}</h1>
+          <p className="muted analytics-hero-subtitle">
+            Live operational, HR, payroll, fleet and compliance analytics from DSP data and Kenjo.
+          </p>
+          <div className="analytics-hero-meta">
+            <span className="analytics-pill">Period: {pagePeriodLabel}</span>
+            {compareMode !== 'none' && comparisonPeriodLabel ? (
+              <span className="analytics-pill analytics-pill--soft">Compare: {comparisonPeriodLabel}</span>
+            ) : null}
+            <span className="analytics-pill analytics-pill--soft">Saved views: {savedViews.length}</span>
+          </div>
+        </div>
+        <div className="analytics-hero-aside">
+          <div className="analytics-highlight-card">
+            <div className="analytics-highlight-label">Current section</div>
+            <div className="analytics-highlight-value">{t(`analytics.${activeTab}`)}</div>
+            <div className="analytics-highlight-caption">
+              {activeTab === 'overview' ? 'Executive summary across all domains' : 'Deep-dive analytics for the selected domain'}
+            </div>
+          </div>
+        </div>
       </header>
 
-      <div className="analytics-controls">
+      <div className="analytics-controls analytics-panel">
         <div className="analytics-controls-row">
           <label className="analytics-label">
             {t('analytics.dateRange')}
@@ -510,7 +540,33 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <div className="analytics-tabs">
+      {visibleSavedViews.length > 0 && (
+        <div className="analytics-saved-strip">
+          <span className="analytics-saved-strip-label">Recent saved views</span>
+          <div className="analytics-saved-strip-items">
+            {visibleSavedViews.map((view) => (
+              <button
+                key={view.id}
+                type="button"
+                className="analytics-saved-chip"
+                onClick={() => {
+                  setActiveTab(view.page_key || 'overview');
+                  const filters = view.filters_json || {};
+                  setDatePreset(filters.datePreset || 'this_month');
+                  setStartDate(filters.startDate || '');
+                  setEndDate(filters.endDate || '');
+                  setCompareMode(filters.compareMode || 'none');
+                  setInsuranceYear(Number(filters.insuranceYear || 2026));
+                }}
+              >
+                {view.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="analytics-tabs analytics-panel">
         {TAB_KEYS.map((tab) => (
           <button
             key={tab}
@@ -554,13 +610,36 @@ export default function AnalyticsPage() {
 
       {activeTab === 'overview' && !loading && overview && (
         <div className="analytics-overview">
-          <div className="analytics-kpi-grid">
-            {(overview.kpis || []).map((kpi) => (
-              <div key={kpi.key} className="analytics-kpi-card">
+          <div className="analytics-spotlight-grid">
+            {overviewPrimaryKpis.map((kpi) => (
+              <div key={kpi.key} className="analytics-kpi-card analytics-kpi-card--hero">
                 <div className="analytics-kpi-label">{labelForKpi(kpi)}</div>
                 <div className="analytics-kpi-value">{formatKpiValue(kpi.value, kpi.format)}</div>
               </div>
             ))}
+          </div>
+          {overviewSecondaryKpis.length > 0 && (
+            <div className="analytics-kpi-grid">
+              {overviewSecondaryKpis.map((kpi) => (
+                <div key={kpi.key} className="analytics-kpi-card">
+                  <div className="analytics-kpi-label">{labelForKpi(kpi)}</div>
+                  <div className="analytics-kpi-value">{formatKpiValue(kpi.value, kpi.format)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="analytics-overview-summary analytics-panel">
+            <div>
+              <div className="analytics-section-title">Executive summary</div>
+              <div className="analytics-section-subtitle">
+                This panel blends daily route volume, payroll movement, performance scorecards, fleet status and HR movement into one view.
+              </div>
+            </div>
+            <div className="analytics-overview-summary-meta">
+              <span>{overview?.companyScorecardRecent?.length || 0} recent scorecard weeks</span>
+              <span>{overview?.charts?.routesDriversByDay?.length || 0} route days in scope</span>
+              <span>{overview?.charts?.payrollByMonth?.length || 0} payroll months in trend</span>
+            </div>
           </div>
           <div className="analytics-charts">
             {overview.companyScorecardRecent?.length > 0 && (
@@ -747,6 +826,20 @@ export default function AnalyticsPage() {
 
       {activeTab !== 'overview' && activeTab !== 'custom' && !loading && domainData && (
         <div className="analytics-domain">
+          <div className="analytics-domain-hero analytics-panel">
+            <div>
+              <div className="analytics-section-title">{t(`analytics.${activeTab}`)}</div>
+              <div className="analytics-section-subtitle">
+                {selectedQuestion ? selectedQuestion.label : `Expanded analytics for ${t(`analytics.${activeTab}`)} across DSP data and Kenjo.`}
+              </div>
+            </div>
+            <div className="analytics-domain-hero-meta">
+              <span className="analytics-pill">Range: {pagePeriodLabel}</span>
+              {domainData?.kpis?.length ? <span className="analytics-pill analytics-pill--soft">KPIs: {domainData.kpis.length}</span> : null}
+              {domainData?.insightTables?.length ? <span className="analytics-pill analytics-pill--soft">Insight tables: {domainData.insightTables.length}</span> : null}
+            </div>
+          </div>
+
           {domainData.kpis && domainData.kpis.length > 0 && (
             <div className="analytics-kpi-grid">
               {domainData.kpis.map((kpi) => (
@@ -873,6 +966,40 @@ export default function AnalyticsPage() {
                   </ResponsiveContainer>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'drivers' && (domainData.charts?.activeMix?.length > 0 || domainData.charts?.topRoutesByDriver?.length > 0) && (
+            <div className="analytics-charts" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))' }}>
+              {domainData.charts?.activeMix?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Driver active mix</h3>
+                  <div className="analytics-donut-list">
+                    {domainData.charts.activeMix.map((row) => (
+                      <div key={row.label} className="analytics-donut-item">
+                        <span className="analytics-donut-label">{row.label}</span>
+                        <span className="analytics-donut-value">{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {domainData.charts?.topRoutesByDriver?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Top drivers by routes</h3>
+                  <div style={{ width: '100%', height: 300 }}>
+                    <ResponsiveContainer>
+                      <BarChart data={domainData.charts.topRoutesByDriver} layout="vertical" margin={{ left: 24, right: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis type="number" />
+                        <YAxis dataKey="label" type="category" width={130} />
+                        <Tooltip />
+                        <Bar dataKey="value" name="Routes" fill={ANALYTICS_COLORS.primary} radius={[0, 6, 6, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1022,6 +1149,22 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
               )}
+              {domainData.charts?.workshopTimeline?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Upcoming workshops</h3>
+                  <div className="analytics-donut-list">
+                    {domainData.charts.workshopTimeline.map((row) => (
+                      <div key={`${row.label}-${row.planned_workshop_from || ''}`} className="analytics-donut-item analytics-donut-item--stacked">
+                        <span className="analytics-donut-label">{row.label}</span>
+                        <span className="analytics-donut-value">
+                          {formatAnalyticsDate(row.planned_workshop_from)}
+                          {row.planned_workshop_to && row.planned_workshop_to !== row.planned_workshop_from ? ` - ${formatAnalyticsDate(row.planned_workshop_to)}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1119,6 +1262,43 @@ export default function AnalyticsPage() {
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'compliance' && (domainData.charts?.expiringByType?.length > 0 || domainData.charts?.expiriesTimeline?.length > 0) && (
+            <div className="analytics-charts" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))' }}>
+              {domainData.charts?.expiringByType?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Expiring documents by type</h3>
+                  <div style={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <BarChart data={domainData.charts.expiringByType}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="label" interval={0} angle={-18} textAnchor="end" height={60} />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="value" name="Documents" fill={ANALYTICS_COLORS.accent} radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+              {domainData.charts?.expiriesTimeline?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Expiry timeline</h3>
+                  <div style={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <LineChart data={domainData.charts.expiriesTimeline}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tickFormatter={(value) => formatAnalyticsDate(value).slice(0, 5)} />
+                        <YAxis />
+                        <Tooltip labelFormatter={renderAnalyticsTooltipLabel} />
+                        <Line type="monotone" dataKey="count" name="Expiring docs" stroke={ANALYTICS_COLORS.danger} strokeWidth={2} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
