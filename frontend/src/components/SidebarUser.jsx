@@ -1,8 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAppSettings } from '../context/AppSettingsContext';
-import * as authApi from '../services/authApi';
 
 function prettifyRole(value) {
   const raw = String(value || '').trim();
@@ -68,12 +67,22 @@ function MoonIcon() {
   );
 }
 
+function LogoutIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="sidebar-user-utility-icon">
+      <path
+        d="M10.75 3.75A2.75 2.75 0 0 0 8 6.5v2a.75.75 0 0 0 1.5 0v-2c0-.69.56-1.25 1.25-1.25h5.75c.69 0 1.25.56 1.25 1.25v11c0 .69-.56 1.25-1.25 1.25h-5.75c-.69 0-1.25-.56-1.25-1.25v-2a.75.75 0 0 0-1.5 0v2A2.75 2.75 0 0 0 10.75 20.25h5.75A2.75 2.75 0 0 0 19.25 17.5v-11a2.75 2.75 0 0 0-2.75-2.75h-5.75ZM4.22 11.47a.75.75 0 0 0 0 1.06l2.5 2.5a.75.75 0 1 0 1.06-1.06l-1.22-1.22H14a.75.75 0 0 0 0-1.5H6.56l1.22-1.22a.75.75 0 0 0-1.06-1.06l-2.5 2.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 export default function SidebarUser({ unreadNotificationTotal = 0 }) {
   const { user, logout } = useAuth();
   const { t, language, setLanguage, setTheme, isDark } = useAppSettings();
   const navigate = useNavigate();
   const location = useLocation();
-  const [showChangePwd, setShowChangePwd] = useState(false);
 
   if (!user) return null;
 
@@ -102,124 +111,74 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
     window.location.href = '/login';
   }
 
-  return (
-    <>
-      <div className="topbar-user-card-shell">
-        <div className="sidebar-user-card topbar-user-card">
-          <div className="topbar-user-main-row">
-            <div className="sidebar-user-card-head topbar-user-card-head">
-              <div className="sidebar-user-avatar" aria-hidden="true">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt={displayName} className="sidebar-user-avatar-image" />
-                ) : (
-                  initials
-                )}
-              </div>
-              <div className="sidebar-user-meta">
-                <div className="sidebar-user-name" title={displayName}>{displayName}</div>
-                <span className="sidebar-user-email" title={subtitle || user.email}>{subtitle || user.email}</span>
-              </div>
-            </div>
-            <div className="sidebar-user-utilities topbar-user-utilities">
-              <button
-                type="button"
-                className={`sidebar-user-utility-btn ${notificationsActive ? 'is-active' : ''}`}
-                onClick={() => navigate('/personal-fragebogen-notifications')}
-                title="Notifications"
-              >
-                <MailIcon />
-                {unreadNotificationTotal > 0 && (
-                  <span className="sidebar-user-utility-badge">
-                    {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                className={`sidebar-user-utility-btn ${settingsActive ? 'is-active' : ''}`}
-                onClick={() => navigate('/settings')}
-                title={t('nav.settings')}
-              >
-                <SettingsIcon />
-              </button>
-              <button
-                type="button"
-                className="sidebar-user-utility-btn"
-                onClick={() => setTheme(isDark ? 'light' : 'dark')}
-                title={`${t('appearance.theme')}: ${isDark ? t('appearance.dark') : t('appearance.light')}`}
-              >
-                {isDark ? <MoonIcon /> : <SunIcon />}
-              </button>
-            </div>
-          </div>
-          <div className="topbar-user-secondary-row">
-            <label className="sidebar-user-pref-field">
-              <span>{t('appearance.language')}</span>
-              <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-                <option value="en">{t('appearance.english')}</option>
-                <option value="de">{t('appearance.german')}</option>
-              </select>
-            </label>
-            <div className="sidebar-user-actions topbar-user-actions">
-              <button type="button" className="sidebar-user-btn" onClick={() => setShowChangePwd(true)}>{t('user.changePassword')}</button>
-              <button type="button" className="sidebar-user-btn" onClick={handleLogout}>{t('user.logout')}</button>
-            </div>
-          </div>
-        </div>
-      </div>
-      {showChangePwd && (
-        <ChangePasswordModal
-          onClose={() => setShowChangePwd(false)}
-          onSaved={() => setShowChangePwd(false)}
-        />
-      )}
-    </>
-  );
-}
-
-function ChangePasswordModal({ onClose, onSaved }) {
-  const { logout } = useAuth();
-  const [current, setCurrent] = useState('');
-  const [newPwd, setNewPwd] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError('');
-    if (newPwd !== confirm) { setError('New password and confirmation do not match'); return; }
-    if (newPwd.length < 8) { setError('New password must be at least 8 characters'); return; }
-    setSaving(true);
-    try {
-      await authApi.changePassword(current, newPwd);
-      onSaved();
-      await logout();
-      window.location.href = '/login';
-    } catch (e) {
-      setError(e.message || 'Failed to change password');
-    } finally {
-      setSaving(false);
-    }
+  function handleLanguageToggle() {
+    setLanguage(language === 'de' ? 'en' : 'de');
   }
 
   return (
-    <div className="settings-modal-backdrop" onClick={onClose}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="settings-modal-header">
-          <h4>Change password</h4>
-          <button type="button" className="settings-modal-close" onClick={onClose}>×</button>
-        </div>
-        <form onSubmit={handleSubmit} className="settings-modal-body">
-          {error && <p className="settings-msg settings-msg--err" style={{ marginBottom: '0.5rem' }}>{error}</p>}
-          <label>Current password <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required autoComplete="current-password" /></label>
-          <label>New password (min 8) <input type="password" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} minLength={8} required autoComplete="new-password" /></label>
-          <label>Confirm new password <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} minLength={8} required autoComplete="new-password" /></label>
-          <div className="settings-modal-footer">
-            <button type="button" onClick={onClose}>Cancel</button>
-            <button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Change password'}</button>
+    <div className="topbar-user-card-shell">
+      <div className="sidebar-user-card topbar-user-card topbar-user-card--compact">
+        <div className="sidebar-user-card-head topbar-user-card-head">
+          <div className="sidebar-user-avatar" aria-hidden="true">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt={displayName} className="sidebar-user-avatar-image" />
+            ) : (
+              initials
+            )}
           </div>
-        </form>
+          <div className="sidebar-user-meta">
+            <div className="sidebar-user-name" title={displayName}>{displayName}</div>
+            <span className="sidebar-user-email" title={subtitle || user.email}>{subtitle || user.email}</span>
+          </div>
+        </div>
+
+        <div className="sidebar-user-utilities topbar-user-utilities">
+          <button
+            type="button"
+            className="sidebar-user-language-btn"
+            onClick={handleLanguageToggle}
+            title={`${t('appearance.language')}: ${language === 'de' ? t('appearance.german') : t('appearance.english')}`}
+          >
+            {language === 'de' ? 'DE' : 'EN'}
+          </button>
+          <button
+            type="button"
+            className={`sidebar-user-utility-btn ${notificationsActive ? 'is-active' : ''}`}
+            onClick={() => navigate('/personal-fragebogen-notifications')}
+            title="Notifications"
+          >
+            <MailIcon />
+            {unreadNotificationTotal > 0 && (
+              <span className="sidebar-user-utility-badge">
+                {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            className={`sidebar-user-utility-btn ${settingsActive ? 'is-active' : ''}`}
+            onClick={() => navigate('/settings')}
+            title={t('nav.settings')}
+          >
+            <SettingsIcon />
+          </button>
+          <button
+            type="button"
+            className="sidebar-user-utility-btn"
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+            title={`${t('appearance.theme')}: ${isDark ? t('appearance.dark') : t('appearance.light')}`}
+          >
+            {isDark ? <MoonIcon /> : <SunIcon />}
+          </button>
+          <button
+            type="button"
+            className="sidebar-user-utility-btn"
+            onClick={handleLogout}
+            title={t('user.logout')}
+          >
+            <LogoutIcon />
+          </button>
+        </div>
       </div>
     </div>
   );
