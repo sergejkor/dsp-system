@@ -214,6 +214,11 @@ export async function getDashboardSummary() {
       SELECT c.license_plate
       FROM cars c
       WHERE (
+        LENGTH(REGEXP_REPLACE(UPPER(COALESCE(c.vin, '')), '[^A-Z0-9]', '', 'g')) >= 4
+        AND LENGTH(REGEXP_REPLACE(UPPER(COALESCE(pr.vin_display, pr.vin, '')), '[^A-Z0-9]', '', 'g')) >= 4
+        AND RIGHT(REGEXP_REPLACE(UPPER(COALESCE(c.vin, '')), '[^A-Z0-9]', '', 'g'), 4) =
+            RIGHT(REGEXP_REPLACE(UPPER(COALESCE(pr.vin_display, pr.vin, '')), '[^A-Z0-9]', '', 'g'), 4)
+      ) OR (
         pr.vehicle_id IS NOT NULL
         AND pr.vehicle_id <> ''
         AND c.vehicle_id = pr.vehicle_id
@@ -230,6 +235,10 @@ export async function getDashboardSummary() {
       )
       ORDER BY
         CASE
+          WHEN LENGTH(REGEXP_REPLACE(UPPER(COALESCE(c.vin, '')), '[^A-Z0-9]', '', 'g')) >= 4
+            AND LENGTH(REGEXP_REPLACE(UPPER(COALESCE(pr.vin_display, pr.vin, '')), '[^A-Z0-9]', '', 'g')) >= 4
+            AND RIGHT(REGEXP_REPLACE(UPPER(COALESCE(c.vin, '')), '[^A-Z0-9]', '', 'g'), 4) =
+                RIGHT(REGEXP_REPLACE(UPPER(COALESCE(pr.vin_display, pr.vin, '')), '[^A-Z0-9]', '', 'g'), 4) THEN 0
           WHEN pr.vehicle_id IS NOT NULL AND pr.vehicle_id <> '' AND c.vehicle_id = pr.vehicle_id THEN 0
           WHEN pr.plate_number IS NOT NULL AND pr.plate_number <> '' AND regexp_replace(upper(COALESCE(c.license_plate, '')), '[^A-Z0-9]', '', 'g')
             = regexp_replace(upper(pr.plate_number), '[^A-Z0-9]', '', 'g') THEN 1
