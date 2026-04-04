@@ -10,7 +10,7 @@ async function list(filters = {}) {
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   params.push(limit, offset);
   const res = await query(
-    `SELECT u.id, u.first_name, u.last_name, u.full_name, u.email, u.phone, u.role_id, u.status, u.department_id, u.station_id, u.last_login_at, u.is_locked, u.login_enabled, u.created_at, u.updated_at,
+    `SELECT u.id, u.first_name, u.last_name, u.full_name, u.email, u.phone, u.role_id, u.status, u.department_id, u.station_id, u.avatar_url, u.last_login_at, u.is_locked, u.login_enabled, u.created_at, u.updated_at,
             r.name AS role_name, r.code AS role_code
      FROM settings_users u
      LEFT JOIN settings_roles r ON r.id = u.role_id
@@ -34,9 +34,9 @@ async function getById(id) {
 async function create(data) {
   const fullName = data.full_name || [data.first_name, data.last_name].filter(Boolean).join(' ');
   const res = await query(
-    `INSERT INTO settings_users (first_name, last_name, full_name, email, phone, role_id, status, department_id, station_id, notes, password_hash, login_enabled)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-     RETURNING id, first_name, last_name, full_name, email, phone, role_id, status, login_enabled, created_at`,
+    `INSERT INTO settings_users (first_name, last_name, full_name, email, phone, role_id, status, department_id, station_id, avatar_url, notes, password_hash, login_enabled)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     RETURNING id, first_name, last_name, full_name, email, phone, role_id, status, avatar_url, login_enabled, created_at`,
     [
       data.first_name || null,
       data.last_name || null,
@@ -47,6 +47,7 @@ async function create(data) {
       data.status || 'active',
       data.department_id || null,
       data.station_id || null,
+      data.avatar_url || null,
       data.notes || null,
       data.password_hash || null,
       data.login_enabled === true,
