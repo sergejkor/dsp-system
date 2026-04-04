@@ -106,51 +106,53 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
     <>
       <div className="topbar-user-card-shell">
         <div className="sidebar-user-card topbar-user-card">
-          <div className="sidebar-user-card-head">
-            <div className="sidebar-user-avatar" aria-hidden="true">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt={displayName} className="sidebar-user-avatar-image" />
-              ) : (
-                initials
-              )}
+          <div className="topbar-user-main-row">
+            <div className="sidebar-user-card-head topbar-user-card-head">
+              <div className="sidebar-user-avatar" aria-hidden="true">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt={displayName} className="sidebar-user-avatar-image" />
+                ) : (
+                  initials
+                )}
+              </div>
+              <div className="sidebar-user-meta">
+                <div className="sidebar-user-name" title={displayName}>{displayName}</div>
+                <span className="sidebar-user-email" title={subtitle || user.email}>{subtitle || user.email}</span>
+              </div>
             </div>
-            <div className="sidebar-user-meta">
-              <div className="sidebar-user-name" title={displayName}>{displayName}</div>
-              <span className="sidebar-user-email" title={subtitle || user.email}>{subtitle || user.email}</span>
+            <div className="sidebar-user-utilities topbar-user-utilities">
+              <button
+                type="button"
+                className={`sidebar-user-utility-btn ${notificationsActive ? 'is-active' : ''}`}
+                onClick={() => navigate('/personal-fragebogen-notifications')}
+                title="Notifications"
+              >
+                <MailIcon />
+                {unreadNotificationTotal > 0 && (
+                  <span className="sidebar-user-utility-badge">
+                    {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                className={`sidebar-user-utility-btn ${settingsActive ? 'is-active' : ''}`}
+                onClick={() => navigate('/settings')}
+                title={t('nav.settings')}
+              >
+                <SettingsIcon />
+              </button>
+              <button
+                type="button"
+                className="sidebar-user-utility-btn"
+                onClick={() => setTheme(isDark ? 'light' : 'dark')}
+                title={`${t('appearance.theme')}: ${isDark ? t('appearance.dark') : t('appearance.light')}`}
+              >
+                {isDark ? <MoonIcon /> : <SunIcon />}
+              </button>
             </div>
           </div>
-          <div className="sidebar-user-utilities">
-            <button
-              type="button"
-              className={`sidebar-user-utility-btn ${notificationsActive ? 'is-active' : ''}`}
-              onClick={() => navigate('/personal-fragebogen-notifications')}
-              title="Notifications"
-            >
-              <MailIcon />
-              {unreadNotificationTotal > 0 && (
-                <span className="sidebar-user-utility-badge">
-                  {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              className={`sidebar-user-utility-btn ${settingsActive ? 'is-active' : ''}`}
-              onClick={() => navigate('/settings')}
-              title={t('nav.settings')}
-            >
-              <SettingsIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-user-utility-btn"
-              onClick={() => setTheme(isDark ? 'light' : 'dark')}
-              title={`${t('appearance.theme')}: ${isDark ? t('appearance.dark') : t('appearance.light')}`}
-            >
-              {isDark ? <MoonIcon /> : <SunIcon />}
-            </button>
-          </div>
-          <div className="sidebar-user-preferences">
+          <div className="topbar-user-secondary-row">
             <label className="sidebar-user-pref-field">
               <span>{t('appearance.language')}</span>
               <select value={language} onChange={(e) => setLanguage(e.target.value)}>
@@ -158,10 +160,10 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
                 <option value="de">{t('appearance.german')}</option>
               </select>
             </label>
-          </div>
-          <div className="sidebar-user-actions">
-            <button type="button" className="sidebar-user-btn" onClick={() => setShowChangePwd(true)}>{t('user.changePassword')}</button>
-            <button type="button" className="sidebar-user-btn" onClick={handleLogout}>{t('user.logout')}</button>
+            <div className="sidebar-user-actions topbar-user-actions">
+              <button type="button" className="sidebar-user-btn" onClick={() => setShowChangePwd(true)}>{t('user.changePassword')}</button>
+              <button type="button" className="sidebar-user-btn" onClick={handleLogout}>{t('user.logout')}</button>
+            </div>
           </div>
         </div>
       </div>
