@@ -18,9 +18,14 @@ import { useAppSettings } from '../context/AppSettingsContext';
 import * as analyticsApi from '../services/analyticsApi';
 import { formatKpiValue, kpiLabel } from '../utils/analyticsKpiDisplay.js';
 
-const TAB_KEYS = ['overview', 'operations', 'drivers', 'payroll', 'attendance', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages', 'custom'];
+const TAB_KEYS = ['overview', 'operations', 'drivers', 'payroll', 'attendance', 'timeoff', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages', 'custom'];
 const DATE_PRESETS = ['today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'last_30', 'last_90', 'this_quarter', 'last_quarter', 'this_year', 'custom'];
 const COMPARE_MODES = ['none', 'previous_period', 'previous_month', 'previous_year'];
+const DRILLDOWN_METRIC_BY_KPI = {
+  attendance_total_presence: 'attendance',
+  payroll_current_total: 'payroll',
+  safety_total_inspections: 'safety_incidents',
+};
 
 // Simple catalog of “questions” per section. For now these are UI-only descriptors.
 const SECTION_QUESTIONS = {
@@ -55,6 +60,11 @@ const SECTION_QUESTIONS = {
     { id: 'weekly_pattern', label: 'Is there a recurring weekly attendance pattern?' },
     { id: 'peak_presence', label: 'Which days have the strongest staffing coverage?' },
     { id: 'attendance_projection', label: 'What does the near-term attendance projection show?' },
+  ],
+  timeoff: [
+    { id: 'yearly_vacation_load', label: 'How many vacation days were taken each month in the selected year?' },
+    { id: 'yearly_sick_load', label: 'How many sick days were taken each month in the selected year?' },
+    { id: 'employee_timeoff_mix', label: 'Which selected employees account for the biggest time-off volume?' },
   ],
   routes: [
     { id: 'routes_volume', label: 'What is the total route volume?' },
@@ -258,6 +268,24 @@ function renderAnalyticsTooltipLabel(label) {
   return formatAnalyticsDate(label);
 }
 
+function normalizeExportRows(rows) {
+  return (rows || []).map((row) => {
+    const out = {};
+    Object.entries(row || {}).forEach(([key, value]) => {
+      if (value == null) out[key] = '';
+      else if (typeof value === 'object') out[key] = JSON.stringify(value);
+      else out[key] = value;
+    });
+    return out;
+  });
+}
+
+function formatAnalyticsPeriod(start, end) {
+  if (!start && !end) return 'No period selected';
+  if (start && end && start !== end) return `${formatAnalyticsDate(start)} - ${formatAnalyticsDate(end)}`;
+  return formatAnalyticsDate(start || end);
+}
+
 export default function AnalyticsPage() {
   const { t } = useAppSettings();
   const [activeTab, setActiveTab] = useState('overview');
@@ -270,10 +298,17 @@ export default function AnalyticsPage() {
   const [domainData, setDomainData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [filtersMeta, setFiltersMeta] = useState({ drivers: [] });
   const [savedViews, setSavedViews] = useState([]);
   const [saveViewOpen, setSaveViewOpen] = useState(false);
   const [saveViewName, setSaveViewName] = useState('');
   const [activeQuestionId, setActiveQuestionId] = useState('');
+  const [timeoffYear, setTimeoffYear] = useState(new Date().getFullYear());
+  const [timeoffEmployeeIds, setTimeoffEmployeeIds] = useState([]);
+  const [drilldownOpen, setDrilldownOpen] = useState(false);
+  const [drilldownTitle, setDrilldownTitle] = useState('');
+  const [drilldownRows, setDrilldownRows] = useState([]);
+  const [drilldownLoading, setDrilldownLoading] = useState(false);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
@@ -306,6 +341,8 @@ export default function AnalyticsPage() {
         payrollMonth: (overview?.period?.start || startDate || '').slice(0, 7),
         insuranceYear,
         question: activeQuestionId || undefined,
+        year: activeTab === 'timeoff' ? timeoffYear : undefined,
+        employeeIds: activeTab === 'timeoff' && timeoffEmployeeIds.length ? timeoffEmployeeIds.join(',') : undefined,
       });
       setDomainData(data);
     } catch (e) {
@@ -314,7 +351,7 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, overview?.period?.start, overview?.period?.end, startDate, endDate, insuranceYear, activeQuestionId]);
+  }, [activeTab, overview?.period?.start, overview?.period?.end, startDate, endDate, insuranceYear, activeQuestionId, timeoffYear, timeoffEmployeeIds]);
 
   useEffect(() => {
     if (activeTab === 'overview') loadOverview();
@@ -344,6 +381,8 @@ export default function AnalyticsPage() {
         endDate: overview?.period?.end || endDate,
         payrollMonth: (overview?.period?.start || startDate || '').slice(0, 7),
         insuranceYear,
+        year: activeTab === 'timeoff' ? timeoffYear : undefined,
+        employeeIds: activeTab === 'timeoff' && timeoffEmployeeIds.length ? timeoffEmployeeIds.join(',') : undefined,
       });
     } catch (e) {
       setError(e?.message || 'Export failed');
@@ -356,7 +395,7 @@ export default function AnalyticsPage() {
       await analyticsApi.createSavedView({
         name: saveViewName.trim(),
         page_key: activeTab,
-        filters_json: { datePreset, startDate, endDate, compareMode, insuranceYear },
+        filters_json: { datePreset, startDate, endDate, compareMode, insuranceYear, timeoffYear, timeoffEmployeeIds },
       });
       setSaveViewOpen(false);
       setSaveViewName('');
@@ -369,6 +408,12 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     analyticsApi.getSavedViews().then((views) => setSavedViews(Array.isArray(views) ? views : [])).catch(() => setSavedViews([]));
+  }, []);
+
+  useEffect(() => {
+    analyticsApi.getFiltersMeta()
+      .then((meta) => setFiltersMeta(meta || { drivers: [] }))
+      .catch(() => setFiltersMeta({ drivers: [] }));
   }, []);
 
   const labelForKpi = (kpi) => kpiLabel(kpi, t);
@@ -432,17 +477,80 @@ export default function AnalyticsPage() {
     () => buildForecastLineData(domainData?.charts?.inspectionsByDay || [], { labelKey: 'date', valueKey: 'inspections', step: 'day', count: 7, decimals: 0 }),
     [domainData?.charts?.inspectionsByDay],
   );
+  const pagePeriodLabel = formatAnalyticsPeriod(overview?.period?.start || startDate, overview?.period?.end || endDate);
+  const comparisonPeriodLabel = overview?.comparison ? formatAnalyticsPeriod(overview.comparison.start, overview.comparison.end) : '';
+  const overviewPrimaryKpis = (overview?.kpis || []).slice(0, 4);
+  const overviewSecondaryKpis = (overview?.kpis || []).slice(4);
+  const visibleSavedViews = savedViews.slice(0, 4);
+  const activeRangeLabel = activeTab === 'timeoff' ? String(timeoffYear) : pagePeriodLabel;
+  const timeoffYearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 6 }, (_, index) => currentYear - 3 + index);
+  }, []);
+  const activeDriverOptions = filtersMeta.drivers || [];
+
+  const handleBlockExport = useCallback(async (format, title, rows) => {
+    try {
+      await analyticsApi.exportBlock(format, title, normalizeExportRows(rows));
+    } catch (e) {
+      setError(e?.message || 'Export failed');
+    }
+  }, []);
+
+  const handleOpenDrilldown = useCallback(async (metricKey, title) => {
+    setDrilldownTitle(title);
+    setDrilldownRows([]);
+    setDrilldownLoading(true);
+    setDrilldownOpen(true);
+    try {
+      const data = await analyticsApi.getDrilldown(metricKey, {
+        startDate: overview?.period?.start || startDate,
+        endDate: overview?.period?.end || endDate,
+        payrollMonth: (overview?.period?.start || startDate || '').slice(0, 7),
+      });
+      setDrilldownRows(Array.isArray(data?.rows) ? data.rows : []);
+    } catch (e) {
+      setError(e?.message || 'Failed to load drilldown');
+      setDrilldownRows([]);
+    } finally {
+      setDrilldownLoading(false);
+    }
+  }, [overview?.period?.start, overview?.period?.end, startDate, endDate]);
+
+  const renderTabLabel = useCallback((tab) => {
+    if (tab === 'timeoff') return 'Urlaub / Krank';
+    return t(`analytics.${tab}`);
+  }, [t]);
 
   return (
     <section className="analytics-page">
-      <header className="analytics-header">
-        <h1>{t('analytics.title')}</h1>
-        <p className="muted" style={{ margin: '0.25rem 0 0' }}>
-          operational and business insights
-        </p>
+      <header className="analytics-header analytics-hero">
+        <div className="analytics-hero-copy">
+          <div className="analytics-eyebrow">Management intelligence</div>
+          <h1>{t('analytics.title')}</h1>
+          <p className="muted analytics-hero-subtitle">
+            Live operational, HR, payroll, fleet and compliance analytics from DSP data and Kenjo.
+          </p>
+          <div className="analytics-hero-meta">
+            <span className="analytics-pill">Period: {pagePeriodLabel}</span>
+            {compareMode !== 'none' && comparisonPeriodLabel ? (
+              <span className="analytics-pill analytics-pill--soft">Compare: {comparisonPeriodLabel}</span>
+            ) : null}
+            <span className="analytics-pill analytics-pill--soft">Saved views: {savedViews.length}</span>
+          </div>
+        </div>
+        <div className="analytics-hero-aside">
+          <div className="analytics-highlight-card">
+            <div className="analytics-highlight-label">Current section</div>
+            <div className="analytics-highlight-value">{renderTabLabel(activeTab)}</div>
+            <div className="analytics-highlight-caption">
+              {activeTab === 'overview' ? 'Executive summary across all domains' : 'Deep-dive analytics for the selected domain'}
+            </div>
+          </div>
+        </div>
       </header>
 
-      <div className="analytics-controls">
+      <div className="analytics-controls analytics-panel">
         <div className="analytics-controls-row">
           <label className="analytics-label">
             {t('analytics.dateRange')}
@@ -510,8 +618,36 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <div className="analytics-tabs">
-        {TAB_KEYS.map((tab) => (
+      {visibleSavedViews.length > 0 && (
+        <div className="analytics-saved-strip">
+          <span className="analytics-saved-strip-label">Recent saved views</span>
+          <div className="analytics-saved-strip-items">
+            {visibleSavedViews.map((view) => (
+              <button
+                key={view.id}
+                type="button"
+                className="analytics-saved-chip"
+                onClick={() => {
+                  setActiveTab(view.page_key || 'overview');
+                  const filters = view.filters_json || {};
+                  setDatePreset(filters.datePreset || 'this_month');
+                  setStartDate(filters.startDate || '');
+                  setEndDate(filters.endDate || '');
+                  setCompareMode(filters.compareMode || 'none');
+                  setInsuranceYear(Number(filters.insuranceYear || 2026));
+                  setTimeoffYear(Number(filters.timeoffYear || new Date().getFullYear()));
+                  setTimeoffEmployeeIds(Array.isArray(filters.timeoffEmployeeIds) ? filters.timeoffEmployeeIds : []);
+                }}
+              >
+                {view.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="analytics-tabs analytics-panel">
+            {TAB_KEYS.map((tab) => (
           <button
             key={tab}
             type="button"
@@ -521,7 +657,7 @@ export default function AnalyticsPage() {
               setActiveQuestionId(''); // reset question when switching section
             }}
           >
-            {t(`analytics.${tab}`)}
+            {renderTabLabel(tab)}
           </button>
         ))}
       </div>
@@ -552,15 +688,76 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+      {activeTab === 'timeoff' && (
+        <div className="analytics-controls analytics-panel" style={{ marginTop: 0 }}>
+          <div className="analytics-controls-row analytics-controls-row--stretch">
+            <label className="analytics-label">
+              Year
+              <select className="analytics-select" value={timeoffYear} onChange={(e) => setTimeoffYear(Number(e.target.value))}>
+                {timeoffYearOptions.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </label>
+            <label className="analytics-label analytics-label--wide">
+              Employees
+              <select
+                multiple
+                className="analytics-select analytics-select--multi"
+                value={timeoffEmployeeIds}
+                onChange={(e) => setTimeoffEmployeeIds(Array.from(e.target.selectedOptions).map((option) => option.value))}
+              >
+                {activeDriverOptions.map((driver) => (
+                  <option key={driver.id} value={driver.id}>
+                    {driver.label}{driver.employee_number ? ` (${driver.employee_number})` : ''}{driver.is_active ? '' : ' [inactive]'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="analytics-inline-actions">
+              <button type="button" className="btn-secondary analytics-btn" onClick={() => setTimeoffEmployeeIds([])}>
+                All employees
+              </button>
+              <button type="button" className="btn-secondary analytics-btn" onClick={() => setTimeoffEmployeeIds([])}>
+                Clear selection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'overview' && !loading && overview && (
         <div className="analytics-overview">
-          <div className="analytics-kpi-grid">
-            {(overview.kpis || []).map((kpi) => (
-              <div key={kpi.key} className="analytics-kpi-card">
+          <div className="analytics-spotlight-grid">
+            {overviewPrimaryKpis.map((kpi) => (
+              <div key={kpi.key} className="analytics-kpi-card analytics-kpi-card--hero">
                 <div className="analytics-kpi-label">{labelForKpi(kpi)}</div>
                 <div className="analytics-kpi-value">{formatKpiValue(kpi.value, kpi.format)}</div>
               </div>
             ))}
+          </div>
+          {overviewSecondaryKpis.length > 0 && (
+            <div className="analytics-kpi-grid">
+              {overviewSecondaryKpis.map((kpi) => (
+                <div key={kpi.key} className="analytics-kpi-card">
+                  <div className="analytics-kpi-label">{labelForKpi(kpi)}</div>
+                  <div className="analytics-kpi-value">{formatKpiValue(kpi.value, kpi.format)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="analytics-overview-summary analytics-panel">
+            <div>
+              <div className="analytics-section-title">Executive summary</div>
+              <div className="analytics-section-subtitle">
+                This panel blends daily route volume, payroll movement, performance scorecards, fleet status and HR movement into one view.
+              </div>
+            </div>
+            <div className="analytics-overview-summary-meta">
+              <span>{overview?.companyScorecardRecent?.length || 0} recent scorecard weeks</span>
+              <span>{overview?.charts?.routesDriversByDay?.length || 0} route days in scope</span>
+              <span>{overview?.charts?.payrollByMonth?.length || 0} payroll months in trend</span>
+            </div>
           </div>
           <div className="analytics-charts">
             {overview.companyScorecardRecent?.length > 0 && (
@@ -747,13 +944,36 @@ export default function AnalyticsPage() {
 
       {activeTab !== 'overview' && activeTab !== 'custom' && !loading && domainData && (
         <div className="analytics-domain">
+          <div className="analytics-domain-hero analytics-panel">
+            <div>
+              <div className="analytics-section-title">{renderTabLabel(activeTab)}</div>
+              <div className="analytics-section-subtitle">
+                {selectedQuestion ? selectedQuestion.label : `Expanded analytics for ${renderTabLabel(activeTab)} across DSP data and Kenjo.`}
+              </div>
+            </div>
+            <div className="analytics-domain-hero-meta">
+              <span className="analytics-pill">Range: {activeRangeLabel}</span>
+              {domainData?.kpis?.length ? <span className="analytics-pill analytics-pill--soft">KPIs: {domainData.kpis.length}</span> : null}
+              {domainData?.insightTables?.length ? <span className="analytics-pill analytics-pill--soft">Insight tables: {domainData.insightTables.length}</span> : null}
+            </div>
+          </div>
+
           {domainData.kpis && domainData.kpis.length > 0 && (
             <div className="analytics-kpi-grid">
               {domainData.kpis.map((kpi) => (
-                <div key={kpi.key} className="analytics-kpi-card">
+                <button
+                  key={kpi.key}
+                  type="button"
+                  className={`analytics-kpi-card ${DRILLDOWN_METRIC_BY_KPI[kpi.key] ? 'analytics-kpi-card--clickable' : ''}`}
+                  onClick={() => {
+                    const metric = DRILLDOWN_METRIC_BY_KPI[kpi.key];
+                    if (!metric) return;
+                    handleOpenDrilldown(metric, labelForKpi(kpi));
+                  }}
+                >
                   <div className="analytics-kpi-label">{labelForKpi(kpi)}</div>
                   <div className="analytics-kpi-value">{formatKpiValue(kpi.value, kpi.format)}</div>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -838,6 +1058,55 @@ export default function AnalyticsPage() {
             </div>
           )}
 
+          {activeTab === 'timeoff' && (
+            <div className="analytics-charts" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(360px,1fr))' }}>
+              <div className="analytics-chart-card">
+                <div className="analytics-card-head">
+                  <h3>Vacation and sick days by month</h3>
+                  <div className="analytics-card-actions">
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', `timeoff-monthly-${timeoffYear}`, domainData.table || [])}>Excel</button>
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', `timeoff-monthly-${timeoffYear}`, domainData.table || [])}>PDF</button>
+                  </div>
+                </div>
+                <div style={{ width: '100%', height: 300 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={domainData.charts?.monthlyTotals || []}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month_key" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="urlaub_days" name="Urlaub" fill={ANALYTICS_COLORS.secondary} radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="krank_days" name="Krank" fill={ANALYTICS_COLORS.danger} radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div className="analytics-chart-card">
+                <div className="analytics-card-head">
+                  <h3>Selected employees totals</h3>
+                  <div className="analytics-card-actions">
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', `timeoff-employees-${timeoffYear}`, domainData.insightTables?.[0]?.rows || [])}>Excel</button>
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', `timeoff-employees-${timeoffYear}`, domainData.insightTables?.[0]?.rows || [])}>PDF</button>
+                  </div>
+                </div>
+                <div style={{ width: '100%', height: 300 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={domainData.charts?.employeeTotals || []} layout="vertical" margin={{ left: 24, right: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis type="number" />
+                      <YAxis dataKey="employee_name" type="category" width={140} />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="urlaub_days" name="Urlaub" fill={ANALYTICS_COLORS.secondary} radius={[0, 6, 6, 0]} />
+                      <Bar dataKey="krank_days" name="Krank" fill={ANALYTICS_COLORS.danger} radius={[0, 6, 6, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'payroll' && payrollMonthlyForecast.length > 0 && (
             <div className="analytics-charts" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))' }}>
               <div className="analytics-chart-card">
@@ -873,6 +1142,40 @@ export default function AnalyticsPage() {
                   </ResponsiveContainer>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'drivers' && (domainData.charts?.activeMix?.length > 0 || domainData.charts?.topRoutesByDriver?.length > 0) && (
+            <div className="analytics-charts" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))' }}>
+              {domainData.charts?.activeMix?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Driver active mix</h3>
+                  <div className="analytics-donut-list">
+                    {domainData.charts.activeMix.map((row) => (
+                      <div key={row.label} className="analytics-donut-item">
+                        <span className="analytics-donut-label">{row.label}</span>
+                        <span className="analytics-donut-value">{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {domainData.charts?.topRoutesByDriver?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Top drivers by routes</h3>
+                  <div style={{ width: '100%', height: 300 }}>
+                    <ResponsiveContainer>
+                      <BarChart data={domainData.charts.topRoutesByDriver} layout="vertical" margin={{ left: 24, right: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis type="number" />
+                        <YAxis dataKey="label" type="category" width={130} />
+                        <Tooltip />
+                        <Bar dataKey="value" name="Routes" fill={ANALYTICS_COLORS.primary} radius={[0, 6, 6, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1022,6 +1325,22 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
               )}
+              {domainData.charts?.workshopTimeline?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Upcoming workshops</h3>
+                  <div className="analytics-donut-list">
+                    {domainData.charts.workshopTimeline.map((row) => (
+                      <div key={`${row.label}-${row.planned_workshop_from || ''}`} className="analytics-donut-item analytics-donut-item--stacked">
+                        <span className="analytics-donut-label">{row.label}</span>
+                        <span className="analytics-donut-value">
+                          {formatAnalyticsDate(row.planned_workshop_from)}
+                          {row.planned_workshop_to && row.planned_workshop_to !== row.planned_workshop_from ? ` - ${formatAnalyticsDate(row.planned_workshop_to)}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1122,9 +1441,52 @@ export default function AnalyticsPage() {
             </div>
           )}
 
+          {activeTab === 'compliance' && (domainData.charts?.expiringByType?.length > 0 || domainData.charts?.expiriesTimeline?.length > 0) && (
+            <div className="analytics-charts" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))' }}>
+              {domainData.charts?.expiringByType?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Expiring documents by type</h3>
+                  <div style={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <BarChart data={domainData.charts.expiringByType}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="label" interval={0} angle={-18} textAnchor="end" height={60} />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="value" name="Documents" fill={ANALYTICS_COLORS.accent} radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+              {domainData.charts?.expiriesTimeline?.length > 0 && (
+                <div className="analytics-chart-card">
+                  <h3>Expiry timeline</h3>
+                  <div style={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <LineChart data={domainData.charts.expiriesTimeline}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" tickFormatter={(value) => formatAnalyticsDate(value).slice(0, 5)} />
+                        <YAxis />
+                        <Tooltip labelFormatter={renderAnalyticsTooltipLabel} />
+                        <Line type="monotone" dataKey="count" name="Expiring docs" stroke={ANALYTICS_COLORS.danger} strokeWidth={2} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {domainData.insightTables?.map((t, idx) => (
             <div key={`${t.title}-${idx}`} style={{ marginTop: idx === 0 ? '1rem' : '1.25rem' }}>
-              <div className="muted" style={{ fontWeight: 700, marginBottom: '0.5rem' }}>{t.title}</div>
+              <div className="analytics-card-head analytics-card-head--table">
+                <div className="muted" style={{ fontWeight: 700 }}>{t.title}</div>
+                <div className="analytics-card-actions">
+                  <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', t.title, t.rows || [])}>Excel</button>
+                  <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', t.title, t.rows || [])}>PDF</button>
+                </div>
+              </div>
               {t.rows && t.rows.length > 0 ? (
                 <div className="analytics-table-wrap">
                   <table className="analytics-table">
@@ -1209,6 +1571,13 @@ export default function AnalyticsPage() {
 
           {showPrimaryDomainTable && (
             <div className="analytics-table-wrap" style={{ marginTop: '1.25rem' }}>
+              <div className="analytics-card-head analytics-card-head--table analytics-card-head--embedded">
+                <div className="muted" style={{ fontWeight: 700 }}>Primary table</div>
+                <div className="analytics-card-actions">
+                  <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', `${activeTab}-primary-table`, domainData.table || [])}>Excel</button>
+                  <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', `${activeTab}-primary-table`, domainData.table || [])}>PDF</button>
+                </div>
+              </div>
               <table className="analytics-table">
                 <thead>
                   <tr>
@@ -1293,6 +1662,49 @@ export default function AnalyticsPage() {
       {activeTab === 'custom' && !loading && (
         <div className="analytics-custom">
           <p className="analytics-no-data">{t('analytics.noData')} Use domain tabs for predefined analytics.</p>
+        </div>
+      )}
+
+      {drilldownOpen && (
+        <div className="analytics-modal-backdrop" onClick={() => setDrilldownOpen(false)}>
+          <div className="analytics-modal analytics-modal--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="analytics-card-head analytics-card-head--table">
+              <h3>{drilldownTitle}</h3>
+              <div className="analytics-card-actions">
+                <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', drilldownTitle, drilldownRows)}>Excel</button>
+                <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', drilldownTitle, drilldownRows)}>PDF</button>
+              </div>
+            </div>
+            {drilldownLoading ? (
+              <div className="analytics-loading">Loading details...</div>
+            ) : drilldownRows.length > 0 ? (
+              <div className="analytics-table-wrap">
+                <table className="analytics-table">
+                  <thead>
+                    <tr>
+                      {Object.keys(drilldownRows[0]).map((col) => (
+                        <th key={col}>{col.replace(/_/g, ' ')}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {drilldownRows.map((row, i) => (
+                      <tr key={i}>
+                        {Object.entries(row).map(([k, v]) => (
+                          <td key={k}>{formatAnalyticsCell(k, v)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="analytics-no-data">No drilldown data available.</p>
+            )}
+            <div className="analytics-modal-actions">
+              <button type="button" className="btn-secondary" onClick={() => setDrilldownOpen(false)}>Close</button>
+            </div>
+          </div>
         </div>
       )}
 

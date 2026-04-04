@@ -3,7 +3,7 @@
  */
 import { getToken } from './authStore.js';
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
+import { API_BASE } from '../config/apiBase.js';
 
 function getHeaders() {
   const t = getToken();
@@ -85,11 +85,7 @@ export async function getDrilldown(metricKey, params = {}) {
   return handle(res);
 }
 
-/**
- * Export CSV: fetches with auth and triggers download.
- */
-export async function exportCsv(params = {}) {
-  const res = await fetch(`${API_BASE}/api/analytics/export/csv${qs(params)}`, { headers: getHeaders() });
+async function downloadResponse(res, fallbackName) {
   if (res.status === 401) {
     const { clearToken } = await import('./authStore.js');
     clearToken();
@@ -103,10 +99,32 @@ export async function exportCsv(params = {}) {
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition');
   const match = disposition && disposition.match(/filename="?([^";]+)"?/);
-  const name = match ? match[1] : `analytics-export-${new Date().toISOString().slice(0, 10)}.csv`;
+  const name = match ? match[1] : fallbackName;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+/**
+ * Export CSV: fetches with auth and triggers download.
+ */
+export async function exportCsv(params = {}) {
+  const res = await fetch(`${API_BASE}/api/analytics/export/csv${qs(params)}`, { headers: getHeaders() });
+  await downloadResponse(res, `analytics-export-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+export async function exportBlock(format, title, rows = []) {
+  const ext = String(format || 'xlsx').toLowerCase() === 'pdf' ? 'pdf' : 'xlsx';
+  const res = await fetch(`${API_BASE}/api/analytics/export/block`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      format: ext,
+      title,
+      rows,
+    }),
+  });
+  await downloadResponse(res, `${title || 'analytics-block'}.${ext}`);
 }

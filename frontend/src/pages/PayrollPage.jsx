@@ -34,6 +34,12 @@ function formatCurrency(num) {
   return `${n.toFixed(2).replace('.', ',')} €`;
 }
 
+function formatWholeDays(num) {
+  const n = Number(num);
+  if (!Number.isFinite(n)) return '0';
+  return String(Math.round(n));
+}
+
 /** Prefer name matches at the top of the payslip import employee dropdown. */
 function payslipEmployeeSelectOptions(employeeOptions, matchIds, legacyRowOptions) {
   const all =
@@ -1447,21 +1453,23 @@ export default function PayrollPage() {
 
       {result && result.rows && (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', tableLayout: 'fixed', minWidth: 960 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: '8rem' }} />
-              <col style={{ width: '4.5rem' }} />
-              <col style={{ width: '4.5rem' }} />
-              <col style={{ width: '3.5rem', minWidth: '3.5rem' }} />
-              <col style={{ width: '3.5rem', minWidth: '3.5rem' }} />
-              <col style={{ width: '6.5rem' }} />
-              <col style={{ width: '6rem' }} />
-              <col style={{ width: '6rem' }} />
-              <col style={{ width: '6rem' }} />
-              <col style={{ width: '6rem' }} />
-              <col style={{ width: '6rem' }} />
-              <col style={{ width: '6rem' }} />
-              <col style={{ width: '4.5rem' }} />
+              <col style={{ width: '10.5rem' }} />
+              <col style={{ width: '4.1rem' }} />
+              <col style={{ width: '4rem' }} />
+              <col style={{ width: '3.6rem', minWidth: '3.6rem' }} />
+              <col style={{ width: '3.6rem', minWidth: '3.6rem' }} />
+              <col style={{ width: '4.4rem' }} />
+              <col style={{ width: '4.4rem' }} />
+              <col style={{ width: '5.6rem' }} />
+              <col style={{ width: '5.4rem' }} />
+              <col style={{ width: '5.4rem' }} />
+              <col style={{ width: '5.2rem' }} />
+              <col style={{ width: '5.2rem' }} />
+              <col style={{ width: '5.2rem' }} />
+              <col style={{ width: '5.6rem' }} />
+              <col style={{ width: '5.4rem' }} />
             </colgroup>
             <thead>
               <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
@@ -1470,7 +1478,7 @@ export default function PayrollPage() {
                     key={col.key}
                     style={{
                       textAlign: ['pn', 'working_days', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub'].includes(col.key) ? 'right' : 'left',
-                      padding: '0.4rem 0.5rem',
+                      padding: '0.32rem 0.34rem',
                       whiteSpace: 'nowrap',
                       cursor: 'pointer',
                       userSelect: 'none',
@@ -1497,7 +1505,7 @@ export default function PayrollPage() {
                       const abzugSum = (row.abzug_lines || []).reduce((s, l) => s + (Number(l?.amount) || 0), 0);
                       const abzugVal = typeof row.abzug === 'number' ? row.abzug : abzugSum;
                       return (
-                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                        <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                           {formatCurrency(abzugVal)}
                           <button
                             type="button"
@@ -1512,7 +1520,7 @@ export default function PayrollPage() {
                     }
                     if (col.key === 'bonus') {
                       return (
-                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                        <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                           {formatCurrency(row.bonus)}
                           <button
                             type="button"
@@ -1527,7 +1535,7 @@ export default function PayrollPage() {
                     }
                     if (col.key === 'total_bonus') {
                       return (
-                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                        <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <button
                             type="button"
                             onClick={() => setBonusBreakdownRow(row)}
@@ -1549,7 +1557,7 @@ export default function PayrollPage() {
                     }
                     if (col.key === 'name' && row.kenjo_employee_id && row.is_manual) {
                       return (
-                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <td key={col.key} style={{ padding: '0.32rem 0.34rem', maxWidth: '10.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
                             <button
                               type="button"
@@ -1581,7 +1589,7 @@ export default function PayrollPage() {
                     }
                     if (col.key === 'name' && row.kenjo_employee_id) {
                       return (
-                        <td key={col.key} style={{ padding: '0.4rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <td key={col.key} style={{ padding: '0.32rem 0.34rem', maxWidth: '10.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <button
                             type="button"
                             onClick={() => navigate('/employee', { state: { kenjoEmployeeId: row.kenjo_employee_id } })}
@@ -1606,9 +1614,9 @@ export default function PayrollPage() {
                           : (col.key === 'krank_days' || col.key === 'urlaub_days')
                             ? Number(val)
                             : (col.key === 'carryover_days' || col.key === 'rest_urlaub')
-                              ? Number.isFinite(Number(val)) ? Number(val).toFixed(2) : '0.00'
+                              ? formatWholeDays(val)
                             : typeof val === 'number' ? (Number.isInteger(val) ? val : val.toFixed(2)) : val ?? '—';
-                    let cellStyle = { padding: '0.4rem 0.5rem', textAlign: isNumericCol ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+                    let cellStyle = { padding: '0.32rem 0.34rem', textAlign: isNumericCol ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
                     let content = display;
                     let title;
                     if (col.key === 'krank_days' && Number(val) > 0) {
@@ -2114,11 +2122,28 @@ export default function PayrollPage() {
             </div>
 
             <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
+                <colgroup>
+                  <col style={{ width: '10.5rem' }} />
+                  <col style={{ width: '4.1rem' }} />
+                  <col style={{ width: '4rem' }} />
+                  <col style={{ width: '3.6rem' }} />
+                  <col style={{ width: '3.6rem' }} />
+                  <col style={{ width: '4.4rem' }} />
+                  <col style={{ width: '4.4rem' }} />
+                  <col style={{ width: '5.6rem' }} />
+                  <col style={{ width: '5.4rem' }} />
+                  <col style={{ width: '5.4rem' }} />
+                  <col style={{ width: '5.2rem' }} />
+                  <col style={{ width: '5.2rem' }} />
+                  <col style={{ width: '5.2rem' }} />
+                  <col style={{ width: '5.6rem' }} />
+                  <col style={{ width: '5.4rem' }} />
+                </colgroup>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
                     {columns.map((col) => (
-                      <th key={col.key} style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{col.label}</th>
+                      <th key={col.key} style={{ padding: '0.35rem 0.28rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{col.label}</th>
                     ))}
                   </tr>
                 </thead>
@@ -2130,8 +2155,8 @@ export default function PayrollPage() {
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.working_days ?? '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.krank_days ?? 0}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.urlaub_days ?? 0}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{Number(row.carryover_days ?? 0).toFixed(2)}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{Number(row.rest_urlaub ?? 0).toFixed(2)}</td>
+                      <td style={{ padding: '0.35rem 0.28rem', whiteSpace: 'nowrap' }}>{formatWholeDays(row.carryover_days)}</td>
+                      <td style={{ padding: '0.35rem 0.28rem', whiteSpace: 'nowrap' }}>{formatWholeDays(row.rest_urlaub)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.total_bonus)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.abzug)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.verpfl_mehr)}</td>

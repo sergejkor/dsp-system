@@ -6,6 +6,8 @@ import { query } from '../../db.js';
 import { getInsuranceOverviewKpis } from './insuranceAnalyticsService.js';
 import { getInsuranceDomainData } from './insuranceAnalyticsService.js';
 import { getDamagesDomainData } from './damagesAnalyticsService.js';
+import XLSX from 'xlsx';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 function formatPersonalNumber(raw) {
   if (raw == null || String(raw).trim() === '') return null;
@@ -17,6 +19,8 @@ function formatPersonalNumber(raw) {
 const CAR_STATUS_ACTIVE = 'Active';
 const CAR_STATUS_MAINTENANCE = 'Maintenance';
 const CAR_STATUS_OUT_OF_SERVICE = 'Out of Service';
+const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
+const KENJO_TYPE_URLAUB = '685e7223e6bac64cb0a27e38';
 
 function toNumber(value) {
   const n = Number(value);
@@ -47,6 +51,167 @@ function buildMonthKeyRange(startMonthKey, endMonthKey) {
     cursor = shiftMonthKey(cursor, 1);
   }
   return out;
+}
+
+function toDateOnly(value) {
+  if (!value) return '';
+  const str = String(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(str) ? str : '';
+}
+
+function listYearMonths(year) {
+  return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`);
+}
+
+function countWeekdaysInclusive(startYmd, endYmd) {
+  const start = toDateOnly(startYmd);
+  const end = toDateOnly(endYmd);
+  if (!start || !end || start > end) return 0;
+  const startT = new Date(`${start}T12:00:00`).getTime();
+  const endT = new Date(`${end}T12:00:00`).getTime();
+  let count = 0;
+  for (let t = startT; t <= endT; t += 86400000) {
+    const day = new Date(t).getDay();
+    if (day !== 0 && day !== 6) count += 1;
+  }
+  return count;
+}
+
+function timeOffKindFromRow(row) {
+  const typeId = String(row.time_off_type ?? row.time_off_type_id ?? row.type ?? '').trim();
+  const typeName = String(row.time_off_type_name ?? row.type_name ?? '').trim().toLowerCase();
+  if (typeId === KENJO_TYPE_URLAUB || /urlaub|vacation|paid leave/.test(typeName)) return 'urlaub';
+  if (typeId === KENJO_TYPE_KRANK || /krank|sick|ill/.test(typeName)) return 'krank';
+  return null;
+}
+
+function buildTimeOffMonthlyAnalytics(rows, year, employeeById, selectedEmployeeIds = null) {
+  const monthKeys = listYearMonths(year);
+  const monthMap = new Map(
+    monthKeys.map((monthKey) => [monthKey, { month_key: monthKey, urlaub_days: 0, krank_days: 0 }]),
+  );
+  const byEmployee = new Map();
+
+  for (const row of rows || []) {
+    const employeeId = String(row.kenjo_user_id ?? row.user_id ?? row.userId ?? '').trim();
+    if (!employeeId) continue;
+    if (selectedEmployeeIds && !selectedEmployeeIds.has(employeeId)) continue;
+    const kind = timeOffKindFromRow(row);
+    if (!kind) continue;
+    const status = String(row.status ?? '').trim().toLowerCase();
+    if (status && ['rejected', 'cancelled', 'canceled', 'declined'].includes(status)) continue;
+
+    const requestStart = toDateOnly(row.start_date ?? row.from ?? row.startDate);
+    const requestEnd = toDateOnly(row.end_date ?? row.to ?? row.endDate);
+    if (!requestStart || !requestEnd) continue;
+
+    const employee = employeeById.get(employeeId) || { id: employeeId, label: row.employee_name || employeeId };
+    if (!byEmployee.has(employeeId)) {
+      byEmployee.set(employeeId, {
+        employee_id: employeeId,
+        employee_name: employee.label || employeeId,
+        urlaub_days: 0,
+        krank_days: 0,
+      });
+    }
+    const employeeRec = byEmployee.get(employeeId);
+
+    for (const monthKey of monthKeys) {
+      const monthStart = `${monthKey}-01`;
+      const [yy, mm] = monthKey.split('-').map(Number);
+      const monthEnd = `${monthKey}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`;
+      const clampedStart = requestStart > monthStart ? requestStart : monthStart;
+      const clampedEnd = requestEnd < monthEnd ? requestEnd : monthEnd;
+      if (!clampedStart || !clampedEnd || clampedStart > clampedEnd) continue;
+      const days = countWeekdaysInclusive(clampedStart, clampedEnd);
+      if (!days) continue;
+      const monthRec = monthMap.get(monthKey);
+      if (kind === 'urlaub') {
+        monthRec.urlaub_days += days;
+        employeeRec.urlaub_days += days;
+      } else if (kind === 'krank') {
+        monthRec.krank_days += days;
+        employeeRec.krank_days += days;
+      }
+    }
+  }
+
+  const monthly = monthKeys.map((monthKey) => monthMap.get(monthKey));
+  const employees = Array.from(byEmployee.values()).sort((a, b) => a.employee_name.localeCompare(b.employee_name));
+  return {
+    monthly,
+    employees,
+  };
+}
+
+export function rowsToWorksheetBuffer(sheetName, rows) {
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(normalizedRows.length ? normalizedRows : [{}]);
+  XLSX.utils.book_append_sheet(wb, ws, (sheetName || 'Analytics').slice(0, 31));
+  return XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
+}
+
+export async function buildAnalyticsPdfBuffer(title, rows) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  let page = pdf.addPage([842, 595]);
+  let { width, height } = page.getSize();
+  let y = height - 42;
+
+  const drawHeader = () => {
+    page.drawText(String(title || 'Analytics export'), {
+      x: 36,
+      y,
+      size: 18,
+      font: fontBold,
+      color: rgb(0.11, 0.18, 0.31),
+    });
+    y -= 24;
+    page.drawText(`Generated: ${new Date().toISOString().slice(0, 10)}`, {
+      x: 36,
+      y,
+      size: 9,
+      font,
+      color: rgb(0.42, 0.48, 0.58),
+    });
+    y -= 20;
+  };
+
+  const ensurePage = () => {
+    if (y > 52) return;
+    page = pdf.addPage([842, 595]);
+    ({ width, height } = page.getSize());
+    y = height - 42;
+    drawHeader();
+  };
+
+  drawHeader();
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    page.drawText('No rows', { x: 36, y, size: 11, font, color: rgb(0.2, 0.2, 0.2) });
+    return Buffer.from(await pdf.save());
+  }
+  const columns = Object.keys(list[0]);
+  for (const row of list) {
+    ensurePage();
+    const line = columns.map((key) => `${key}: ${row[key] == null ? '' : String(row[key])}`).join(' | ');
+    const chunks = line.match(/.{1,120}/g) || [''];
+    for (const chunk of chunks) {
+      ensurePage();
+      page.drawText(chunk, {
+        x: 36,
+        y,
+        size: 9,
+        font,
+        color: rgb(0.18, 0.18, 0.18),
+      });
+      y -= 12;
+    }
+    y -= 6;
+  }
+  return Buffer.from(await pdf.save());
 }
 
 /**
@@ -553,7 +718,7 @@ export async function getOverview(params = {}) {
  */
 export async function getFiltersMeta() {
   const [driversRes, stationsRes, vehiclesRes] = await Promise.all([
-    query(`SELECT kenjo_user_id AS id, first_name, last_name, display_name FROM kenjo_employees WHERE is_active = true ORDER BY last_name, first_name`),
+    query(`SELECT kenjo_user_id AS id, first_name, last_name, display_name, employee_number, is_active FROM kenjo_employees ORDER BY is_active DESC, last_name, first_name`),
     query(`SELECT DISTINCT station AS id FROM cars WHERE station IS NOT NULL AND station != '' ORDER BY station`).catch(() => ({ rows: [] })),
     query(`SELECT id, vehicle_id, license_plate FROM cars ORDER BY vehicle_id`),
   ]);
@@ -561,6 +726,8 @@ export async function getFiltersMeta() {
   const drivers = (driversRes.rows || []).map((r) => ({
     id: r.id,
     label: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.display_name || r.id,
+    employee_number: formatPersonalNumber(r.employee_number),
+    is_active: !!r.is_active,
   }));
   const stations = (stationsRes.rows || []).map((r) => ({ id: r.id, label: r.id }));
   const vehicles = (vehiclesRes.rows || []).map((r) => ({
@@ -656,6 +823,124 @@ export async function getDomainData(domain, params = {}) {
       endDate: end,
       limit,
     });
+  }
+
+  if (domain === 'drivers' && params.question !== '__legacy__') {
+    const [res, endingSoonRes, noRoutesRes, recentStartersRes] = await Promise.all([
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.email, k.transporter_id, k.start_date::date AS start_date,
+          k.contract_end::date AS contract_end, k.is_active,
+          (SELECT COUNT(*) FROM daily_upload_rows d WHERE d.transporter_id = k.transporter_id AND d.day_key >= $1 AND d.day_key <= $2) AS routes_completed
+         FROM kenjo_employees k
+         WHERE k.transporter_id IS NOT NULL AND k.transporter_id != ''
+         ORDER BY k.last_name, k.first_name
+         LIMIT $3`,
+        [start, end, limit]
+      ),
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.contract_end::date AS contract_end, k.is_active
+         FROM kenjo_employees k
+         WHERE k.contract_end::date IS NOT NULL
+           AND k.contract_end::date >= CURRENT_DATE
+           AND k.contract_end::date <= CURRENT_DATE + INTERVAL '60 days'
+         ORDER BY k.contract_end::date ASC, k.last_name, k.first_name
+         LIMIT 12`
+      ),
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.transporter_id, k.start_date::date AS start_date, k.is_active
+         FROM kenjo_employees k
+         WHERE k.transporter_id IS NOT NULL AND k.transporter_id != ''
+           AND NOT EXISTS (
+             SELECT 1
+             FROM daily_upload_rows d
+             WHERE d.transporter_id = k.transporter_id
+               AND d.day_key >= $1
+               AND d.day_key <= $2
+           )
+         ORDER BY k.last_name, k.first_name
+         LIMIT 12`,
+        [start, end]
+      ),
+      query(
+        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
+          k.first_name, k.last_name, k.start_date::date AS start_date, k.contract_end::date AS contract_end
+         FROM kenjo_employees k
+         WHERE k.start_date::date IS NOT NULL
+           AND k.start_date::date >= CURRENT_DATE - INTERVAL '45 days'
+         ORDER BY k.start_date::date DESC, k.last_name, k.first_name
+         LIMIT 12`
+      ),
+    ]);
+    const rows = (res.rows || []).map((r) => ({
+      pn: formatPersonalNumber(r.employee_number) ?? '—',
+      name: [r.first_name, r.last_name].filter(Boolean).join(' ') || '—',
+      email: r.email || '—',
+      transporter_id: r.transporter_id || '—',
+      start_date: r.start_date,
+      contract_end: r.contract_end,
+      is_active: r.is_active,
+      routes_completed: Number(r.routes_completed) || 0,
+    }));
+    const activeCount = rows.filter((row) => row.is_active).length;
+    const inactiveCount = rows.length - activeCount;
+    const avgRoutes = rows.length ? roundTo(rows.reduce((sum, row) => sum + toNumber(row.routes_completed), 0) / rows.length, 1) : 0;
+    const topRoutesRows = [...rows].sort((a, b) => toNumber(b.routes_completed) - toNumber(a.routes_completed)).slice(0, 10);
+    return {
+      table: rows,
+      summary: { total: rows.length },
+      charts: {
+        activeMix: [
+          { label: 'Active', value: activeCount },
+          { label: 'Inactive', value: inactiveCount },
+        ],
+        topRoutesByDriver: topRoutesRows.map((row) => ({
+          label: row.name,
+          value: toNumber(row.routes_completed),
+        })),
+      },
+      insightTables: [
+        { title: 'Top drivers by routes', rows: topRoutesRows },
+        {
+          title: 'Contracts ending in next 60 days',
+          rows: (endingSoonRes.rows || []).map((row) => ({
+            pn: formatPersonalNumber(row.employee_number) ?? '—',
+            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
+            contract_end: row.contract_end,
+            is_active: row.is_active,
+          })),
+        },
+        {
+          title: 'Drivers with zero routes in selected period',
+          rows: (noRoutesRes.rows || []).map((row) => ({
+            pn: formatPersonalNumber(row.employee_number) ?? '—',
+            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
+            transporter_id: row.transporter_id || '—',
+            start_date: row.start_date,
+            is_active: row.is_active,
+          })),
+        },
+        {
+          title: 'Recent starters',
+          rows: (recentStartersRes.rows || []).map((row) => ({
+            pn: formatPersonalNumber(row.employee_number) ?? '—',
+            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
+            start_date: row.start_date,
+            contract_end: row.contract_end,
+          })),
+        },
+      ],
+      kpis: [
+        { key: 'drivers_total', label: 'Drivers in analytics set', value: rows.length, format: 'number' },
+        { key: 'drivers_active', label: 'Active drivers', value: activeCount, format: 'number' },
+        { key: 'drivers_inactive', label: 'Inactive drivers', value: inactiveCount, format: 'number' },
+        { key: 'drivers_avg_routes', label: 'Average routes per driver', value: avgRoutes, format: 'number' },
+        { key: 'drivers_contracts_ending_soon', label: 'Contracts ending soon', value: endingSoonRes.rows?.length || 0, format: 'number' },
+        { key: 'drivers_zero_routes', label: 'Drivers with zero routes', value: noRoutesRes.rows?.length || 0, format: 'number' },
+      ],
+    };
   }
 
   if (domain === 'drivers') {
@@ -773,6 +1058,64 @@ export async function getDomainData(domain, params = {}) {
         { key: 'attendance_total_presence', label: 'Driver presence records', value: totalPresent, format: 'number' },
         { key: 'attendance_avg_presence', label: 'Average drivers present per day', value: rows.length ? roundTo(totalPresent / rows.length, 1) : 0, format: 'number' },
         { key: 'attendance_peak_day', label: 'Highest attendance day', value: bestDay?.present || 0, format: 'number' },
+      ],
+    };
+  }
+
+  if (domain === 'timeoff') {
+    const year = Math.max(2020, Math.min(2099, Number(params.year) || new Date().getFullYear()));
+    const employeeIds = String(params.employeeIds || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const selectedEmployeeIds = employeeIds.length ? new Set(employeeIds) : null;
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year}-12-31`;
+
+    const [timeOffRes, employeesRes] = await Promise.all([
+      query(
+        `SELECT kenjo_user_id, employee_name, start_date, end_date, time_off_type, time_off_type_name, status
+         FROM kenjo_time_off
+         WHERE start_date <= $2::date AND end_date >= $1::date`,
+        [yearStart, yearEnd]
+      ),
+      query(
+        `SELECT kenjo_user_id AS id, first_name, last_name, display_name
+         FROM kenjo_employees
+         ORDER BY last_name, first_name`
+      ),
+    ]);
+    const employeeById = new Map(
+      (employeesRes.rows || []).map((row) => [
+        String(row.id),
+        {
+          id: String(row.id),
+          label: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.display_name || String(row.id),
+        },
+      ]),
+    );
+    const { monthly, employees } = buildTimeOffMonthlyAnalytics(timeOffRes.rows || [], year, employeeById, selectedEmployeeIds);
+    const totalUrlaub = monthly.reduce((sum, row) => sum + toNumber(row.urlaub_days), 0);
+    const totalKrank = monthly.reduce((sum, row) => sum + toNumber(row.krank_days), 0);
+    return {
+      table: monthly,
+      year,
+      selectedEmployeeIds: employeeIds,
+      charts: {
+        monthlyTotals: monthly,
+        employeeTotals: employees.slice(0, 24).map((row) => ({
+          employee_name: row.employee_name,
+          urlaub_days: row.urlaub_days,
+          krank_days: row.krank_days,
+        })),
+      },
+      insightTables: [
+        { title: 'Employee year totals', rows: employees },
+      ],
+      kpis: [
+        { key: 'timeoff_selected_employees', label: 'Selected employees', value: selectedEmployeeIds ? selectedEmployeeIds.size : employeesRes.rows?.length || 0, format: 'number' },
+        { key: 'timeoff_total_urlaub', label: `Vacation days in ${year}`, value: totalUrlaub, format: 'number' },
+        { key: 'timeoff_total_krank', label: `Sick days in ${year}`, value: totalKrank, format: 'number' },
       ],
     };
   }
@@ -895,6 +1238,70 @@ export async function getDomainData(domain, params = {}) {
         { key: 'performance_average_score', label: 'Average overall score', value: avgScore, format: 'number' },
         { key: 'performance_best_week', label: 'Best weekly score', value: toNumber(bestWeek?.overall_score), format: 'number' },
         { key: 'performance_latest_rank', label: 'Latest rank at DBX9', value: toNumber(latest?.rank_at_dbx9), format: 'number' },
+      ],
+    };
+  }
+
+  if (domain === 'fleet' && params.question !== '__legacy__') {
+    const [res, totalsRes, withoutDriverRes, workshopRes] = await Promise.all([
+      query(`SELECT status, COUNT(*)::int AS count FROM cars GROUP BY status`),
+      query(`
+        SELECT
+          COUNT(*)::int AS total_vehicles,
+          COUNT(*) FILTER (WHERE assigned_driver_id IS NULL OR assigned_driver_id = '')::int AS without_driver,
+          COUNT(*) FILTER (WHERE status = $1)::int AS active_vehicles,
+          COUNT(*) FILTER (WHERE status = $2)::int AS maintenance_vehicles
+        FROM cars
+      `, [CAR_STATUS_ACTIVE, CAR_STATUS_MAINTENANCE]),
+      query(
+        `SELECT vehicle_id, license_plate, status, assigned_driver_id
+         FROM cars
+         WHERE assigned_driver_id IS NULL OR assigned_driver_id = ''
+         ORDER BY status, vehicle_id
+         LIMIT 20`
+      ),
+      query(
+        `SELECT vehicle_id, license_plate, planned_workshop_from::date AS planned_workshop_from,
+                planned_workshop_to::date AS planned_workshop_to, planned_workshop_name, status
+         FROM cars
+         WHERE planned_workshop_from IS NOT NULL
+           AND planned_workshop_from <= CURRENT_DATE + INTERVAL '45 days'
+           AND COALESCE(planned_workshop_to::date, planned_workshop_from::date) >= CURRENT_DATE
+         ORDER BY planned_workshop_from ASC, vehicle_id
+         LIMIT 20`
+      ),
+    ]);
+    const totalsRow = totalsRes.rows[0] || {};
+    const totalVehicles = toNumber(totalsRow.total_vehicles);
+    const withoutDriver = toNumber(totalsRow.without_driver);
+    const assignmentCoverage = totalVehicles > 0 ? roundTo(((totalVehicles - withoutDriver) / totalVehicles) * 100, 1) : 0;
+    return {
+      table: res.rows || [],
+      summary: res.rows?.reduce((a, r) => ({ ...a, [r.status]: r.count }), {}) || {},
+      charts: {
+        statusDistribution: (res.rows || []).map((row) => ({ label: row.status || 'Unknown', value: toNumber(row.count) })),
+        assignmentCoverage: [
+          { label: 'Assigned', value: Math.max(0, totalVehicles - withoutDriver) },
+          { label: 'Without driver', value: withoutDriver },
+        ],
+        workshopTimeline: (workshopRes.rows || []).map((row) => ({
+          label: row.license_plate || row.vehicle_id || '—',
+          value: 1,
+          planned_workshop_from: row.planned_workshop_from,
+          planned_workshop_to: row.planned_workshop_to,
+        })),
+      },
+      insightTables: [
+        { title: 'Vehicles without driver assignment', rows: withoutDriverRes.rows || [] },
+        { title: 'Upcoming workshops', rows: workshopRes.rows || [] },
+      ],
+      kpis: [
+        { key: 'fleet_total_vehicles', label: 'Total fleet vehicles', value: totalVehicles, format: 'number' },
+        { key: 'fleet_active_vehicles', label: 'Active vehicles', value: toNumber(totalsRow.active_vehicles), format: 'number' },
+        { key: 'fleet_maintenance_vehicles', label: 'Vehicles in maintenance', value: toNumber(totalsRow.maintenance_vehicles), format: 'number' },
+        { key: 'fleet_assignment_coverage', label: 'Assignment coverage', value: assignmentCoverage, format: 'percent' },
+        { key: 'fleet_without_driver', label: 'Vehicles without driver', value: withoutDriver, format: 'number' },
+        { key: 'fleet_upcoming_workshops', label: 'Upcoming workshops', value: workshopRes.rows?.length || 0, format: 'number' },
       ],
     };
   }
@@ -1033,6 +1440,62 @@ export async function getDomainData(domain, params = {}) {
         { key: 'safety_total_inspections', label: 'PAVE inspections in range', value: totalInspections, format: 'number' },
         { key: 'safety_avg_per_day', label: 'Average inspections per day', value: dailyRows.length ? roundTo(totalInspections / dailyRows.length, 1) : 0, format: 'number' },
         { key: 'safety_status_count', label: 'Distinct inspection statuses', value: statusRows.length, format: 'number' },
+      ],
+    };
+  }
+
+  if (domain === 'compliance' && params.question !== '__legacy__') {
+    const [res, typeRes, urgentRes] = await Promise.all([
+      query(`
+        SELECT document_type, expiry_date, COUNT(*)::int AS cnt FROM car_documents
+        WHERE expiry_date IS NOT NULL AND expiry_date <= CURRENT_DATE + INTERVAL '90 days'
+        GROUP BY document_type, expiry_date ORDER BY expiry_date
+      `),
+      query(`
+        SELECT document_type, COUNT(*)::int AS cnt
+        FROM car_documents
+        WHERE expiry_date IS NOT NULL
+          AND expiry_date <= CURRENT_DATE + INTERVAL '90 days'
+          AND expiry_date >= CURRENT_DATE
+        GROUP BY document_type
+        ORDER BY cnt DESC, document_type
+      `),
+      query(`
+        SELECT car_id, document_type, expiry_date
+        FROM car_documents
+        WHERE expiry_date IS NOT NULL
+          AND expiry_date <= CURRENT_DATE + INTERVAL '30 days'
+          AND expiry_date >= CURRENT_DATE
+        ORDER BY expiry_date ASC, document_type
+        LIMIT 25
+      `),
+    ]);
+    const rows = (res.rows || []).map((row) => ({
+      document_type: row.document_type,
+      expiry_date: row.expiry_date,
+      cnt: toNumber(row.cnt),
+    }));
+    const totalExpiring = rows.reduce((sum, row) => sum + row.cnt, 0);
+    return {
+      table: rows,
+      charts: {
+        expiringByType: (typeRes.rows || []).map((row) => ({
+          label: row.document_type || 'Unknown',
+          value: toNumber(row.cnt),
+        })),
+        expiriesTimeline: rows.map((row) => ({
+          date: row.expiry_date,
+          count: row.cnt,
+          document_type: row.document_type,
+        })),
+      },
+      insightTables: [
+        { title: 'Urgent renewals in next 30 days', rows: urgentRes.rows || [] },
+      ],
+      kpis: [
+        { key: 'compliance_expiring_docs', label: 'Expiring documents in next 90 days', value: totalExpiring, format: 'number' },
+        { key: 'compliance_document_types', label: 'Document types affected', value: new Set(rows.map((row) => row.document_type)).size, format: 'number' },
+        { key: 'compliance_urgent_30d', label: 'Urgent renewals in 30 days', value: urgentRes.rows?.length || 0, format: 'number' },
       ],
     };
   }

@@ -19,8 +19,10 @@ export default function SidebarUser() {
     <>
       <div className="sidebar-user">
         <span className="sidebar-user-email" title={user.email}>{user.email}</span>
-        <button type="button" className="sidebar-user-btn" onClick={() => setShowChangePwd(true)}>{t('user.changePassword')}</button>
-        <button type="button" className="sidebar-user-btn" onClick={handleLogout}>{t('user.logout')}</button>
+        <div className="sidebar-user-actions">
+          <button type="button" className="sidebar-user-btn" onClick={() => setShowChangePwd(true)}>{t('user.changePassword')}</button>
+          <button type="button" className="sidebar-user-btn" onClick={handleLogout}>{t('user.logout')}</button>
+        </div>
       </div>
       {showChangePwd && (
         <ChangePasswordModal
@@ -28,12 +30,6 @@ export default function SidebarUser() {
           onSaved={() => setShowChangePwd(false)}
         />
       )}
-      <style>{`
-        .sidebar-user { padding: 0.5rem 1rem; border-bottom: 1px solid #e5e7eb; font-size: 0.85rem; }
-        .sidebar-user-email { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6b7280; margin-bottom: 0.25rem; }
-        .sidebar-user-btn { display: block; width: 100%; margin-top: 0.25rem; padding: 0.25rem 0.5rem; text-align: left; background: none; border: none; cursor: pointer; color: #374151; }
-        .sidebar-user-btn:hover { background: #f3f4f6; border-radius: 4px; }
-      `}</style>
     </>
   );
 }
