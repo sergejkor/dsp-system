@@ -61,22 +61,11 @@ import SettingsAdvancedPage from './pages/settings/SettingsAdvancedPage';
 import sidebarLogo from './assets/dsp-system-logo.png';
 import { getIntakeSummary } from './services/intakeApi.js';
 
-function MailIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="sidebar-notification-icon-svg">
-      <path
-        d="M4 6.75h16a1.25 1.25 0 0 1 1.25 1.25v8A2.25 2.25 0 0 1 19 18.25H5A2.25 2.25 0 0 1 2.75 16V8A1.25 1.25 0 0 1 4 6.75Zm0 1.5.13.1L12 13.83l7.87-5.48.13-.1H4Zm15.75 1.55-7.32 5.1a.75.75 0 0 1-.86 0l-7.32-5.1V16c0 .41.34.75.75.75h14c.41 0 .75-.34.75-.75V9.8Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
 function resolvePublicHostKind() {
   if (typeof window === 'undefined') return null;
   const host = String(window.location.hostname || '').toLowerCase();
   if (host.startsWith('personalfragebogen.') || host.startsWith('personal-fragebogen.')) return 'personal';
-  if (host.startsWith('schadenmeldung.')) return 'damage';
+  if (host.startsWith('schadenmeldung.') || host.startsWith('schadensmeldung.')) return 'damage';
   return null;
 }
 
@@ -149,16 +138,6 @@ function AppLayout() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-topbar">
-          <NavLink to="/personal-fragebogen-notifications" className="sidebar-notification-link" title="Notifications">
-            <span className="sidebar-notification-icon">
-              <MailIcon />
-            </span>
-            {unreadNotificationTotal > 0 && (
-              <span className="sidebar-notification-badge">
-                {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
-              </span>
-            )}
-          </NavLink>
           <div className="sidebar-brand">
             <img src={sidebarLogo} alt={t('appTitle')} className="sidebar-brand-logo" />
           </div>
@@ -185,8 +164,7 @@ function AppLayout() {
           {can('page_finance') && <NavLink to="/finance">{t('nav.finance')}</NavLink>}
           <NavLink to="/create-document">{t('nav.createDocument')}</NavLink>
           <div className="sidebar-nav-bottom">
-            <NavLink to="/settings">{t('nav.settings')}</NavLink>
-            <SidebarUser />
+            <SidebarUser unreadNotificationTotal={unreadNotificationTotal} />
           </div>
         </nav>
       </aside>
