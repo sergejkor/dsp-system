@@ -154,6 +154,144 @@ function buildTimeOffMonthlyAnalytics(rows, year, employeeById, employeeIdByName
   };
 }
 
+function buildSingleKindTimeOffAnalytics(rows, year, employeeById, employeeIdByName, selectedEmployeeIds = null, kind = 'urlaub') {
+  const monthKeys = listYearMonths(year);
+  const valueKey = kind === 'krank' ? 'krank_days' : 'urlaub_days';
+  const monthMap = new Map(
+    monthKeys.map((monthKey) => [monthKey, { month_key: monthKey, [valueKey]: 0 }]),
+  );
+  const byEmployee = new Map();
+
+  for (const row of rows || []) {
+    const explicitEmployeeId = String(row.kenjo_user_id ?? row.user_id ?? row.userId ?? '').trim();
+    const fallbackName = String(row.employee_name ?? row.employeeName ?? '').trim();
+    const resolvedEmployeeId = explicitEmployeeId || employeeIdByName.get(normalizeEmployeeName(fallbackName)) || '';
+    const employeeId = String(resolvedEmployeeId || fallbackName || '').trim();
+    if (!employeeId) continue;
+    if (selectedEmployeeIds && !selectedEmployeeIds.has(employeeId)) continue;
+    if (timeOffKindFromRow(row) !== kind) continue;
+
+    const status = String(row.status ?? '').trim().toLowerCase();
+    if (status && ['rejected', 'cancelled', 'canceled', 'declined'].includes(status)) continue;
+
+    const requestStart = toDateOnly(row.start_date ?? row.from ?? row.startDate);
+    const requestEnd = toDateOnly(row.end_date ?? row.to ?? row.endDate);
+    if (!requestStart || !requestEnd) continue;
+
+    const employee = employeeById.get(employeeId) || { id: employeeId, label: fallbackName || row.employee_name || employeeId };
+    if (!byEmployee.has(employeeId)) {
+      byEmployee.set(employeeId, {
+        employee_id: employeeId,
+        employee_name: employee.label || employeeId,
+        [valueKey]: 0,
+      });
+    }
+    const employeeRec = byEmployee.get(employeeId);
+
+    for (const monthKey of monthKeys) {
+      const monthStart = `${monthKey}-01`;
+      const [yy, mm] = monthKey.split('-').map(Number);
+      const monthEnd = `${monthKey}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`;
+      const clampedStart = requestStart > monthStart ? requestStart : monthStart;
+      const clampedEnd = requestEnd < monthEnd ? requestEnd : monthEnd;
+      if (!clampedStart || !clampedEnd || clampedStart > clampedEnd) continue;
+      const days = countWeekdaysInclusive(clampedStart, clampedEnd);
+      if (!days) continue;
+      monthMap.get(monthKey)[valueKey] += days;
+      employeeRec[valueKey] += days;
+    }
+  }
+
+  return {
+    monthly: monthKeys.map((monthKey) => monthMap.get(monthKey)),
+    employees: Array.from(byEmployee.values()).sort((a, b) => a.employee_name.localeCompare(b.employee_name)),
+    valueKey,
+  };
+}
+
+async function getTimeOffDomainData(params = {}, kind = 'urlaub') {
+  const year = Math.max(2020, Math.min(2099, Number(params.year) || new Date().getFullYear()));
+  const employeeIds = String(params.employeeIds || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const selectedEmployeeIds = employeeIds.length ? new Set(employeeIds) : null;
+  const yearStart = `${year}-01-01`;
+  const yearEnd = `${year}-12-31`;
+
+  const [timeOffRes, employeesRes] = await Promise.all([
+    query(
+      `SELECT kenjo_user_id, employee_name, start_date, end_date, time_off_type, time_off_type_name, status
+       FROM kenjo_time_off
+       WHERE start_date <= $2::date AND end_date >= $1::date`,
+      [yearStart, yearEnd]
+    ),
+    query(
+      `SELECT kenjo_user_id AS id, first_name, last_name, display_name
+       FROM kenjo_employees
+       ORDER BY last_name, first_name`
+    ),
+  ]);
+
+  const employeeById = new Map(
+    (employeesRes.rows || []).map((row) => [
+      String(row.id),
+      {
+        id: String(row.id),
+        label: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.display_name || String(row.id),
+      },
+    ]),
+  );
+  const employeeIdByName = new Map(
+    (employeesRes.rows || []).flatMap((row) => {
+      const id = String(row.id || '').trim();
+      if (!id) return [];
+      const labels = [
+        [row.first_name, row.last_name].filter(Boolean).join(' '),
+        row.display_name,
+      ]
+        .map((value) => normalizeEmployeeName(value))
+        .filter(Boolean);
+      return labels.map((label) => [label, id]);
+    }),
+  );
+
+  const { monthly, employees, valueKey } = buildSingleKindTimeOffAnalytics(
+    timeOffRes.rows || [],
+    year,
+    employeeById,
+    employeeIdByName,
+    selectedEmployeeIds,
+    kind,
+  );
+  const totalDays = monthly.reduce((sum, row) => sum + toNumber(row[valueKey]), 0);
+  const titlePrefix = kind === 'krank' ? 'Sick days' : 'Vacation days';
+  const keyPrefix = kind === 'krank' ? 'sickdays' : 'vacation';
+
+  return {
+    table: monthly,
+    year,
+    selectedEmployeeIds: employeeIds,
+    charts: {
+      monthlyTotals: monthly,
+      employeeTotals: employees.slice(0, 24).map((row) => ({
+        employee_name: row.employee_name,
+        [valueKey]: row[valueKey],
+      })),
+    },
+    insightTables: [
+      { title: 'Employee year totals', rows: employees },
+    ],
+    kpis: [
+      { key: `${keyPrefix}_selected_employees`, label: 'Selected employees', value: selectedEmployeeIds ? selectedEmployeeIds.size : employeesRes.rows?.length || 0, format: 'number' },
+      { key: `${keyPrefix}_total_days`, label: `${titlePrefix} in ${year}`, value: totalDays, format: 'number' },
+      { key: `${keyPrefix}_employees_with_days`, label: 'Employees with records', value: employees.length, format: 'number' },
+    ],
+    timeOffKind: kind,
+    valueKey,
+  };
+}
+
 export function rowsToWorksheetBuffer(sheetName, rows) {
   const normalizedRows = Array.isArray(rows) ? rows : [];
   const wb = XLSX.utils.book_new();
@@ -1141,6 +1279,14 @@ export async function getDomainData(domain, params = {}) {
         { key: 'timeoff_total_krank', label: `Sick days in ${year}`, value: totalKrank, format: 'number' },
       ],
     };
+  }
+
+  if (domain === 'vacation') {
+    return getTimeOffDomainData(params, 'urlaub');
+  }
+
+  if (domain === 'sickdays') {
+    return getTimeOffDomainData(params, 'krank');
   }
 
   if (domain === 'routes') {

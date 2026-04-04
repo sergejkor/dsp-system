@@ -18,7 +18,7 @@ import { useAppSettings } from '../context/AppSettingsContext';
 import * as analyticsApi from '../services/analyticsApi';
 import { formatKpiValue, kpiLabel } from '../utils/analyticsKpiDisplay.js';
 
-const TAB_KEYS = ['overview', 'operations', 'drivers', 'payroll', 'attendance', 'timeoff', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages', 'custom'];
+const TAB_KEYS = ['overview', 'operations', 'drivers', 'payroll', 'attendance', 'vacation', 'sickdays', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages', 'custom'];
 const DATE_PRESETS = ['today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'last_30', 'last_90', 'this_quarter', 'last_quarter', 'this_year', 'custom'];
 const COMPARE_MODES = ['none', 'previous_period', 'previous_month', 'previous_year'];
 const DRILLDOWN_METRIC_BY_KPI = {
@@ -61,10 +61,15 @@ const SECTION_QUESTIONS = {
     { id: 'peak_presence', label: 'Which days have the strongest staffing coverage?' },
     { id: 'attendance_projection', label: 'What does the near-term attendance projection show?' },
   ],
-  timeoff: [
+  vacation: [
     { id: 'yearly_vacation_load', label: 'How many vacation days were taken each month in the selected year?' },
+    { id: 'employee_vacation_totals', label: 'Which selected employees used the most vacation days?' },
+    { id: 'vacation_load_distribution', label: 'How is vacation load distributed over the year?' },
+  ],
+  sickdays: [
     { id: 'yearly_sick_load', label: 'How many sick days were taken each month in the selected year?' },
-    { id: 'employee_timeoff_mix', label: 'Which selected employees account for the biggest time-off volume?' },
+    { id: 'employee_sick_totals', label: 'Which selected employees had the most sick days?' },
+    { id: 'sick_load_distribution', label: 'How is sick-day load distributed over the year?' },
   ],
   routes: [
     { id: 'routes_volume', label: 'What is the total route volume?' },
@@ -286,6 +291,10 @@ function formatAnalyticsPeriod(start, end) {
   return formatAnalyticsDate(start || end);
 }
 
+function isTimeOffAnalyticsTab(tab) {
+  return tab === 'timeoff' || tab === 'vacation' || tab === 'sickdays';
+}
+
 export default function AnalyticsPage() {
   const { t } = useAppSettings();
   const [activeTab, setActiveTab] = useState('overview');
@@ -341,8 +350,8 @@ export default function AnalyticsPage() {
         payrollMonth: (overview?.period?.start || startDate || '').slice(0, 7),
         insuranceYear,
         question: activeQuestionId || undefined,
-        year: activeTab === 'timeoff' ? timeoffYear : undefined,
-        employeeIds: activeTab === 'timeoff' && timeoffEmployeeIds.length ? timeoffEmployeeIds.join(',') : undefined,
+        year: isTimeOffAnalyticsTab(activeTab) ? timeoffYear : undefined,
+        employeeIds: isTimeOffAnalyticsTab(activeTab) && timeoffEmployeeIds.length ? timeoffEmployeeIds.join(',') : undefined,
       });
       setDomainData(data);
     } catch (e) {
@@ -381,8 +390,8 @@ export default function AnalyticsPage() {
         endDate: overview?.period?.end || endDate,
         payrollMonth: (overview?.period?.start || startDate || '').slice(0, 7),
         insuranceYear,
-        year: activeTab === 'timeoff' ? timeoffYear : undefined,
-        employeeIds: activeTab === 'timeoff' && timeoffEmployeeIds.length ? timeoffEmployeeIds.join(',') : undefined,
+        year: isTimeOffAnalyticsTab(activeTab) ? timeoffYear : undefined,
+        employeeIds: isTimeOffAnalyticsTab(activeTab) && timeoffEmployeeIds.length ? timeoffEmployeeIds.join(',') : undefined,
       });
     } catch (e) {
       setError(e?.message || 'Export failed');
@@ -482,12 +491,19 @@ export default function AnalyticsPage() {
   const overviewPrimaryKpis = (overview?.kpis || []).slice(0, 4);
   const overviewSecondaryKpis = (overview?.kpis || []).slice(4);
   const visibleSavedViews = savedViews.slice(0, 4);
-  const activeRangeLabel = activeTab === 'timeoff' ? String(timeoffYear) : pagePeriodLabel;
+  const activeRangeLabel = isTimeOffAnalyticsTab(activeTab) ? String(timeoffYear) : pagePeriodLabel;
   const timeoffYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     return Array.from({ length: 6 }, (_, index) => currentYear - 3 + index);
   }, []);
   const activeDriverOptions = filtersMeta.drivers || [];
+  const allTimeoffEmployeeIds = useMemo(
+    () => activeDriverOptions.map((driver) => String(driver.id)).filter(Boolean),
+    [activeDriverOptions],
+  );
+  const timeoffValueKey = activeTab === 'sickdays' ? 'krank_days' : 'urlaub_days';
+  const timeoffSeriesLabel = activeTab === 'sickdays' ? 'Sick days' : 'Vacation days';
+  const timeoffTabTitle = activeTab === 'sickdays' ? 'Sick Days' : 'Vacation';
 
   const handleBlockExport = useCallback(async (format, title, rows) => {
     try {
@@ -519,6 +535,8 @@ export default function AnalyticsPage() {
 
   const renderTabLabel = useCallback((tab) => {
     if (tab === 'timeoff') return 'Urlaub / Krank';
+    if (tab === 'vacation') return 'Vacation';
+    if (tab === 'sickdays') return 'Sick Days';
     return t(`analytics.${tab}`);
   }, [t]);
 
@@ -628,7 +646,7 @@ export default function AnalyticsPage() {
                 type="button"
                 className="analytics-saved-chip"
                 onClick={() => {
-                  setActiveTab(view.page_key || 'overview');
+                  setActiveTab(view.page_key === 'timeoff' ? 'vacation' : (view.page_key || 'overview'));
                   const filters = view.filters_json || {};
                   setDatePreset(filters.datePreset || 'this_month');
                   setStartDate(filters.startDate || '');
@@ -688,7 +706,7 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {activeTab === 'timeoff' && (
+      {isTimeOffAnalyticsTab(activeTab) && (
         <div className="analytics-controls analytics-panel" style={{ marginTop: 0 }}>
           <div className="analytics-controls-row analytics-controls-row--stretch">
             <label className="analytics-label">
@@ -715,7 +733,7 @@ export default function AnalyticsPage() {
               </select>
             </label>
             <div className="analytics-inline-actions">
-              <button type="button" className="btn-secondary analytics-btn" onClick={() => setTimeoffEmployeeIds([])}>
+              <button type="button" className="btn-secondary analytics-btn" onClick={() => setTimeoffEmployeeIds(allTimeoffEmployeeIds)}>
                 All employees
               </button>
               <button type="button" className="btn-secondary analytics-btn" onClick={() => setTimeoffEmployeeIds([])}>
@@ -1058,14 +1076,14 @@ export default function AnalyticsPage() {
             </div>
           )}
 
-          {activeTab === 'timeoff' && (
+          {isTimeOffAnalyticsTab(activeTab) && (
             <div className="analytics-charts" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(360px,1fr))' }}>
               <div className="analytics-chart-card">
                 <div className="analytics-card-head">
-                  <h3>Vacation and sick days by month</h3>
+                  <h3>{timeoffTabTitle} by month</h3>
                   <div className="analytics-card-actions">
-                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', `timeoff-monthly-${timeoffYear}`, domainData.table || [])}>Excel</button>
-                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', `timeoff-monthly-${timeoffYear}`, domainData.table || [])}>PDF</button>
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', `${activeTab}-monthly-${timeoffYear}`, domainData.table || [])}>Excel</button>
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', `${activeTab}-monthly-${timeoffYear}`, domainData.table || [])}>PDF</button>
                   </div>
                 </div>
                 <div style={{ width: '100%', height: 300 }}>
@@ -1076,18 +1094,22 @@ export default function AnalyticsPage() {
                       <YAxis />
                       <Tooltip />
                       <Legend />
-                      <Bar dataKey="urlaub_days" name="Urlaub" fill={ANALYTICS_COLORS.secondary} radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="krank_days" name="Krank" fill={ANALYTICS_COLORS.danger} radius={[6, 6, 0, 0]} />
+                      <Bar
+                        dataKey={timeoffValueKey}
+                        name={timeoffSeriesLabel}
+                        fill={activeTab === 'sickdays' ? ANALYTICS_COLORS.danger : ANALYTICS_COLORS.secondary}
+                        radius={[6, 6, 0, 0]}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
               <div className="analytics-chart-card">
                 <div className="analytics-card-head">
-                  <h3>Selected employees totals</h3>
+                  <h3>{timeoffTabTitle} totals by employee</h3>
                   <div className="analytics-card-actions">
-                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', `timeoff-employees-${timeoffYear}`, domainData.insightTables?.[0]?.rows || [])}>Excel</button>
-                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', `timeoff-employees-${timeoffYear}`, domainData.insightTables?.[0]?.rows || [])}>PDF</button>
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('xlsx', `${activeTab}-employees-${timeoffYear}`, domainData.insightTables?.[0]?.rows || [])}>Excel</button>
+                    <button type="button" className="analytics-card-action" onClick={() => handleBlockExport('pdf', `${activeTab}-employees-${timeoffYear}`, domainData.insightTables?.[0]?.rows || [])}>PDF</button>
                   </div>
                 </div>
                 <div style={{ width: '100%', height: 300 }}>
@@ -1098,8 +1120,12 @@ export default function AnalyticsPage() {
                       <YAxis dataKey="employee_name" type="category" width={140} />
                       <Tooltip />
                       <Legend />
-                      <Bar dataKey="urlaub_days" name="Urlaub" fill={ANALYTICS_COLORS.secondary} radius={[0, 6, 6, 0]} />
-                      <Bar dataKey="krank_days" name="Krank" fill={ANALYTICS_COLORS.danger} radius={[0, 6, 6, 0]} />
+                      <Bar
+                        dataKey={timeoffValueKey}
+                        name={timeoffSeriesLabel}
+                        fill={activeTab === 'sickdays' ? ANALYTICS_COLORS.danger : ANALYTICS_COLORS.secondary}
+                        radius={[0, 6, 6, 0]}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
