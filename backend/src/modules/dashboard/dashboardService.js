@@ -8,7 +8,7 @@ import { getPaveGmailInspectionStats } from '../pave/paveGmailSyncService.js';
 import { getDamagesDomainData } from '../analytics/damagesAnalyticsService.js';
 import { getPublicIntakeSummary } from '../publicIntake/publicIntakeService.js';
 import { ensureEmployeeRescuesTable } from '../employees/employeeService.js';
-import { getTimeOffRequests } from '../kenjo/kenjoClient.js';
+import { getKenjoUsersList, getTimeOffRequests } from '../kenjo/kenjoClient.js';
 
 let dashboardCarsWorkshopColumnsReady = false;
 const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
@@ -157,6 +157,97 @@ function buildDenseDailyCounts(startIso, endIso, rows) {
   return out;
 }
 
+function isWithinDueWindow(dateValue, days = 30, now = new Date()) {
+  const iso = toDateOnly(dateValue);
+  if (!iso) return false;
+  const value = new Date(`${iso}T12:00:00Z`);
+  if (Number.isNaN(value.getTime())) return false;
+  const horizon = new Date(now);
+  horizon.setUTCDate(horizon.getUTCDate() + days);
+  return value.getTime() <= horizon.getTime();
+}
+
+function countEmployeeExpiringDocumentDates(users, now = new Date()) {
+  let count = 0;
+  for (const user of Array.isArray(users) ? users : []) {
+    const fields = Array.isArray(user?.customFields) ? user.customFields : [];
+    for (const field of fields) {
+      const key = String(field?.key || '').trim();
+      if (!['c_Fherschein', 'c_AusweisAblaufdatum', 'c_AufenthaltstitelAblaufdatum'].includes(key)) continue;
+      if (isWithinDueWindow(field?.value, 30, now)) count += 1;
+    }
+  }
+  return count;
+}
+
+async function getDashboardExpiringDocumentsCount(now = new Date()) {
+  const vehicleCountPromise = query(
+    `
+      WITH due_items AS (
+        SELECT d.id::text AS ref_id
+        FROM car_documents d
+        WHERE d.expiry_date IS NOT NULL
+          AND d.expiry_date <= CURRENT_DATE + INTERVAL '30 days'
+
+        UNION ALL
+
+        SELECT c.id::text || ':registration'
+        FROM cars c
+        WHERE c.registration_expiry IS NOT NULL
+          AND c.registration_expiry <= CURRENT_DATE + INTERVAL '30 days'
+
+        UNION ALL
+
+        SELECT c.id::text || ':insurance'
+        FROM cars c
+        WHERE c.insurance_expiry IS NOT NULL
+          AND c.insurance_expiry <= CURRENT_DATE + INTERVAL '30 days'
+
+        UNION ALL
+
+        SELECT c.id::text || ':lease'
+        FROM cars c
+        WHERE c.lease_expiry IS NOT NULL
+          AND c.lease_expiry <= CURRENT_DATE + INTERVAL '30 days'
+
+        UNION ALL
+
+        SELECT c.id::text || ':maintenance'
+        FROM cars c
+        WHERE c.next_maintenance_date IS NOT NULL
+          AND c.next_maintenance_date <= CURRENT_DATE + INTERVAL '30 days'
+      )
+      SELECT COUNT(*)::int AS cnt
+      FROM due_items
+    `
+  ).catch((err) => {
+    console.error('[dashboard] vehicle expiring documents aggregate failed', err);
+    return { rows: [{ cnt: 0 }] };
+  });
+
+  const employeeCountPromise = getKenjoUsersList()
+    .then((users) => countEmployeeExpiringDocumentDates(users || [], now))
+    .catch((err) => {
+      console.error('[dashboard] employee expiring documents aggregate failed', err);
+      return 0;
+    });
+
+  const [vehicleRes, employeeCount] = await Promise.all([vehicleCountPromise, employeeCountPromise]);
+  return Number(vehicleRes?.rows?.[0]?.cnt || 0) + Number(employeeCount || 0);
+}
+
+function overrideOverviewKpiValue(overview, key, value) {
+  if (!overview || !Array.isArray(overview.kpis)) return overview;
+  return {
+    ...overview,
+    kpis: overview.kpis.map((kpi) => (
+      kpi?.key === key
+        ? { ...kpi, value }
+        : kpi
+    )),
+  };
+}
+
 /**
  * @returns {Promise<import('./dashboardTypes.js').DashboardSummary>}
  */
@@ -176,6 +267,7 @@ export async function getDashboardSummary() {
     compareMode: 'none',
     insuranceYear,
   });
+  const expiringDocumentsPromise = getDashboardExpiringDocumentsCount(now);
 
   const pavePromise = getPaveGmailInspectionStats();
 
@@ -333,8 +425,9 @@ export async function getDashboardSummary() {
     };
   });
 
-  const [overview, paveInspections, damagesData, intake, recentRoutesByDayRes, recentPaveRes, recentFinesRes, workshopAppointmentsRes, rescueBonusLastMonthRes, timeOffSummary] = await Promise.all([
+  const [overviewRaw, expiringDocuments30Days, paveInspections, damagesData, intake, recentRoutesByDayRes, recentPaveRes, recentFinesRes, workshopAppointmentsRes, rescueBonusLastMonthRes, timeOffSummary] = await Promise.all([
     overviewPromise,
+    expiringDocumentsPromise,
     pavePromise,
     damagesPromise,
     intakePromise,
@@ -345,6 +438,7 @@ export async function getDashboardSummary() {
     rescueBonusLastMonthPromise,
     timeOffSummaryPromise,
   ]);
+  const overview = overrideOverviewKpiValue(overviewRaw, 'expiring_documents_30_days', expiringDocuments30Days);
 
   const openCasesTable = damagesData?.insightTables?.find((t) => t.title === 'Open cases');
 
