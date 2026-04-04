@@ -85,7 +85,14 @@ function timeOffKindFromRow(row) {
   return null;
 }
 
-function buildTimeOffMonthlyAnalytics(rows, year, employeeById, selectedEmployeeIds = null) {
+function normalizeEmployeeName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function buildTimeOffMonthlyAnalytics(rows, year, employeeById, employeeIdByName, selectedEmployeeIds = null) {
   const monthKeys = listYearMonths(year);
   const monthMap = new Map(
     monthKeys.map((monthKey) => [monthKey, { month_key: monthKey, urlaub_days: 0, krank_days: 0 }]),
@@ -93,7 +100,10 @@ function buildTimeOffMonthlyAnalytics(rows, year, employeeById, selectedEmployee
   const byEmployee = new Map();
 
   for (const row of rows || []) {
-    const employeeId = String(row.kenjo_user_id ?? row.user_id ?? row.userId ?? '').trim();
+    const explicitEmployeeId = String(row.kenjo_user_id ?? row.user_id ?? row.userId ?? '').trim();
+    const fallbackName = String(row.employee_name ?? row.employeeName ?? '').trim();
+    const resolvedEmployeeId = explicitEmployeeId || employeeIdByName.get(normalizeEmployeeName(fallbackName)) || '';
+    const employeeId = String(resolvedEmployeeId || fallbackName || '').trim();
     if (!employeeId) continue;
     if (selectedEmployeeIds && !selectedEmployeeIds.has(employeeId)) continue;
     const kind = timeOffKindFromRow(row);
@@ -105,7 +115,7 @@ function buildTimeOffMonthlyAnalytics(rows, year, employeeById, selectedEmployee
     const requestEnd = toDateOnly(row.end_date ?? row.to ?? row.endDate);
     if (!requestStart || !requestEnd) continue;
 
-    const employee = employeeById.get(employeeId) || { id: employeeId, label: row.employee_name || employeeId };
+    const employee = employeeById.get(employeeId) || { id: employeeId, label: fallbackName || row.employee_name || employeeId };
     if (!byEmployee.has(employeeId)) {
       byEmployee.set(employeeId, {
         employee_id: employeeId,
@@ -1094,7 +1104,20 @@ export async function getDomainData(domain, params = {}) {
         },
       ]),
     );
-    const { monthly, employees } = buildTimeOffMonthlyAnalytics(timeOffRes.rows || [], year, employeeById, selectedEmployeeIds);
+    const employeeIdByName = new Map(
+      (employeesRes.rows || []).flatMap((row) => {
+        const id = String(row.id || '').trim();
+        if (!id) return [];
+        const labels = [
+          [row.first_name, row.last_name].filter(Boolean).join(' '),
+          row.display_name,
+        ]
+          .map((value) => normalizeEmployeeName(value))
+          .filter(Boolean);
+        return labels.map((label) => [label, id]);
+      }),
+    );
+    const { monthly, employees } = buildTimeOffMonthlyAnalytics(timeOffRes.rows || [], year, employeeById, employeeIdByName, selectedEmployeeIds);
     const totalUrlaub = monthly.reduce((sum, row) => sum + toNumber(row.urlaub_days), 0);
     const totalKrank = monthly.reduce((sum, row) => sum + toNumber(row.krank_days), 0);
     return {
