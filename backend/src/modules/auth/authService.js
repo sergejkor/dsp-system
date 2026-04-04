@@ -60,7 +60,7 @@ export async function getSessionByToken(token) {
 
 export async function getUserWithRole(userId) {
   const res = await query(
-    `SELECT u.id, u.email, u.first_name, u.last_name, u.full_name, u.role_id, u.status, u.is_locked, u.login_enabled,
+    `SELECT u.id, u.email, u.first_name, u.last_name, u.full_name, u.avatar_url, u.role_id, u.status, u.is_locked, u.login_enabled,
             r.code AS role_code, r.name AS role_name
      FROM settings_users u
      LEFT JOIN settings_roles r ON r.id = u.role_id

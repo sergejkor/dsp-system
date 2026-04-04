@@ -163,12 +163,13 @@ function AppLayout() {
           {can('page_insurance') && <NavLink to="/insurance">{t('nav.insurance')}</NavLink>}
           {can('page_finance') && <NavLink to="/finance">{t('nav.finance')}</NavLink>}
           <NavLink to="/create-document">{t('nav.createDocument')}</NavLink>
-          <div className="sidebar-nav-bottom">
-            <SidebarUser unreadNotificationTotal={unreadNotificationTotal} />
-          </div>
         </nav>
       </aside>
       <main className="content">
+        <div className="content-topbar">
+          <div className="content-topbar-spacer" />
+          <SidebarUser unreadNotificationTotal={unreadNotificationTotal} />
+        </div>
         <Routes>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

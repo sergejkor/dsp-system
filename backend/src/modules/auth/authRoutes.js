@@ -82,6 +82,7 @@ router.get('/me', authMiddleware.loadAuth, authMiddleware.requireAuth, async (re
       first_name: u.first_name,
       last_name: u.last_name,
       full_name: u.full_name,
+      avatar_url: u.avatar_url,
       role_id: u.role_id,
       role_code: u.role_code,
       role_name: u.role_name,
