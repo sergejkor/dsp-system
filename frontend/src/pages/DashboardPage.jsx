@@ -60,6 +60,62 @@ function formatDateRange(fromValue, toValue) {
   return `${from} → ${to}`;
 }
 
+function subtractOneDay(isoDate) {
+  const raw = String(isoDate || '').slice(0, 10);
+  if (!raw) return '';
+  const dt = new Date(`${raw}T12:00:00`);
+  if (Number.isNaN(dt.getTime())) return raw;
+  dt.setDate(dt.getDate() - 1);
+  return dt.toISOString().slice(0, 10);
+}
+
+function getPaveDisplayPlate(report) {
+  return report?.display_plate || report?.plate_number || report?.vehicle_label || report?.vehicle_id || report?.vin_display || 'â€”';
+}
+
+function getLastMonthRange() {
+  const now = new Date();
+  const startCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return {
+    periodStart: startLastMonth.toISOString().slice(0, 10),
+    periodEndInclusive: subtractOneDay(startCurrentMonth.toISOString().slice(0, 10)),
+  };
+}
+
+function buildDenseLastNDays(rows, days = 14) {
+  const counts = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const iso = String(row?.date || '').slice(0, 10);
+    if (!iso) continue;
+    counts.set(iso, Number(row?.count) || 0);
+  }
+
+  const end = new Date();
+  end.setHours(12, 0, 0, 0);
+
+  const latestIso = [...counts.keys()].sort().at(-1);
+  if (latestIso) {
+    const latest = new Date(`${latestIso}T12:00:00`);
+    if (!Number.isNaN(latest.getTime()) && latest > end) {
+      end.setTime(latest.getTime());
+    }
+  }
+
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+
+  const out = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const iso = cursor.toISOString().slice(0, 10);
+    out.push({
+      date: iso,
+      count: counts.get(iso) || 0,
+    });
+  }
+  return out;
+}
+
 function orderOverviewKpis(kpis) {
   const list = Array.isArray(kpis) ? kpis : [];
   const byKey = new Map(list.map((k) => [k.key, k]));
@@ -107,10 +163,9 @@ export default function DashboardPage() {
   }, [data?.overview?.kpis]);
 
   const routesLast14 = useMemo(() => {
-    const rows = data?.overview?.charts?.routesByDay || [];
-    const sorted = [...rows].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
-    return sorted.slice(-14);
-  }, [data?.overview?.charts?.routesByDay]);
+    const rows = (data?.recentRoutesByDay?.length ? data.recentRoutesByDay : data?.overview?.charts?.routesByDay) || [];
+    return buildDenseLastNDays(rows, 14);
+  }, [data?.recentRoutesByDay, data?.overview?.charts?.routesByDay]);
 
   const routesMax = useMemo(() => Math.max(1, ...routesLast14.map((r) => Number(r.count) || 0)), [routesLast14]);
 
@@ -152,29 +207,37 @@ export default function DashboardPage() {
     }
     return labelForKpi(kpi);
   };
+  const routesVolumeTitle = language === 'de'
+    ? 'Routenzeilen (Cortex) - letzte 14 Tage'
+    : 'Route rows (Cortex) - last 14 days';
 
   const pave = data?.paveInspections || {};
   const publicIntake = data?.publicIntake || null;
   const canOpenPersonal = isSuperAdmin || hasPermission('page_employees');
   const canOpenDamage = isSuperAdmin || hasPermission('page_damages');
-  const personalNotifications = useMemo(
-    () => (publicIntake?.personalQuestionnaires?.recent || []).filter((row) => ['submitted', 'reviewing', 'error'].includes(String(row.status || '').toLowerCase())),
-    [publicIntake?.personalQuestionnaires?.recent]
-  );
-  const damageNotifications = useMemo(
-    () => (publicIntake?.damageReports?.recent || []).filter((row) => ['submitted', 'reviewing', 'error'].includes(String(row.status || '').toLowerCase())),
-    [publicIntake?.damageReports?.recent]
-  );
   const workshopAppointments = data?.recentWorkshopAppointments || [];
+  const timeOffSummary = data?.timeOffSummary || null;
+  const rescueBonusCardRange = useMemo(() => {
+    const fallback = getLastMonthRange();
+    return {
+      periodStart: data?.rescueBonusLastMonth?.periodStart || fallback.periodStart,
+      periodEndInclusive: data?.rescueBonusLastMonth?.periodEndExclusive
+        ? subtractOneDay(data.rescueBonusLastMonth.periodEndExclusive)
+        : fallback.periodEndInclusive,
+    };
+  }, [data?.rescueBonusLastMonth?.periodStart, data?.rescueBonusLastMonth?.periodEndExclusive]);
+  const timeOffCards = [
+    { key: 'vacation-last-month', label: 'Vacation days last month', value: timeOffSummary?.vacationDaysLastMonth },
+    { key: 'vacation-this-month', label: 'Vacation days this month', value: timeOffSummary?.vacationDaysThisMonth },
+    { key: 'sick-last-month', label: 'Sick days last month', value: timeOffSummary?.sickDaysLastMonth },
+    { key: 'sick-this-month', label: 'Sick days this month', value: timeOffSummary?.sickDaysThisMonth },
+  ];
 
   return (
     <section className="analytics-page dashboard-page">
       <header className="analytics-header">
         <div>
           <h1>{t('dashboard.title')}</h1>
-          <p className="muted" style={{ margin: '0.35rem 0 0', maxWidth: '52rem' }}>
-            {t('dashboard.subtitle')}
-          </p>
           {data?.overview?.period && (
             <p className="muted small" style={{ margin: '0.5rem 0 0' }}>
               {t('dashboard.periodOverview')}: <strong>{data.overview.period.start}</strong>
@@ -204,65 +267,6 @@ export default function DashboardPage() {
 
       {data && (
         <>
-          {publicIntake && (canOpenPersonal || canOpenDamage) && (
-            <>
-              <h2 className="dashboard-section-title">Notifications</h2>
-              <div className="dashboard-two-col">
-                {canOpenPersonal && (
-                  <div className="analytics-chart-card">
-                    <h3>New Personalfragebogen submissions</h3>
-                    <p className="muted small">
-                      Pending: <strong>{formatKpiValue(publicIntake.personalQuestionnaires?.pending, 'number')}</strong>
-                    </p>
-                    {personalNotifications.length === 0 ? (
-                      <p className="analytics-no-data">No new Personalfragebogen notifications.</p>
-                    ) : (
-                      <div className="analytics-donut-list">
-                        {personalNotifications.map((row) => (
-                          <Link key={row.id} className="analytics-donut-item" to={`/personal-fragebogen-review?id=${row.id}`}>
-                            <span className="analytics-donut-label">
-                              {[row.first_name, row.last_name].filter(Boolean).join(' ') || row.email || `Submission ${row.id}`}
-                            </span>
-                            <span className="analytics-donut-value">{formatDateNormal(row.created_at)}</span>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                    <p style={{ marginTop: '0.85rem' }}>
-                      <Link to="/personal-fragebogen-review">Open Personalfragebogen review queue</Link>
-                    </p>
-                  </div>
-                )}
-
-                {canOpenDamage && (
-                  <div className="analytics-chart-card">
-                    <h3>New Schadenmeldung submissions</h3>
-                    <p className="muted small">
-                      Pending: <strong>{formatKpiValue(publicIntake.damageReports?.pending, 'number')}</strong>
-                    </p>
-                    {damageNotifications.length === 0 ? (
-                      <p className="analytics-no-data">No new Schadenmeldung notifications.</p>
-                    ) : (
-                      <div className="analytics-donut-list">
-                        {damageNotifications.map((row) => (
-                          <Link key={row.id} className="analytics-donut-item" to={`/schadenmeldung-review?id=${row.id}`}>
-                            <span className="analytics-donut-label">
-                              {row.driver_name || row.reporter_name || `Report ${row.id}`}
-                            </span>
-                            <span className="analytics-donut-value">{formatDateNormal(row.created_at)}</span>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                    <p style={{ marginTop: '0.85rem' }}>
-                      <Link to="/schadenmeldung-review">Open Schadenmeldung review queue</Link>
-                    </p>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-
           {workshopAppointments.length > 0 && (
             <>
               <h2 className="dashboard-section-title">Planned Workshop appointments</h2>
@@ -289,6 +293,23 @@ export default function DashboardPage() {
 
           <h2 className="dashboard-section-title">{t('dashboard.section.executive')}</h2>
           <div className="analytics-kpi-grid">
+            <div className="analytics-kpi-card">
+              <div className="analytics-kpi-label">Total Rescue Bonus last month</div>
+              <div className="analytics-kpi-value">
+                {formatKpiValue(data?.rescueBonusLastMonth?.total ?? 0, 'currency')}
+              </div>
+              <p className="muted small" style={{ margin: '0.6rem 0 0' }}>
+                {formatDateNormal(rescueBonusCardRange.periodStart)}
+                {' -> '}
+                {formatDateNormal(rescueBonusCardRange.periodEndInclusive)}
+              </p>
+            </div>
+            {timeOffCards.map((card) => (
+              <div key={card.key} className="analytics-kpi-card">
+                <div className="analytics-kpi-label">{card.label}</div>
+                <div className="analytics-kpi-value">{formatKpiValue(card.value ?? 0, 'number')}</div>
+              </div>
+            ))}
             {orderedKpis.map((kpi) => (
               <div key={kpi.key} className="analytics-kpi-card">
                 <div className="analytics-kpi-label">{dashboardKpiLabel(kpi)}</div>
@@ -395,8 +416,7 @@ export default function DashboardPage() {
 
           <div className="dashboard-two-col">
             <div className="analytics-chart-card">
-              <h3>{t('dashboard.chart.routesVolume')}</h3>
-              <p className="muted small">{t('dashboard.chart.routesVolumeHint')}</p>
+              <h3>{routesVolumeTitle}</h3>
               {routesLast14.length === 0 ? (
                 <p className="analytics-no-data">{t('dashboard.empty.routes')}</p>
               ) : (
@@ -505,7 +525,7 @@ export default function DashboardPage() {
                     ) : (
                       data.recentPaveReports.map((r) => (
                         <tr key={r.id}>
-                          <td>{r.plate_number || '—'}</td>
+                          <td>{getPaveDisplayPlate(r)}</td>
                           <td>{r.status || '—'}</td>
                           <td>{formatDateNormal(r.inspection_date || r.report_date) || formatTs(r.created_at)}</td>
                           <td>
