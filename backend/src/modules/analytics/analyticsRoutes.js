@@ -114,7 +114,7 @@ router.delete('/saved-views/:id', async (req, res) => {
 /**
  * GET /api/analytics/operations, /drivers, /payroll, /attendance, /routes, /performance, /safety, /fleet, /hr, /compliance
  */
-const domainKeys = ['operations', 'drivers', 'payroll', 'attendance', 'timeoff', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages'];
+const domainKeys = ['operations', 'drivers', 'payroll', 'attendance', 'timeoff', 'vacation', 'sickdays', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages'];
 domainKeys.forEach((domain) => {
   router.get(`/${domain}`, async (req, res) => {
     try {
