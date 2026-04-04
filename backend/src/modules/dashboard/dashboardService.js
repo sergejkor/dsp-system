@@ -8,6 +8,7 @@ import { getPaveGmailInspectionStats } from '../pave/paveGmailSyncService.js';
 import { getDamagesDomainData } from '../analytics/damagesAnalyticsService.js';
 import { getPublicIntakeSummary } from '../publicIntake/publicIntakeService.js';
 import { ensureEmployeeRescuesTable } from '../employees/employeeService.js';
+import { getTimeOffRequests } from '../kenjo/kenjoClient.js';
 
 let dashboardCarsWorkshopColumnsReady = false;
 const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
@@ -63,11 +64,32 @@ function countWeekdaysInclusive(startYmd, endYmd) {
 }
 
 function classifyTimeOffKind(row) {
-  const typeId = String(row.time_off_type ?? '').trim();
-  const typeName = String(row.time_off_type_name ?? '').trim().toLowerCase();
+  const typeId = String(
+    row.time_off_type
+    ?? row.time_off_type_id
+    ?? row._timeOffTypeId
+    ?? row.timeOffTypeId
+    ?? row.type
+    ?? '',
+  ).trim();
+  const typeName = String(
+    row.time_off_type_name
+    ?? row.type_name
+    ?? row.timeOffTypeName
+    ?? row.description
+    ?? row.typeName
+    ?? row._timeOffType?.name
+    ?? '',
+  ).trim().toLowerCase();
   if (typeId === KENJO_TYPE_URLAUB || /urlaub|vacation|paid leave/.test(typeName)) return 'vacation';
   if (typeId === KENJO_TYPE_KRANK || /krank|sick|ill/.test(typeName)) return 'sick';
   return null;
+}
+
+function isIgnoredTimeOffStatus(statusValue) {
+  const status = String(statusValue ?? '').trim().toLowerCase();
+  if (!status) return false;
+  return /^(rejected|declined|cancelled|canceled)/.test(status);
 }
 
 function clampWeekdayCount(requestStart, requestEnd, rangeStart, rangeEnd) {
@@ -91,8 +113,7 @@ function buildDashboardTimeOffSummary(rows, now = new Date()) {
   };
 
   for (const row of Array.isArray(rows) ? rows : []) {
-    const status = String(row.status ?? '').trim().toLowerCase();
-    if (status && ['rejected', 'cancelled', 'canceled', 'declined'].includes(status)) continue;
+    if (isIgnoredTimeOffStatus(row.status)) continue;
 
     const kind = classifyTimeOffKind(row);
     if (!kind) continue;
@@ -301,15 +322,8 @@ export async function getDashboardSummary() {
     return { rows: [{ total: 0 }] };
   });
 
-  const timeOffSummaryPromise = query(
-    `
-      SELECT start_date, end_date, time_off_type, time_off_type_name, status
-      FROM kenjo_time_off
-      WHERE end_date >= $1::date
-        AND start_date <= $2::date
-    `,
-    [timeOffRangeStart, timeOffRangeEnd]
-  ).then((res) => buildDashboardTimeOffSummary(res.rows || [], now)).catch((err) => {
+  const timeOffSummaryPromise = getTimeOffRequests(timeOffRangeStart, timeOffRangeEnd)
+  .then((rows) => buildDashboardTimeOffSummary(rows || [], now)).catch((err) => {
     console.error('[dashboard] time off aggregate failed', err);
     return {
       vacationDaysThisMonth: 0,
