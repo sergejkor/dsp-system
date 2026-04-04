@@ -99,6 +99,115 @@ function AppRoutes() {
   );
 }
 
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="topbar-search-icon">
+      <path
+        d="M10.75 4.25a6.5 6.5 0 1 0 4.02 11.61l3.68 3.67a.75.75 0 1 0 1.06-1.06l-3.67-3.68a6.5 6.5 0 0 0-5.09-10.54Zm0 1.5a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function ChevronIcon({ direction = 'down' }) {
+  const rotation = direction === 'up' ? 'rotate(180 12 12)' : 'rotate(0 12 12)';
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="topbar-search-action-icon">
+      <path
+        transform={rotation}
+        d="M7.47 9.22a.75.75 0 0 1 1.06 0L12 12.69l3.47-3.47a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 0 1 0-1.06Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="topbar-search-action-icon">
+      <path
+        d="M7.28 7.28a.75.75 0 0 1 1.06 0L12 10.94l3.66-3.66a.75.75 0 1 1 1.06 1.06L13.06 12l3.66 3.66a.75.75 0 1 1-1.06 1.06L12 13.06l-3.66 3.66a.75.75 0 1 1-1.06-1.06L10.94 12 7.28 8.34a.75.75 0 0 1 0-1.06Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function TopbarPageSearch({ scopeSelector = '.content' }) {
+  const location = useLocation();
+  const [query, setQuery] = React.useState('');
+  const [status, setStatus] = React.useState('');
+
+  React.useEffect(() => {
+    setQuery('');
+    setStatus('');
+  }, [location.pathname, location.search]);
+
+  function focusSearchTarget() {
+    const target = document.querySelector(scopeSelector);
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+
+  function runSearch(backward = false) {
+    const text = String(query || '').trim();
+    if (!text) {
+      setStatus('');
+      return;
+    }
+    focusSearchTarget();
+    const found = typeof window.find === 'function'
+      ? window.find(text, false, backward, true, false, false, false)
+      : false;
+    setStatus(found ? '' : 'Nothing found on this page');
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    runSearch(false);
+  }
+
+  return (
+    <form className="topbar-search" onSubmit={handleSubmit} role="search">
+      <div className="topbar-search-shell">
+        <SearchIcon />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            if (status) setStatus('');
+          }}
+          placeholder="Search this page"
+          aria-label="Search this page"
+        />
+        {query ? (
+          <>
+            <button type="button" className="topbar-search-action" onClick={() => runSearch(true)} title="Previous result">
+              <ChevronIcon direction="up" />
+            </button>
+            <button type="button" className="topbar-search-action" onClick={() => runSearch(false)} title="Next result">
+              <ChevronIcon direction="down" />
+            </button>
+            <button
+              type="button"
+              className="topbar-search-action topbar-search-action--clear"
+              onClick={() => {
+                setQuery('');
+                setStatus('');
+              }}
+              title="Clear search"
+            >
+              <CloseIcon />
+            </button>
+          </>
+        ) : null}
+      </div>
+      {status ? <span className="topbar-search-status">{status}</span> : null}
+    </form>
+  );
+}
+
 function AppLayout() {
   const { t } = useAppSettings();
   const { hasPermission, isSuperAdmin } = useAuth();
@@ -167,7 +276,7 @@ function AppLayout() {
       </aside>
       <main className="content">
         <div className="content-topbar">
-          <div className="content-topbar-spacer" />
+          <TopbarPageSearch />
           <SidebarUser unreadNotificationTotal={unreadNotificationTotal} />
         </div>
         <Routes>
