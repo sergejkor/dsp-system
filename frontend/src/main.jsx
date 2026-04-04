@@ -138,37 +138,159 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
   const location = useLocation();
   const [query, setQuery] = React.useState('');
   const [status, setStatus] = React.useState('');
+  const [currentIndex, setCurrentIndex] = React.useState(0);
+  const matchesRef = React.useRef([]);
 
   React.useEffect(() => {
     setQuery('');
     setStatus('');
+    setCurrentIndex(0);
   }, [location.pathname, location.search]);
 
-  function focusSearchTarget() {
-    const target = document.querySelector(scopeSelector);
-    if (target && typeof target.focus === 'function') target.focus();
+  const normalizeText = React.useCallback((value) => String(value || '').toLowerCase(), []);
+
+  const clearHighlights = React.useCallback((root) => {
+    if (!root) return;
+    const marks = root.querySelectorAll('mark.topbar-search-highlight');
+    marks.forEach((mark) => {
+      const parent = mark.parentNode;
+      if (!parent) return;
+      parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
+      parent.normalize();
+    });
+  }, []);
+
+  const highlightMatches = React.useCallback((root, rawQuery) => {
+    if (!root) return [];
+    const queryText = String(rawQuery || '').trim();
+    if (!queryText) return [];
+    const loweredQuery = normalizeText(queryText);
+    const doc = root.ownerDocument || document;
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node?.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (parent.closest('[data-search-skip="true"]')) return NodeFilter.FILTER_REJECT;
+        const tag = parent.tagName;
+        if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION'].includes(tag)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    const textNodes = [];
+    let currentNode = walker.nextNode();
+    while (currentNode) {
+      textNodes.push(currentNode);
+      currentNode = walker.nextNode();
+    }
+
+    const marks = [];
+    textNodes.forEach((textNode) => {
+      const textValue = textNode.nodeValue || '';
+      const loweredValue = normalizeText(textValue);
+      let fromIndex = 0;
+      let matchIndex = loweredValue.indexOf(loweredQuery, fromIndex);
+      if (matchIndex === -1) return;
+
+      const fragment = doc.createDocumentFragment();
+      while (matchIndex !== -1) {
+        if (matchIndex > fromIndex) {
+          fragment.appendChild(doc.createTextNode(textValue.slice(fromIndex, matchIndex)));
+        }
+        const mark = doc.createElement('mark');
+        mark.className = 'topbar-search-highlight';
+        mark.textContent = textValue.slice(matchIndex, matchIndex + queryText.length);
+        fragment.appendChild(mark);
+        marks.push(mark);
+        fromIndex = matchIndex + queryText.length;
+        matchIndex = loweredValue.indexOf(loweredQuery, fromIndex);
+      }
+      if (fromIndex < textValue.length) {
+        fragment.appendChild(doc.createTextNode(textValue.slice(fromIndex)));
+      }
+      textNode.parentNode?.replaceChild(fragment, textNode);
+    });
+
+    return marks;
+  }, [normalizeText]);
+
+  React.useEffect(() => {
+    const scope = document.querySelector(scopeSelector);
+    const root = scope?.querySelector('.content-body');
+    if (!root) return undefined;
+    clearHighlights(root);
+    matchesRef.current = [];
+    setCurrentIndex(0);
+
+    const trimmed = String(query || '').trim();
+    if (!trimmed) {
+      setStatus('');
+      return undefined;
+    }
+
+    const marks = highlightMatches(root, trimmed);
+    matchesRef.current = marks;
+    if (!marks.length) {
+      setStatus('Nothing found on this page');
+      return undefined;
+    }
+
+    setStatus(`${marks.length} match${marks.length === 1 ? '' : 'es'}`);
+    setCurrentIndex(0);
+    return () => {
+      clearHighlights(root);
+      matchesRef.current = [];
+    };
+  }, [query, location.pathname, location.search, scopeSelector, clearHighlights, highlightMatches]);
+
+  React.useEffect(() => {
+    const matches = matchesRef.current || [];
+    matches.forEach((mark, index) => {
+      if (!mark) return;
+      if (index === currentIndex) {
+        mark.classList.add('is-active');
+      } else {
+        mark.classList.remove('is-active');
+      }
+    });
+    const active = matches[currentIndex];
+    if (active) {
+      active.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      setStatus(`${currentIndex + 1} of ${matches.length} matches`);
+    }
+  }, [currentIndex]);
+
+  function moveMatch(step) {
+    const matches = matchesRef.current || [];
+    if (!matches.length) {
+      setStatus('Nothing found on this page');
+      return;
+    }
+    setCurrentIndex((prev) => {
+      const next = (prev + step + matches.length) % matches.length;
+      return next;
+    });
   }
 
-  function runSearch(backward = false) {
+  function runSearch(step = 1) {
     const text = String(query || '').trim();
     if (!text) {
       setStatus('');
       return;
     }
-    focusSearchTarget();
-    const found = typeof window.find === 'function'
-      ? window.find(text, false, backward, true, false, false, false)
-      : false;
-    setStatus(found ? '' : 'Nothing found on this page');
+    moveMatch(step);
   }
 
   function handleSubmit(e) {
     e.preventDefault();
-    runSearch(false);
+    runSearch(1);
   }
 
   return (
-    <form className="topbar-search" onSubmit={handleSubmit} role="search">
+    <form className="topbar-search" onSubmit={handleSubmit} role="search" data-search-skip="true">
       <div className="topbar-search-shell">
         <SearchIcon />
         <input
@@ -183,18 +305,23 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
         />
         {query ? (
           <>
-            <button type="button" className="topbar-search-action" onClick={() => runSearch(true)} title="Previous result">
+            <button type="button" className="topbar-search-action" onClick={() => runSearch(-1)} title="Previous result">
               <ChevronIcon direction="up" />
             </button>
-            <button type="button" className="topbar-search-action" onClick={() => runSearch(false)} title="Next result">
+            <button type="button" className="topbar-search-action" onClick={() => runSearch(1)} title="Next result">
               <ChevronIcon direction="down" />
             </button>
             <button
               type="button"
               className="topbar-search-action topbar-search-action--clear"
               onClick={() => {
+                const scope = document.querySelector(scopeSelector);
+                const root = scope?.querySelector('.content-body');
+                clearHighlights(root);
+                matchesRef.current = [];
                 setQuery('');
                 setStatus('');
+                setCurrentIndex(0);
               }}
               title="Clear search"
             >
@@ -279,9 +406,10 @@ function AppLayout() {
           <TopbarPageSearch />
           <SidebarUser unreadNotificationTotal={unreadNotificationTotal} />
         </div>
-        <Routes>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <div className="content-body">
+          <Routes>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/kenjo-sync" element={<KenjoSyncPage />} />
             <Route path="/employee" element={<EmployeeProfilePage />} />
             <Route path="/personal-fragebogen-notifications" element={<PersonalQuestionnaireNotificationsPage />} />
@@ -330,8 +458,9 @@ function AppLayout() {
               <Route path="security" element={<SettingsSecurityPage />} />
               <Route path="audit" element={<SettingsAuditPage />} />
               <Route path="advanced" element={<SettingsAdvancedPage />} />
-        </Route>
-        </Routes>
+            </Route>
+          </Routes>
+        </div>
       </main>
     </div>
   );
