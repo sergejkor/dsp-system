@@ -118,8 +118,8 @@ function buildDashboardTimeOffSummary(rows, now = new Date()) {
     const kind = classifyTimeOffKind(row);
     if (!kind) continue;
 
-    const requestStart = toDateOnly(row.start_date);
-    const requestEnd = toDateOnly(row.end_date);
+    const requestStart = toDateOnly(row.start_date ?? row.from ?? row.startDate ?? row.start);
+    const requestEnd = toDateOnly(row.end_date ?? row.to ?? row.endDate ?? row.end);
     if (!requestStart || !requestEnd) continue;
 
     const thisMonthDays = clampWeekdayCount(requestStart, requestEnd, currentMonthStart, today);
