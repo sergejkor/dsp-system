@@ -669,7 +669,10 @@ async function enrichPayrollRowsWithKenjoHours(month, rows) {
     return {
       ...row,
       worked_hours: row?.worked_hours == null ? monthlyHours.workedHours : row.worked_hours,
-      expected_hours: row?.expected_hours == null ? monthlyHours.expectedHours : row.expected_hours,
+      // Keep the first visible frontend hours column aligned with actual worked hours.
+      expected_hours: monthlyHours.workedHours,
+      contract_expected_hours:
+        row?.contract_expected_hours == null ? monthlyHours.expectedHours : row.contract_expected_hours,
       overtime_hours: row?.overtime_hours == null ? monthlyHours.overtimeHours : row.overtime_hours,
     };
   });
@@ -1204,7 +1207,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
         weeks: numWeeks,
         working_days: workingDays,
         worked_hours: monthlyHours.workedHours,
-        expected_hours: monthlyHours.expectedHours,
+        expected_hours: monthlyHours.workedHours,
+        contract_expected_hours: monthlyHours.expectedHours,
         overtime_hours: monthlyHours.overtimeHours,
         period_days: periodDays,
         total_bonus: Math.round(totalBonus * 100) / 100,
@@ -1350,7 +1354,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
       pn,
       working_days: manual.working_days,
       worked_hours: monthlyHours.workedHours,
-      expected_hours: monthlyHours.expectedHours,
+      expected_hours: monthlyHours.workedHours,
+      contract_expected_hours: monthlyHours.expectedHours,
       overtime_hours: monthlyHours.overtimeHours,
       period_days: periodDays,
       total_bonus: effectiveTotalBonus,
