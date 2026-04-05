@@ -719,6 +719,23 @@ export async function getKenjoAttendances(fromDate, toDate) {
   return merged;
 }
 
+export async function getKenjoExpectedTime(fromDate, toDate) {
+  const from = typeof fromDate === 'string' ? fromDate.slice(0, 10) : '';
+  const to = typeof toDate === 'string' ? toDate.slice(0, 10) : '';
+  if (!from || !to) return [];
+  try {
+    // This tenant rejects extra query params like limit/page, so keep the request minimal.
+    const data = await kenjoGet('/attendances/expected-time', { from, to });
+    return normalizeArrayPayload(data);
+  } catch (err) {
+    const msg = String(err?.message || err || '');
+    if (msg.includes('/attendances/expected-time') && msg.includes('404')) {
+      return [];
+    }
+    throw err;
+  }
+}
+
 export async function updateEmployeeWork(employeeId, body) {
   const id = String(employeeId || '').trim();
   if (!id) throw new Error('employeeId is required');
@@ -787,6 +804,7 @@ const kenjoClient = {
   getKenjoEmployeeByIdReadable,
   updateEmployeeAccounts,
   getKenjoAttendances,
+  getKenjoExpectedTime,
   createKenjoEmployee,
   updateKenjoAttendance,
   deleteKenjoAttendance,

@@ -1,5 +1,10 @@
 import { query } from '../../db.js';
-import { getKenjoUsersList, getKenjoAttendances, getTimeOffRequests } from '../kenjo/kenjoClient.js';
+import {
+  getKenjoUsersList,
+  getKenjoAttendances,
+  getKenjoExpectedTime,
+  getTimeOffRequests,
+} from '../kenjo/kenjoClient.js';
 import settingsService from '../settings/settingsService.js';
 import { PDFDocument } from 'pdf-lib';
 import { PDFParse } from 'pdf-parse';
@@ -326,6 +331,350 @@ function buildTimeOffDaysByEmployee(timeOffRows, monthStart, monthEnd, krankType
  * Calculate payroll table for a month and KPI period (from–to).
  * Returns array of row objects for frontend table.
  */
+function getCalendarMonthRange(year, month) {
+  const y = Number(year);
+  const m = Number(month);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || m < 1 || m > 12) {
+    throw new Error('year and month are required');
+  }
+  const monthStr = `${y}-${String(m).padStart(2, '0')}`;
+  const start = `${monthStr}-01`;
+  const end = endOfMonthIso(y, m - 1);
+  return {
+    year: y,
+    month: m,
+    monthStr,
+    start,
+    end,
+    // Keep the same date-only calendar-month boundaries the payroll module already uses.
+    startDateTime: `${start}T00:00:00`,
+    endDateTime: `${end}T23:59:59`,
+  };
+}
+
+function resolveKenjoEmployeeId(record) {
+  return String(
+    record?.userId ??
+    record?.user_id ??
+    record?.employeeId ??
+    record?.employee_id ??
+    record?.user?._id ??
+    record?.user?.id ??
+    record?.employee?._id ??
+    record?.employee?.id ??
+    record?.account?._id ??
+    record?.account?.id ??
+    ''
+  ).trim();
+}
+
+function getNestedValue(obj, path) {
+  let current = obj;
+  for (const segment of path) {
+    if (current == null) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function durationValueToHours(value, unitHint = null) {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (unitHint === 'hours') return value;
+    if (unitHint === 'minutes') return value / 60;
+    if (unitHint === 'seconds') return value / 3600;
+    if (value > 1440) return value / 3600;
+    if (value > 24) return value / 60;
+    return value;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return 0;
+
+  const hhmmss = raw.match(/^(-?\d+):(\d{2})(?::(\d{2}))?$/);
+  if (hhmmss) {
+    const hours = Number(hhmmss[1]) || 0;
+    const minutes = Number(hhmmss[2]) || 0;
+    const seconds = Number(hhmmss[3]) || 0;
+    return hours + (minutes / 60) + (seconds / 3600);
+  }
+
+  const numeric = Number(raw.replace(',', '.'));
+  if (Number.isFinite(numeric)) {
+    return durationValueToHours(numeric, unitHint);
+  }
+
+  return 0;
+}
+
+function timeValueToSeconds(value) {
+  if (value == null || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const hhmmss = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (hhmmss) {
+    return (Number(hhmmss[1]) || 0) * 3600 + (Number(hhmmss[2]) || 0) * 60 + (Number(hhmmss[3]) || 0);
+  }
+
+  const isoTime = raw.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (isoTime) {
+    return (Number(isoTime[1]) || 0) * 3600 + (Number(isoTime[2]) || 0) * 60 + (Number(isoTime[3]) || 0);
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.getUTCHours() * 3600 + parsed.getUTCMinutes() * 60 + parsed.getUTCSeconds();
+  }
+
+  return null;
+}
+
+function getAttendanceBreakHours(attendance) {
+  const breakCandidates = [
+    { path: ['breakHours'], unit: 'hours' },
+    { path: ['break_hours'], unit: 'hours' },
+    { path: ['breakMinutes'], unit: 'minutes' },
+    { path: ['break_minutes'], unit: 'minutes' },
+    { path: ['breakTime'], unit: 'minutes' },
+    { path: ['break_time'], unit: 'minutes' },
+    { path: ['breakSeconds'], unit: 'seconds' },
+    { path: ['break_seconds'], unit: 'seconds' },
+    { path: ['breakDuration'], unit: null },
+    { path: ['break_duration'], unit: null },
+  ];
+
+  for (const candidate of breakCandidates) {
+    const value = getNestedValue(attendance, candidate.path);
+    const hours = durationValueToHours(value, candidate.unit);
+    if (hours > 0) return hours;
+  }
+
+  if (Array.isArray(attendance?.breaks) && attendance.breaks.length) {
+    let totalBreakHours = 0;
+    for (const entry of attendance.breaks) {
+      const startSeconds = timeValueToSeconds(entry?.start ?? entry?.startTime ?? entry?.start_time ?? null);
+      const endSeconds = timeValueToSeconds(entry?.end ?? entry?.endTime ?? entry?.end_time ?? null);
+      if (startSeconds != null && endSeconds != null && endSeconds > startSeconds) {
+        totalBreakHours += (endSeconds - startSeconds) / 3600;
+      }
+    }
+    if (totalBreakHours > 0) return totalBreakHours;
+  }
+
+  return 0;
+}
+
+function getAttendanceWorkedHours(attendance) {
+  const startValue =
+    attendance?.startTime ??
+    attendance?.start_time ??
+    attendance?.start ??
+    attendance?.startAt ??
+    attendance?.start_at ??
+    attendance?.checkIn ??
+    attendance?.check_in ??
+    attendance?.clockIn ??
+    attendance?.clock_in ??
+    null;
+  const endValue =
+    attendance?.endTime ??
+    attendance?.end_time ??
+    attendance?.end ??
+    attendance?.endAt ??
+    attendance?.end_at ??
+    attendance?.checkOut ??
+    attendance?.check_out ??
+    attendance?.clockOut ??
+    attendance?.clock_out ??
+    null;
+  if (!endValue) return 0;
+
+  const explicitDurationCandidates = [
+    { path: ['workedHours'], unit: 'hours' },
+    { path: ['worked_hours'], unit: 'hours' },
+    { path: ['durationHours'], unit: 'hours' },
+    { path: ['duration_hours'], unit: 'hours' },
+    { path: ['hoursWorked'], unit: 'hours' },
+    { path: ['hours_worked'], unit: 'hours' },
+    { path: ['workedMinutes'], unit: 'minutes' },
+    { path: ['worked_minutes'], unit: 'minutes' },
+    { path: ['durationMinutes'], unit: 'minutes' },
+    { path: ['duration_minutes'], unit: 'minutes' },
+    { path: ['minutesWorked'], unit: 'minutes' },
+    { path: ['minutes_worked'], unit: 'minutes' },
+    { path: ['workedSeconds'], unit: 'seconds' },
+    { path: ['worked_seconds'], unit: 'seconds' },
+    { path: ['durationSeconds'], unit: 'seconds' },
+    { path: ['duration_seconds'], unit: 'seconds' },
+    { path: ['secondsWorked'], unit: 'seconds' },
+    { path: ['seconds_worked'], unit: 'seconds' },
+    { path: ['workedTime'], unit: null },
+    { path: ['worked_time'], unit: null },
+    { path: ['duration'], unit: null },
+  ];
+
+  for (const candidate of explicitDurationCandidates) {
+    const value = getNestedValue(attendance, candidate.path);
+    const hours = durationValueToHours(value, candidate.unit);
+    if (hours > 0) return hours;
+  }
+
+  const breakHours = getAttendanceBreakHours(attendance);
+  const startDateMs = Date.parse(String(startValue || ''));
+  const endDateMs = Date.parse(String(endValue || ''));
+  if (Number.isFinite(startDateMs) && Number.isFinite(endDateMs) && endDateMs > startDateMs) {
+    return Math.max(((endDateMs - startDateMs) / 3600000) - breakHours, 0);
+  }
+
+  const startSeconds = timeValueToSeconds(startValue);
+  const endSeconds = timeValueToSeconds(endValue);
+  if (startSeconds == null || endSeconds == null || endSeconds <= startSeconds) return 0;
+  return Math.max(((endSeconds - startSeconds) / 3600) - breakHours, 0);
+}
+
+function getExpectedHoursFromRecord(record) {
+  const expectedTimeCandidates = [
+    { path: ['totalExpectedHours'], unit: 'hours' },
+    { path: ['total_expected_hours'], unit: 'hours' },
+    { path: ['netExpectedHours'], unit: 'hours' },
+    { path: ['net_expected_hours'], unit: 'hours' },
+    { path: ['expectedHours'], unit: 'hours' },
+    { path: ['expected_hours'], unit: 'hours' },
+    { path: ['totalExpectedMinutes'], unit: 'minutes' },
+    { path: ['total_expected_minutes'], unit: 'minutes' },
+    { path: ['netExpectedMinutes'], unit: 'minutes' },
+    { path: ['net_expected_minutes'], unit: 'minutes' },
+    { path: ['expectedMinutes'], unit: 'minutes' },
+    { path: ['expected_minutes'], unit: 'minutes' },
+    { path: ['netExpectedSeconds'], unit: 'seconds' },
+    { path: ['net_expected_seconds'], unit: 'seconds' },
+    { path: ['expectedSeconds'], unit: 'seconds' },
+    { path: ['expected_seconds'], unit: 'seconds' },
+    { path: ['netExpectedTime'], unit: null },
+    { path: ['net_expected_time'], unit: null },
+    { path: ['expectedTime'], unit: null },
+    { path: ['expected_time'], unit: null },
+    { path: ['time'], unit: null },
+  ];
+
+  for (const candidate of expectedTimeCandidates) {
+    const value = getNestedValue(record, candidate.path);
+    const hours = durationValueToHours(value, candidate.unit);
+    if (hours > 0) return hours;
+  }
+
+  if (Array.isArray(record?.days)) {
+    let totalHours = 0;
+    for (const day of record.days) {
+      totalHours += getExpectedHoursFromRecord(day);
+    }
+    if (totalHours > 0) return totalHours;
+  }
+
+  return 0;
+}
+
+function summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries) {
+  const targetId = String(employeeId || '').trim();
+  let workedHours = 0;
+  let expectedHours = 0;
+
+  if (targetId) {
+    for (const attendance of attendances || []) {
+      if (resolveKenjoEmployeeId(attendance) !== targetId) continue;
+      workedHours += getAttendanceWorkedHours(attendance);
+    }
+
+    for (const record of expectedTimeEntries || []) {
+      if (resolveKenjoEmployeeId(record) !== targetId) continue;
+      expectedHours += getExpectedHoursFromRecord(record);
+    }
+  }
+
+  workedHours = round2(workedHours);
+  expectedHours = round2(expectedHours);
+  return {
+    workedHours,
+    expectedHours,
+    overtimeHours: round2(Math.max(workedHours - expectedHours, 0)),
+  };
+}
+
+export async function getEmployeeMonthlyKenjoHours(employeeId, month, year, preloaded = null) {
+  const range = getCalendarMonthRange(year, month);
+  const attendances = Array.isArray(preloaded?.attendances)
+    ? preloaded.attendances
+    : await getKenjoAttendances(range.start, range.end);
+  const expectedTimeEntries = Array.isArray(preloaded?.expectedTimeEntries)
+    ? preloaded.expectedTimeEntries
+    : await getKenjoExpectedTime(range.start, range.end);
+  return summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries);
+}
+
+async function getMonthlyKenjoHoursByEmployee(employeeIds, month, year, preloaded = null) {
+  const range = getCalendarMonthRange(year, month);
+  const ids = [...new Set((employeeIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const attendances = Array.isArray(preloaded?.attendances)
+    ? preloaded.attendances
+    : await getKenjoAttendances(range.start, range.end);
+
+  let expectedTimeEntries = [];
+  if (Array.isArray(preloaded?.expectedTimeEntries)) {
+    expectedTimeEntries = preloaded.expectedTimeEntries;
+  } else {
+    try {
+      expectedTimeEntries = await getKenjoExpectedTime(range.start, range.end);
+    } catch (error) {
+      console.warn('Kenjo expected-time fetch failed for payroll month', {
+        month: range.monthStr,
+        error: String(error?.message || error),
+      });
+      expectedTimeEntries = [];
+    }
+  }
+
+  const out = new Map();
+  for (const employeeId of ids) {
+    out.set(employeeId, summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries));
+  }
+  return out;
+}
+
+async function enrichPayrollRowsWithKenjoHours(month, rows) {
+  const monthStr = String(month || '').trim().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(monthStr)) return Array.isArray(rows) ? rows : [];
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return list;
+
+  const missingAnyHours = list.some(
+    (row) => row?.expected_hours == null || row?.overtime_hours == null || row?.worked_hours == null
+  );
+  if (!missingAnyHours) return list;
+
+  const [year, monthNum] = monthStr.split('-').map(Number);
+  const hoursByEmployee = await getMonthlyKenjoHoursByEmployee(
+    list.map((row) => row?.kenjo_employee_id || ''),
+    monthNum,
+    year
+  );
+
+  return list.map((row) => {
+    const employeeId = String(row?.kenjo_employee_id || '').trim();
+    const monthlyHours = hoursByEmployee.get(employeeId) || {
+      workedHours: 0,
+      expectedHours: 0,
+      overtimeHours: 0,
+    };
+    return {
+      ...row,
+      worked_hours: row?.worked_hours == null ? monthlyHours.workedHours : row.worked_hours,
+      expected_hours: row?.expected_hours == null ? monthlyHours.expectedHours : row.expected_hours,
+      overtime_hours: row?.overtime_hours == null ? monthlyHours.overtimeHours : row.overtime_hours,
+    };
+  });
+}
+
 export async function calculatePayroll(month, fromDate, toDate) {
   const monthStr = String(month || '').trim().slice(0, 7);
   const from = String(fromDate || '').trim().slice(0, 10);
@@ -394,10 +743,17 @@ export async function calculatePayroll(month, fromDate, toDate) {
     weeklyFactsRows = weeklyFactsRes;
   }
 
-  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows, rescueRows, localEmployeesRows, contractExtensionRows] = await Promise.all([
+  const [users, attendancesMonth, attendancesPeriod, expectedTimeMonth, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows, rescueRows, localEmployeesRows, contractExtensionRows] = await Promise.all([
     getKenjoUsersList(),
     getKenjoAttendances(monthStart, monthEnd),
     getKenjoAttendances(from, to),
+    getKenjoExpectedTime(monthStart, monthEnd).catch((error) => {
+      console.warn('Kenjo expected-time fetch failed for payroll month', {
+        month: monthStr,
+        error: String(error?.message || error),
+      });
+      return [];
+    }),
     query(
       `SELECT employee_id, line_no, amount, comment FROM payroll_abzug_items WHERE period_id = $1 ORDER BY employee_id, line_no`,
       [monthStr]
@@ -453,6 +809,12 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
   const { workingDaysInRange: workingDaysInMonthMap } = countWorkingDaysFromAttendances(attendancesMonth, monthStart, monthEnd);
   const { daysPerWeek: daysPerWeekPeriod } = countWorkingDaysFromAttendances(attendancesPeriod, from, to);
+  const monthlyHoursByEmployee = await getMonthlyKenjoHoursByEmployee(
+    (users || []).map((user) => user?._id || user?.id || ''),
+    m,
+    y,
+    { attendances: attendancesMonth, expectedTimeEntries: expectedTimeMonth }
+  );
 
   const kpiByKey = new Map();
   for (const r of (kpiRows?.rows || [])) {
@@ -687,6 +1049,11 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const abzug = abzugByEmployee.get(uid) ?? 0;
     const vorschuss = vorschussByEmployee.get(uid) ?? 0;
     const bonus = bonusByEmployeeCorrect.get(uid) ?? 0;
+    const monthlyHours = monthlyHoursByEmployee.get(uid) || {
+      workedHours: 0,
+      expectedHours: 0,
+      overtimeHours: 0,
+    };
 
     let totalBonus = 0;
     const employeeWeeklyBreakdown = [];
@@ -836,6 +1203,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
         pn,
         weeks: numWeeks,
         working_days: workingDays,
+        worked_hours: monthlyHours.workedHours,
+        expected_hours: monthlyHours.expectedHours,
+        overtime_hours: monthlyHours.overtimeHours,
         period_days: periodDays,
         total_bonus: Math.round(totalBonus * 100) / 100,
         abzug: Math.round(abzug * 100) / 100,
@@ -944,6 +1314,11 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const pn = u?.employeeNumber ?? u?.employee_number ?? '';
     const localEmployee = resolveLocalEmployee(eid, pn);
     const contractExtensions = getEmployeeContractExtensions(eid, localEmployee);
+    const monthlyHours = monthlyHoursByEmployee.get(eid) || {
+      workedHours: 0,
+      expectedHours: 0,
+      overtimeHours: 0,
+    };
     const rescueEntries = (rescuesByEmployee.get(eid) || []).map((entry) => ({ ...entry }));
     const rescueTotal = rescueEntries.reduce((sum, entry) => sum + (Number(entry?.amount) || 0), 0);
     const effectiveTotalBonus = Math.round((manual.total_bonus + rescueTotal) * 100) / 100;
@@ -974,6 +1349,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
       name,
       pn,
       working_days: manual.working_days,
+      worked_hours: monthlyHours.workedHours,
+      expected_hours: monthlyHours.expectedHours,
+      overtime_hours: monthlyHours.overtimeHours,
       period_days: periodDays,
       total_bonus: effectiveTotalBonus,
       abzug: Math.round(manual.abzug * 100) / 100,
@@ -1119,12 +1497,17 @@ export async function getPayrollHistorySnapshot(periodId) {
   );
   const row = res.rows?.[0];
   if (!row) return null;
+  const payloadBase = row.payload_json && typeof row.payload_json === 'object' ? row.payload_json : {};
+  const payload = {
+    ...payloadBase,
+    rows: await enrichPayrollRowsWithKenjoHours(id, payloadBase?.rows || []),
+  };
   return {
     period_id: String(row.period_id || '').trim(),
     period_from: row.period_from ? String(row.period_from).slice(0, 10) : '',
     period_to: row.period_to ? String(row.period_to).slice(0, 10) : '',
     frozen_at: row.frozen_at || null,
-    payload: row.payload_json && typeof row.payload_json === 'object' ? row.payload_json : {},
+    payload,
   };
 }
 
