@@ -575,10 +575,58 @@ function getExpectedHoursFromRecord(record) {
   return 0;
 }
 
-function summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries) {
+function getIsoWeekday(dateStr) {
+  const d = new Date(`${String(dateStr || '').slice(0, 10)}T12:00:00`);
+  const day = d.getDay();
+  return day === 0 ? 7 : day;
+}
+
+function getWorkingWeekdayPattern(expectedRecord, weeklyDays) {
+  const pattern = new Set();
+  for (const day of expectedRecord?.days || []) {
+    const hours = getExpectedHoursFromRecord(day);
+    if (hours > 0) pattern.add(getIsoWeekday(day?.date));
+  }
+  const targetDays = Math.max(0, Math.min(Number(weeklyDays) || 0, 5));
+  if (pattern.size === 0 && targetDays > 0) {
+    for (let weekday = 1; weekday <= targetDays; weekday += 1) pattern.add(weekday);
+  } else if (targetDays > 0 && pattern.size < targetDays) {
+    for (let weekday = 1; weekday <= 5 && pattern.size < targetDays; weekday += 1) {
+      pattern.add(weekday);
+    }
+  }
+  return pattern;
+}
+
+function getMonthlyContractExpectedHours(employee, expectedRecord, monthStart, monthEnd) {
+  const weeklyHours = Number(employee?.weeklyHours ?? employee?.work?.weeklyHours ?? 0);
+  const weeklyDays = Number(employee?.weeklyDays ?? employee?.work?.weeklyDays ?? 0);
+  if (!(weeklyHours > 0) || !(weeklyDays > 0)) {
+    return expectedRecord ? getExpectedHoursFromRecord(expectedRecord) : 0;
+  }
+
+  const dailyHours = weeklyHours / weeklyDays;
+  if (!(dailyHours > 0)) {
+    return expectedRecord ? getExpectedHoursFromRecord(expectedRecord) : 0;
+  }
+
+  const workingWeekdays = getWorkingWeekdayPattern(expectedRecord, weeklyDays);
+  if (!workingWeekdays.size) {
+    return expectedRecord ? getExpectedHoursFromRecord(expectedRecord) : 0;
+  }
+
+  let total = 0;
+  for (let cursor = new Date(`${monthStart}T12:00:00`); cursor <= new Date(`${monthEnd}T12:00:00`); cursor.setDate(cursor.getDate() + 1)) {
+    const weekday = cursor.getDay() === 0 ? 7 : cursor.getDay();
+    if (workingWeekdays.has(weekday)) total += dailyHours;
+  }
+  return round2(total);
+}
+
+function summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries, employee = null, monthStart = '', monthEnd = '') {
   const targetId = String(employeeId || '').trim();
   let workedHours = 0;
-  let expectedHours = 0;
+  let expectedRecord = null;
 
   if (targetId) {
     for (const attendance of attendances || []) {
@@ -588,11 +636,13 @@ function summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTim
 
     for (const record of expectedTimeEntries || []) {
       if (resolveKenjoEmployeeId(record) !== targetId) continue;
-      expectedHours += getExpectedHoursFromRecord(record);
+      expectedRecord = record;
+      break;
     }
   }
 
   workedHours = round2(workedHours);
+  let expectedHours = getMonthlyContractExpectedHours(employee, expectedRecord, monthStart, monthEnd);
   expectedHours = round2(expectedHours);
   const regularHours = round2(expectedHours > 0 ? Math.min(workedHours, expectedHours) : workedHours);
   const overtimeHours = round2(expectedHours > 0 ? Math.max(workedHours - expectedHours, 0) : 0);
@@ -612,7 +662,9 @@ export async function getEmployeeMonthlyKenjoHours(employeeId, month, year, prel
   const expectedTimeEntries = Array.isArray(preloaded?.expectedTimeEntries)
     ? preloaded.expectedTimeEntries
     : await getKenjoExpectedTime(range.start, range.end);
-  return summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries);
+  const users = Array.isArray(preloaded?.users) ? preloaded.users : await getKenjoUsersList();
+  const employee = (users || []).find((user) => String(user?._id || user?.id || '').trim() === String(employeeId || '').trim()) || null;
+  return summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries, employee, range.start, range.end);
 }
 
 async function getMonthlyKenjoHoursByEmployee(employeeIds, month, year, preloaded = null) {
@@ -637,9 +689,25 @@ async function getMonthlyKenjoHoursByEmployee(employeeIds, month, year, preloade
     }
   }
 
+  const users = Array.isArray(preloaded?.users) ? preloaded.users : await getKenjoUsersList();
+  const userById = new Map(
+    (users || [])
+      .map((user) => [String(user?._id || user?.id || '').trim(), user])
+      .filter(([id]) => id)
+  );
   const out = new Map();
   for (const employeeId of ids) {
-    out.set(employeeId, summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTimeEntries));
+    out.set(
+      employeeId,
+      summarizeEmployeeMonthlyKenjoHours(
+        employeeId,
+        attendances,
+        expectedTimeEntries,
+        userById.get(employeeId) || null,
+        range.start,
+        range.end
+      )
+    );
   }
   return out;
 }
@@ -820,7 +888,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     (users || []).map((user) => user?._id || user?.id || ''),
     m,
     y,
-    { attendances: attendancesMonth, expectedTimeEntries: expectedTimeMonth }
+    { attendances: attendancesMonth, expectedTimeEntries: expectedTimeMonth, users }
   );
 
   const kpiByKey = new Map();

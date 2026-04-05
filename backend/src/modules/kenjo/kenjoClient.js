@@ -411,6 +411,8 @@ export async function getKenjoUsersList() {
       isActive: u?.isActive !== undefined ? !!u.isActive : true,
       transportationId: u?.transportationId ?? u?.transportation_id ?? work?.transportationId ?? work?.transporterId ?? work?.work?.transportationId ?? '',
       employeeNumber: u?.employeeNumber ?? u?.employee_number ?? work?.employeeNumber ?? work?.employee_number ?? '',
+      weeklyHours: work?.weeklyHours ?? work?.work?.weeklyHours ?? '',
+      weeklyDays: work?.weeklyDays ?? work?.work?.weeklyDays ?? '',
       startDate: toDateOnly(startDate),
       contractEnd: toDateOnly(contractEnd),
     };
