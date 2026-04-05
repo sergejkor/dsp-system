@@ -594,10 +594,13 @@ function summarizeEmployeeMonthlyKenjoHours(employeeId, attendances, expectedTim
 
   workedHours = round2(workedHours);
   expectedHours = round2(expectedHours);
+  const regularHours = round2(expectedHours > 0 ? Math.min(workedHours, expectedHours) : workedHours);
+  const overtimeHours = round2(expectedHours > 0 ? Math.max(workedHours - expectedHours, 0) : 0);
   return {
     workedHours,
+    regularHours,
     expectedHours,
-    overtimeHours: round2(Math.max(workedHours - expectedHours, 0)),
+    overtimeHours,
   };
 }
 
@@ -663,14 +666,15 @@ async function enrichPayrollRowsWithKenjoHours(month, rows) {
     const employeeId = String(row?.kenjo_employee_id || '').trim();
     const monthlyHours = hoursByEmployee.get(employeeId) || {
       workedHours: 0,
+      regularHours: 0,
       expectedHours: 0,
       overtimeHours: 0,
     };
     return {
       ...row,
       worked_hours: row?.worked_hours == null ? monthlyHours.workedHours : row.worked_hours,
-      // Keep the first visible frontend hours column aligned with actual worked hours.
-      expected_hours: monthlyHours.workedHours,
+      // The currently deployed frontend uses `expected_hours` as the first visible hours column.
+      expected_hours: monthlyHours.regularHours,
       contract_expected_hours:
         row?.contract_expected_hours == null ? monthlyHours.expectedHours : row.contract_expected_hours,
       overtime_hours: row?.overtime_hours == null ? monthlyHours.overtimeHours : row.overtime_hours,
@@ -1054,6 +1058,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const bonus = bonusByEmployeeCorrect.get(uid) ?? 0;
     const monthlyHours = monthlyHoursByEmployee.get(uid) || {
       workedHours: 0,
+      regularHours: 0,
       expectedHours: 0,
       overtimeHours: 0,
     };
@@ -1207,7 +1212,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
         weeks: numWeeks,
         working_days: workingDays,
         worked_hours: monthlyHours.workedHours,
-        expected_hours: monthlyHours.workedHours,
+        expected_hours: monthlyHours.regularHours,
         contract_expected_hours: monthlyHours.expectedHours,
         overtime_hours: monthlyHours.overtimeHours,
         period_days: periodDays,
@@ -1320,6 +1325,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const contractExtensions = getEmployeeContractExtensions(eid, localEmployee);
     const monthlyHours = monthlyHoursByEmployee.get(eid) || {
       workedHours: 0,
+      regularHours: 0,
       expectedHours: 0,
       overtimeHours: 0,
     };
@@ -1354,7 +1360,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
       pn,
       working_days: manual.working_days,
       worked_hours: monthlyHours.workedHours,
-      expected_hours: monthlyHours.workedHours,
+      expected_hours: monthlyHours.regularHours,
       contract_expected_hours: monthlyHours.expectedHours,
       overtime_hours: monthlyHours.overtimeHours,
       period_days: periodDays,
