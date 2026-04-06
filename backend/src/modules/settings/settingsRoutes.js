@@ -18,6 +18,7 @@ import integrationSettingsService from './integrationSettingsService.js';
 import securitySettingsService from './securitySettingsService.js';
 import authMiddleware from '../auth/authMiddleware.js';
 import authService from '../auth/authService.js';
+import chatService from '../chat/chatService.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -69,6 +70,9 @@ router.post('/users', requireSuperAdmin, async (req, res) => {
     }
     body.login_enabled = body.login_enabled === true;
     const user = await usersSettingsService.create(body);
+    await chatService.ensureUserInGlobalRoom(user.id).catch((error) => {
+      console.error('chatService.ensureUserInGlobalRoom', error);
+    });
     await auditLogService.log('user', user.id, 'create', null, { ...user, password_hash: undefined }, getUserId(req), req.ip, req.get('user-agent'));
     res.status(201).json(user);
   } catch (e) {

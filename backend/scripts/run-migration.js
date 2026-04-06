@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { readFileSync } from 'fs';
 import { query } from '../src/db.js';
 
 async function run() {
@@ -1188,6 +1189,10 @@ async function run() {
     await query(`CREATE INDEX IF NOT EXISTS idx_pave_report_items_side ON pave_report_items (side)`);
 
     console.log('Migration OK: Gmail PAVE report ingestion tables (or already exist).');
+
+    const chatMigrationSql = readFileSync(new URL('../migrations/004_chat_module.sql', import.meta.url), 'utf8');
+    await query(chatMigrationSql);
+    console.log('Migration OK: chat module tables (or already exist).');
   } catch (e) {
     console.error('Migration failed:', e.message);
     process.exit(1);
