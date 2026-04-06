@@ -1,14 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { listDamageReports, listPersonalQuestionnaires } from '../services/intakeApi.js';
+import { listPersonalQuestionnaires } from '../services/intakeApi.js';
 
-function displayPersonalName(row) {
+function displayName(row) {
   return [row?.first_name, row?.last_name].filter(Boolean).join(' ').trim() || row?.email || `Submission ${row?.id}`;
-}
-
-function displayDamageName(row) {
-  return row?.driver_name || row?.reporter_name || `Report ${row?.id}`;
 }
 
 function formatDateTime(value) {
@@ -24,11 +19,7 @@ function formatDateTime(value) {
 }
 
 export default function PersonalQuestionnaireNotificationsPage() {
-  const { hasPermission, isSuperAdmin } = useAuth();
-  const canOpenPersonal = isSuperAdmin || hasPermission('page_employees');
-  const canOpenDamage = isSuperAdmin || hasPermission('page_damages');
-  const [personalRows, setPersonalRows] = useState([]);
-  const [damageRows, setDamageRows] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -36,19 +27,14 @@ export default function PersonalQuestionnaireNotificationsPage() {
     let cancelled = false;
     setLoading(true);
     setError('');
-
-    Promise.all([
-      canOpenPersonal ? listPersonalQuestionnaires('all') : Promise.resolve([]),
-      canOpenDamage ? listDamageReports('all') : Promise.resolve([]),
-    ])
-      .then(([personalList, damageList]) => {
+    listPersonalQuestionnaires('all')
+      .then((list) => {
         if (cancelled) return;
-        setPersonalRows(Array.isArray(personalList) ? personalList : []);
-        setDamageRows(Array.isArray(damageList) ? damageList : []);
+        setRows(Array.isArray(list) ? list : []);
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err?.message || 'Failed to load notifications');
+        setError(err?.message || 'Failed to load Personalfragebogen notifications');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -57,93 +43,47 @@ export default function PersonalQuestionnaireNotificationsPage() {
     return () => {
       cancelled = true;
     };
-  }, [canOpenPersonal, canOpenDamage]);
-
-  const hasNotifications = useMemo(
-    () => personalRows.length > 0 || damageRows.length > 0,
-    [personalRows.length, damageRows.length]
-  );
+  }, []);
 
   return (
     <section className="intake-page">
       <header className="analytics-header">
         <div>
-          <h1>Notifications</h1>
+          <h1>Personalfragebogen Notifications</h1>
           <p className="muted" style={{ margin: '0.35rem 0 0' }}>
-            All incoming Personalfragebogen and Schadenmeldung submissions. New entries stay marked with a red indicator until you open them.
+            All incoming Personalfragebogen submissions. New submissions are marked with a red indicator until you open them.
           </p>
         </div>
       </header>
 
       {error && <div className="analytics-error">{error}</div>}
 
-      <div className="dashboard-two-col">
-        {canOpenPersonal && (
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Personalfragebogen</h3>
-            {loading ? (
-              <p className="muted">Loading notifications...</p>
-            ) : personalRows.length === 0 ? (
-              <p className="muted">No Personalfragebogen submissions yet.</p>
-            ) : (
-              <div className="notification-list">
-                {personalRows.map((row) => (
-                  <Link
-                    key={`personal-${row.id}`}
-                    to={`/personal-fragebogen-review?id=${row.id}`}
-                    className={`notification-item ${row.is_new ? 'is-new' : ''}`}
-                  >
-                    <div className="notification-item-main">
-                      <div className="notification-item-title-row">
-                        {row.is_new && <span className="notification-new-dot" aria-hidden="true" />}
-                        <strong>{displayPersonalName(row)}</strong>
-                      </div>
-                      <span className="muted small">{row.email || 'No email'} · {row.status}</span>
-                    </div>
-                    <span className="notification-item-time">{formatDateTime(row.created_at)}</span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {canOpenDamage && (
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Schadenmeldung</h3>
-            {loading ? (
-              <p className="muted">Loading notifications...</p>
-            ) : damageRows.length === 0 ? (
-              <p className="muted">No Schadenmeldung submissions yet.</p>
-            ) : (
-              <div className="notification-list">
-                {damageRows.map((row) => (
-                  <Link
-                    key={`damage-${row.id}`}
-                    to={`/schadenmeldung-review?id=${row.id}`}
-                    className={`notification-item ${row.is_new ? 'is-new' : ''}`}
-                  >
-                    <div className="notification-item-main">
-                      <div className="notification-item-title-row">
-                        {row.is_new && <span className="notification-new-dot" aria-hidden="true" />}
-                        <strong>{displayDamageName(row)}</strong>
-                      </div>
-                      <span className="muted small">{row.license_plate || 'No plate'} · {row.status}</span>
-                    </div>
-                    <span className="notification-item-time">{formatDateTime(row.created_at)}</span>
-                  </Link>
-                ))}
-              </div>
-            )}
+      <div className="card">
+        {loading ? (
+          <p className="muted">Loading notifications...</p>
+        ) : rows.length === 0 ? (
+          <p className="muted">No Personalfragebogen submissions yet.</p>
+        ) : (
+          <div className="notification-list">
+            {rows.map((row) => (
+              <Link
+                key={row.id}
+                to={`/personal-fragebogen-review?id=${row.id}`}
+                className={`notification-item ${row.is_new ? 'is-new' : ''}`}
+              >
+                <div className="notification-item-main">
+                  <div className="notification-item-title-row">
+                    {row.is_new && <span className="notification-new-dot" aria-hidden="true" />}
+                    <strong>{displayName(row)}</strong>
+                  </div>
+                  <span className="muted small">{row.email || 'No email'} · {row.status}</span>
+                </div>
+                <span className="notification-item-time">{formatDateTime(row.created_at)}</span>
+              </Link>
+            ))}
           </div>
         )}
       </div>
-
-      {!loading && !hasNotifications && !error && (
-        <div className="card">
-          <p className="muted">No incoming notifications yet.</p>
-        </div>
-      )}
     </section>
   );
 }

@@ -2,8 +2,11 @@ import { API_BASE } from '../config/apiBase.js';
 import { getToken } from './authStore.js';
 
 function buildSocketUrl() {
-  const base = API_BASE && String(API_BASE).trim() ? new URL(API_BASE) : new URL(window.location.origin);
-  const wsUrl = new URL(base.origin);
+  const baseUrl =
+    API_BASE && String(API_BASE).trim()
+      ? new URL(API_BASE)
+      : new URL(window.location.origin);
+  const wsUrl = new URL(baseUrl.origin);
   wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   wsUrl.pathname = '/api/chat/ws';
   const token = getToken();
@@ -14,12 +17,15 @@ function buildSocketUrl() {
 export function createChatSocket({ onEvent, onStatusChange }) {
   let socket = null;
   let reconnectTimerId = null;
+  let pingTimerId = null;
   let disposed = false;
   let reconnectAttempt = 0;
 
-  function cleanup() {
+  function cleanupTimers() {
     window.clearTimeout(reconnectTimerId);
+    window.clearInterval(pingTimerId);
     reconnectTimerId = null;
+    pingTimerId = null;
   }
 
   function scheduleReconnect() {
@@ -31,7 +37,8 @@ export function createChatSocket({ onEvent, onStatusChange }) {
   }
 
   function connect() {
-    cleanup();
+    cleanupTimers();
+
     try {
       socket = new window.WebSocket(buildSocketUrl());
     } catch (_error) {
@@ -44,6 +51,11 @@ export function createChatSocket({ onEvent, onStatusChange }) {
     socket.addEventListener('open', () => {
       reconnectAttempt = 0;
       onStatusChange?.('connected');
+      pingTimerId = window.setInterval(() => {
+        if (socket?.readyState === window.WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 25000);
     });
 
     socket.addEventListener('message', (event) => {
@@ -51,11 +63,12 @@ export function createChatSocket({ onEvent, onStatusChange }) {
         const payload = JSON.parse(String(event.data || '{}'));
         if (payload?.event) onEvent?.(payload);
       } catch (_error) {
-        // ignore malformed payloads
+        // Ignore malformed payloads.
       }
     });
 
     socket.addEventListener('close', () => {
+      cleanupTimers();
       if (!disposed) scheduleReconnect();
     });
 
@@ -69,12 +82,13 @@ export function createChatSocket({ onEvent, onStatusChange }) {
   return {
     close() {
       disposed = true;
-      cleanup();
+      cleanupTimers();
       try {
         socket?.close();
       } catch (_error) {
         // ignore close errors
       }
+      socket = null;
     },
   };
 }
