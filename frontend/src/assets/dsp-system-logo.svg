@@ -1,0 +1,30 @@
+<svg width="360" height="96" viewBox="0 0 360 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="leitcoreRing" x1="16" y1="16" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8FD3FF"/>
+      <stop offset="0.55" stop-color="#1F64FF"/>
+      <stop offset="1" stop-color="#0B1E4A"/>
+    </linearGradient>
+    <linearGradient id="leitcoreCore" x1="31" y1="31" x2="65" y2="65" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD37A"/>
+      <stop offset="0.6" stop-color="#FF8A1E"/>
+      <stop offset="1" stop-color="#E65D00"/>
+    </linearGradient>
+    <linearGradient id="leitcoreText" x1="104" y1="28" x2="308" y2="76" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BFE7FF"/>
+      <stop offset="0.45" stop-color="#47B0FF"/>
+      <stop offset="1" stop-color="#1C4ED8"/>
+    </linearGradient>
+  </defs>
+
+  <g>
+    <circle cx="48" cy="48" r="28" fill="url(#leitcoreRing)" opacity="0.95"/>
+    <ellipse cx="48" cy="48" rx="42" ry="16" stroke="url(#leitcoreRing)" stroke-width="6"/>
+    <ellipse cx="48" cy="48" rx="18" ry="42" transform="rotate(60 48 48)" stroke="#DDF3FF" stroke-width="5" opacity="0.9"/>
+    <path d="M48 28L65 38V58L48 68L31 58V38L48 28Z" fill="#112855" stroke="#CDEEFF" stroke-width="2"/>
+    <circle cx="48" cy="48" r="12" fill="url(#leitcoreCore)"/>
+    <circle cx="48" cy="48" r="4" fill="#FFF8E8"/>
+  </g>
+
+  <text x="102" y="64" fill="url(#leitcoreText)" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="800" letter-spacing="1.2">LeitCore</text>
+</svg>

@@ -465,9 +465,6 @@ export async function listUsersForDirectChats(currentUserId, db = pool) {
     `SELECT id, email, first_name, last_name, full_name, avatar_url
      FROM settings_users
      WHERE id <> $1
-       AND status = 'active'
-       AND COALESCE(is_locked, false) = false
-       AND COALESCE(login_enabled, false) = true
      ORDER BY COALESCE(NULLIF(TRIM(full_name), ''), TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), email) ASC`,
     [currentUserId]
   );
@@ -478,7 +475,7 @@ export async function listUsersForDirectChats(currentUserId, db = pool) {
 export async function listRoomsForUser(userId, db = pool) {
   await ensureUserInGlobalRoom(userId, db);
 
-  const roomRes = await db.query(
+  let roomRes = await db.query(
     `SELECT r.id
      FROM chat_rooms r
      JOIN chat_room_participants p ON p.room_id = r.id
@@ -486,7 +483,19 @@ export async function listRoomsForUser(userId, db = pool) {
     [userId]
   );
 
-  const roomIds = (roomRes.rows || []).map((row) => Number(row.id));
+  let roomIds = (roomRes.rows || []).map((row) => Number(row.id));
+  if (!roomIds.length) {
+    await backfillGlobalRoomParticipants(db);
+    roomRes = await db.query(
+      `SELECT r.id
+       FROM chat_rooms r
+       JOIN chat_room_participants p ON p.room_id = r.id
+       WHERE p.user_id = $1`,
+      [userId]
+    );
+    roomIds = (roomRes.rows || []).map((row) => Number(row.id));
+  }
+
   return hydrateRoomSummariesForUser(userId, roomIds, db);
 }
 
@@ -500,9 +509,6 @@ export async function getOrCreateDirectRoom(currentUserId, targetUserId, db = po
   }
 
   const targetUser = await assertUserExists(numericTargetUserId, db);
-  if (targetUser.status !== 'active' || targetUser.is_locked || !targetUser.login_enabled) {
-    throw new ChatError('Target user is not available for chat', 400, 'CHAT_TARGET_UNAVAILABLE');
-  }
 
   await ensureUserInGlobalRoom(currentUserId, db);
   await ensureUserInGlobalRoom(numericTargetUserId, db);

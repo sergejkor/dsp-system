@@ -39,6 +39,7 @@ import InsurancePage from './pages/InsurancePage';
 import InsuranceVehiclePage from './pages/InsuranceVehiclePage';
 import FinancePage from './pages/FinancePage';
 import CreateDocumentPage from './pages/CreateDocumentPage.jsx';
+import ChatPage from './pages/ChatPage.jsx';
 import SettingsLayout from './pages/settings/SettingsLayout';
 import SettingsGeneralPage from './pages/settings/SettingsGeneralPage';
 import SettingsUsersPage from './pages/settings/SettingsUsersPage';
@@ -58,7 +59,7 @@ import SettingsNotificationsPage from './pages/settings/SettingsNotificationsPag
 import SettingsSecurityPage from './pages/settings/SettingsSecurityPage';
 import SettingsAuditPage from './pages/settings/SettingsAuditPage';
 import SettingsAdvancedPage from './pages/settings/SettingsAdvancedPage';
-import sidebarLogo from './assets/dsp-system-logo.png';
+import sidebarLogo from './assets/dsp-system-logo.svg';
 import { getIntakeSummary } from './services/intakeApi.js';
 
 function resolvePublicHostKind() {
@@ -410,6 +411,7 @@ function AppLayout() {
           <Routes>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/chat" element={<ChatPage />} />
             <Route path="/kenjo-sync" element={<KenjoSyncPage />} />
             <Route path="/employee" element={<EmployeeProfilePage />} />
             <Route path="/personal-fragebogen-notifications" element={<PersonalQuestionnaireNotificationsPage />} />

@@ -34,6 +34,17 @@ function MailIcon() {
   );
 }
 
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="sidebar-user-utility-icon">
+      <path
+        d="M12 3.25c-4.97 0-9 3.56-9 7.95 0 2.31 1.11 4.4 2.9 5.85l-.75 3.1a.75.75 0 0 0 1.02.86l3.53-1.56c.73.13 1.5.2 2.3.2 4.97 0 9-3.56 9-7.95s-4.03-7.95-9-7.95Zm-3.5 7.9a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2Zm3.5 0a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2Zm3.5 0a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function SettingsIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="sidebar-user-utility-icon">
@@ -103,6 +114,7 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
 
   const initials = useMemo(() => buildInitials(displayName), [displayName]);
   const avatarUrl = String(user.avatar_url || '').trim();
+  const chatActive = location.pathname.startsWith('/chat');
   const notificationsActive = location.pathname === '/personal-fragebogen-notifications';
   const settingsActive = location.pathname.startsWith('/settings');
 
@@ -140,6 +152,14 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
             title={`${t('appearance.language')}: ${language === 'de' ? t('appearance.german') : t('appearance.english')}`}
           >
             {language === 'de' ? 'DE' : 'EN'}
+          </button>
+          <button
+            type="button"
+            className={`sidebar-user-utility-btn ${chatActive ? 'is-active' : ''}`}
+            onClick={() => navigate('/chat')}
+            title="Chat"
+          >
+            <ChatIcon />
           </button>
           <button
             type="button"
