@@ -68,6 +68,15 @@ function mapPortalUser(rawUser) {
   };
 }
 
+function normalizeUiError(error, fallbackMessage) {
+  const message = String(error?.message || '').trim();
+  if (!message) return fallbackMessage;
+  if (message === 'Unauthorized') {
+    return 'Your session has expired. Please sign in again.';
+  }
+  return message;
+}
+
 export default function ChatPage() {
   const { user } = useAuth();
   const { language } = useAppSettings();
@@ -115,7 +124,7 @@ export default function ChatPage() {
       setRooms(sortRooms(items));
       setSelectedRoomId((prev) => prev || items[0]?.id || null);
     } catch (error) {
-      setRoomsError(buildRoomsError(error));
+      setRoomsError(normalizeUiError(error, buildRoomsError(error)));
     } finally {
       setRoomsLoading(false);
     }
@@ -156,7 +165,7 @@ export default function ChatPage() {
           };
         });
         await markRoomRead(roomId);
-      } catch (_error) {
+      } catch (error) {
         setMessagesByRoom((prev) => ({
           ...prev,
           [roomId]: {
@@ -164,7 +173,7 @@ export default function ChatPage() {
             loading: false,
             loadingMore: false,
             loaded: true,
-            error: copy.messagesUnavailable,
+            error: normalizeUiError(error, copy.messagesUnavailable),
           },
         }));
       }
@@ -203,8 +212,8 @@ export default function ChatPage() {
       });
 
       setChatUsers(uniqueUsers);
-    } catch (_error) {
-      setChatUsersError(copy.usersUnavailable);
+    } catch (error) {
+      setChatUsersError(normalizeUiError(error, copy.usersUnavailable));
     } finally {
       setChatUsersLoading(false);
     }
@@ -289,8 +298,8 @@ export default function ChatPage() {
 
       await markRoomRead(selectedRoomId);
       await loadRooms();
-    } catch (_error) {
-      setSendError(copy.sendUnavailable);
+    } catch (error) {
+      setSendError(normalizeUiError(error, copy.sendUnavailable));
       setMessagesByRoom((prev) => ({
         ...prev,
         [selectedRoomId]: {
@@ -313,12 +322,15 @@ export default function ChatPage() {
     setChatUsersError('');
     try {
       const room = await getOrCreateDirectRoom(targetUser.id);
+      if (!room?.id) {
+        throw new Error('Direct chat room could not be created.');
+      }
       setRooms((prev) => mergeRooms(prev, room, currentUserId));
       setSelectedRoomId(room.id);
       setIsDirectDialogOpen(false);
       await loadRoomMessages(room.id);
-    } catch (_error) {
-      setChatUsersError(copy.usersUnavailable);
+    } catch (error) {
+      setChatUsersError(normalizeUiError(error, copy.usersUnavailable));
     } finally {
       setCreatingDirect(false);
     }

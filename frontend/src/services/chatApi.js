@@ -20,6 +20,7 @@ async function parseJson(res) {
 
 async function request(path, options = {}) {
   const response = await fetch(buildUrl(path), {
+    credentials: 'include',
     ...options,
     headers: {
       ...getAuthHeaders(),
@@ -74,6 +75,7 @@ export function markRoomRead(roomId) {
 
 export async function downloadAttachment(attachment) {
   const response = await fetch(buildUrl(`/api/chat/attachments/${attachment.id}/download`), {
+    credentials: 'include',
     headers: { ...getAuthHeaders() },
   });
 
