@@ -1,105 +1,119 @@
 import React from 'react';
+import { getChatCopy } from './chatCopy.js';
 
-function buildInitials(label) {
-  const words = String(label || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length >= 2) return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase();
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return 'CH';
+function GeneralIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="chat-room-list-icon">
+      <path
+        d="M12 3.25c4.83 0 8.75 3.58 8.75 8 0 4.42-3.92 8-8.75 8-.77 0-1.52-.09-2.23-.25l-3.52 1.56a.75.75 0 0 1-1.03-.85l.74-3.08A7.63 7.63 0 0 1 3.25 11.25c0-4.42 3.92-8 8.75-8Zm-4 7.25a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm4 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm4 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function DirectIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="chat-room-list-icon">
+      <path
+        d="M9 6.25a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Zm6.5 1a2.75 2.75 0 1 0 0 5.5 2.75 2.75 0 0 0 0-5.5ZM3.75 18a4.75 4.75 0 0 1 9.5 0 .75.75 0 0 1-1.5 0 3.25 3.25 0 1 0-6.5 0 .75.75 0 0 1-1.5 0Zm11.5-.25a3.75 3.75 0 0 1 5 0 .75.75 0 1 1-1.06 1.06 2.25 2.25 0 0 0-2.88-.28.75.75 0 1 1-1.06-.78Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="chat-room-list-plus-icon">
+      <path d="M12 5.25a.75.75 0 0 1 .75.75v5.25H18a.75.75 0 0 1 0 1.5h-5.25V18a.75.75 0 0 1-1.5 0v-5.25H6a.75.75 0 0 1 0-1.5h5.25V6a.75.75 0 0 1 .75-.75Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function formatPreview(message, copy) {
+  if (!message) return copy.noMessagesYet;
+  if (message.message_type === 'file' && !message.body) return message.attachments?.[0]?.original_name || copy.attachmentLabel;
+  if (message.message_type === 'mixed' && message.attachments?.length) {
+    return `${message.body || 'Message'} · ${message.attachments[0].original_name}`;
+  }
+  return message.body || 'System message';
 }
 
 function formatRoomTime(value) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('de-DE', {
-    day: '2-digit',
-    month: '2-digit',
+  return new Intl.DateTimeFormat(undefined, {
     hour: '2-digit',
     minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
   }).format(date);
-}
-
-function formatPreview(room) {
-  const message = room?.last_message;
-  if (!message) {
-    return room?.type === 'global' ? 'Общая комната для всех сотрудников' : 'Сообщений пока нет';
-  }
-  if (message.message_type === 'file' && !message.body) {
-    return 'Вложение';
-  }
-  if (message.message_type === 'mixed') {
-    return `${message.body || 'Сообщение'} · вложение`;
-  }
-  return message.body || 'Системное сообщение';
 }
 
 export default function ChatRoomList({
   rooms,
   selectedRoomId,
-  loading = false,
-  error = '',
+  loading,
+  error,
   onSelectRoom,
   onStartDirectChat,
+  copy = getChatCopy('en'),
 }) {
   return (
-    <div className="card chat-card chat-sidebar">
-      <div className="chat-room-toolbar">
+    <aside className="chat-room-list chat-surface">
+      <div className="chat-room-list-head">
         <div>
-          <h2>Chats</h2>
-          <p>General и личные переписки сотрудников.</p>
+          <h2>{copy.roomsTitle}</h2>
+          <p>{copy.roomsSubtitle}</p>
         </div>
-        <button type="button" className="btn-primary" onClick={onStartDirectChat}>
-          New chat
+        <button type="button" className="chat-room-list-action" onClick={onStartDirectChat}>
+          <PlusIcon />
+          <span>{copy.newChat}</span>
         </button>
       </div>
 
-      {loading ? <div className="chat-loading">Загружаю комнаты…</div> : null}
-      {error ? <div className="chat-error">{error}</div> : null}
+      <div className="chat-room-list-scroll">
+        {loading ? <div className="chat-room-list-empty">{copy.roomsLoading}</div> : null}
+        {!loading && error ? <div className="chat-room-list-empty chat-room-list-empty--error">{error}</div> : null}
 
-      {!loading && !error ? (
-        <div className="chat-room-list">
-          {rooms.length === 0 ? (
-            <div className="chat-empty-state">Комнаты пока не появились. После синхронизации будет доступна хотя бы General.</div>
-          ) : (
-            rooms.map((room) => {
-              const active = Number(selectedRoomId) === Number(room.id);
-              const avatarLabel = room.type === 'global' ? 'GE' : buildInitials(room.name);
-              const avatarUrl = room.type === 'direct'
-                ? room.participants?.find((participant) => participant.id !== room.current_user_id)?.avatar_url ||
-                  room.participants?.[0]?.avatar_url ||
-                  ''
-                : '';
+        {!loading && !error
+          ? rooms.map((room) => {
+              const isActive = Number(selectedRoomId) === Number(room.id);
+              const isGeneral = room.type === 'global';
+
               return (
                 <button
                   key={room.id}
                   type="button"
-                  className={`chat-room-item ${active ? 'is-active' : ''}`}
-                  onClick={() => onSelectRoom?.(room)}
+                  className={`chat-room-list-item ${isActive ? 'is-active' : ''}`}
+                  onClick={() => onSelectRoom(room.id)}
                 >
-                  <span className="chat-room-avatar" aria-hidden="true">
-                    {avatarUrl ? <img src={avatarUrl} alt={room.name} /> : avatarLabel}
+                  <span className="chat-room-list-avatar" aria-hidden="true">
+                    {isGeneral ? <GeneralIcon /> : <DirectIcon />}
                   </span>
-
-                  <span className="chat-room-content">
-                    <span className="chat-room-topline">
-                      <span className="chat-room-name">{room.name}</span>
-                      <span className="chat-room-meta">{formatRoomTime(room.last_message_at)}</span>
+                  <span className="chat-room-list-body">
+                    <span className="chat-room-list-row">
+                      <span className="chat-room-list-title">{room.name}</span>
+                      <span className="chat-room-list-time">{formatRoomTime(room.last_message_at)}</span>
                     </span>
-                    <span className="chat-room-preview">{formatPreview(room)}</span>
+                    <span className="chat-room-list-row">
+                      <span className="chat-room-list-preview">{formatPreview(room.last_message, copy)}</span>
+                      {room.unread_count > 0 ? (
+                        <span className="chat-room-list-badge">
+                          {room.unread_count > 99 ? '99+' : room.unread_count}
+                        </span>
+                      ) : null}
+                    </span>
                   </span>
-
-                  {room.unread_count > 0 ? (
-                    <span className="chat-room-badge">{room.unread_count > 99 ? '99+' : room.unread_count}</span>
-                  ) : null}
                 </button>
               );
             })
-          )}
-        </div>
-      ) : null}
-    </div>
+          : null}
+
+        {!loading && !rooms.length && !error ? <div className="chat-room-list-empty">{copy.roomsEmpty}</div> : null}
+      </div>
+    </aside>
   );
 }

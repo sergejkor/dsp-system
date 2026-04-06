@@ -1,11 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import './styles.css';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppSettingsProvider, useAppSettings } from './context/AppSettingsContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
+import AppSidebar from './components/AppSidebar';
 import LoginPage from './pages/LoginPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 import SidebarUser from './components/SidebarUser';
@@ -59,7 +60,6 @@ import SettingsNotificationsPage from './pages/settings/SettingsNotificationsPag
 import SettingsSecurityPage from './pages/settings/SettingsSecurityPage';
 import SettingsAuditPage from './pages/settings/SettingsAuditPage';
 import SettingsAdvancedPage from './pages/settings/SettingsAdvancedPage';
-import sidebarLogo from './assets/dsp-system-logo.svg';
 import { getIntakeSummary } from './services/intakeApi.js';
 
 function resolvePublicHostKind() {
@@ -337,9 +337,12 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
 }
 
 function AppLayout() {
-  const { t } = useAppSettings();
   const { hasPermission, isSuperAdmin } = useAuth();
   const location = useLocation();
+  const [sidebarPresentation, setSidebarPresentation] = React.useState({
+    isCollapsed: false,
+    isHoverExpanded: false,
+  });
   const can = (code) => isSuperAdmin || hasPermission(code);
   const canEmployees = can('page_employees');
   const canDamages = can('page_damages');
@@ -371,37 +374,18 @@ function AppLayout() {
     if (can(permission)) return children;
     return <Navigate to="/unauthorized" replace />;
   };
+
+  const shellClassName = [
+    'app-shell',
+    sidebarPresentation.isCollapsed ? 'is-sidebar-collapsed' : '',
+    sidebarPresentation.isCollapsed && sidebarPresentation.isHoverExpanded ? 'is-sidebar-hover-expanded' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-topbar">
-          <div className="sidebar-brand">
-            <img src={sidebarLogo} alt={t('appTitle')} className="sidebar-brand-logo" />
-          </div>
-        </div>
-        <nav className="sidebar-nav">
-          <NavLink to="/dashboard">{t('nav.dashboard')}</NavLink>
-          <NavLink to="/kenjo-sync">{t('nav.employeeList')}</NavLink>
-          {canEmployees && <NavLink to="/personal-fragebogen-review">Personalfragebogen</NavLink>}
-          {can('page_payroll') && <NavLink to="/payroll">{t('nav.payroll')}</NavLink>}
-          <NavLink to="/calendar">{t('nav.cortexUploads')}</NavLink>
-          <NavLink to="/scorecard-uploads">{t('nav.scorecardUploads')}</NavLink>
-          <NavLink to="/kenjo-calendar">{t('nav.calendar')}</NavLink>
-          {can('page_sync_kenjo') && <NavLink to="/sync-kenjo">{t('nav.syncKenjo')}</NavLink>}
-          <NavLink to="/o2-telefonica">{t('nav.o2Telefonica')}</NavLink>
-          <NavLink to="/cars">{t('nav.cars')}</NavLink>
-          <NavLink to="/pave">{t('nav.pave')}</NavLink>
-          {can('page_analytics') && <NavLink to="/analytics">{t('nav.analytics')}</NavLink>}
-          {can('page_gift_cards') && <NavLink to="/gift-cards">{t('nav.giftCards')}</NavLink>}
-          <NavLink to="/car-planning">{t('nav.carPlanning')}</NavLink>
-          {can('page_fines') && <NavLink to="/fines">{t('nav.fines')}</NavLink>}
-          {can('page_damages') && <NavLink to="/damages">{t('nav.damages')}</NavLink>}
-          {canDamages && <NavLink to="/schadenmeldung-review">Schadenmeldung</NavLink>}
-          {can('page_insurance') && <NavLink to="/insurance">{t('nav.insurance')}</NavLink>}
-          {can('page_finance') && <NavLink to="/finance">{t('nav.finance')}</NavLink>}
-          <NavLink to="/create-document">{t('nav.createDocument')}</NavLink>
-        </nav>
-      </aside>
+    <div className={shellClassName}>
+      <AppSidebar canAccess={can} onPresentationChange={setSidebarPresentation} />
       <main className="content">
         <div className="content-topbar">
           <TopbarPageSearch />

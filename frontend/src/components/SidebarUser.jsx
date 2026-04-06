@@ -78,6 +78,17 @@ function MoonIcon() {
   );
 }
 
+function GlobeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="sidebar-user-utility-icon">
+      <path
+        d="M12 3.25a8.75 8.75 0 1 0 0 17.5 8.75 8.75 0 0 0 0-17.5Zm6.99 8h-2.38a14.8 14.8 0 0 0-1.1-4.14A7.28 7.28 0 0 1 18.99 11.25Zm-6.24-6.42c1.08.58 2.16 2.48 2.72 5.42h-5.44c.56-2.94 1.64-4.84 2.72-5.42Zm-3.26 2.28a14.8 14.8 0 0 0-1.1 4.14H5.01a7.28 7.28 0 0 1 4.48-4.14ZM5.01 12.75h3.38c.11 1.46.48 2.87 1.1 4.14a7.28 7.28 0 0 1-4.48-4.14Zm5.02 0h5.94c-.12 1.36-.47 2.69-1.03 3.86-.83 1.73-1.79 2.64-2.44 2.64s-1.61-.91-2.44-2.64a12.7 12.7 0 0 1-1.03-3.86Zm5.48 4.14a14.8 14.8 0 0 0 1.1-4.14h2.38a7.28 7.28 0 0 1-4.48 4.14Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function LogoutIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="sidebar-user-utility-icon">
@@ -123,7 +134,7 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
     window.location.href = '/login';
   }
 
-  function handleLanguageToggle() {
+  function toggleLanguage() {
     setLanguage(language === 'de' ? 'en' : 'de');
   }
 
@@ -148,10 +159,11 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
           <button
             type="button"
             className="sidebar-user-language-btn"
-            onClick={handleLanguageToggle}
+            onClick={toggleLanguage}
             title={`${t('appearance.language')}: ${language === 'de' ? t('appearance.german') : t('appearance.english')}`}
           >
-            {language === 'de' ? 'DE' : 'EN'}
+            <GlobeIcon />
+            <span>{language === 'de' ? 'DE' : 'EN'}</span>
           </button>
           <button
             type="button"

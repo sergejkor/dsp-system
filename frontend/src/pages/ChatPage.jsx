@@ -1,9 +1,13 @@
 import React from 'react';
-import { useAuth } from '../context/AuthContext.jsx';
-import ChatRoomList from '../components/chat/ChatRoomList.jsx';
+
 import ChatConversation from '../components/chat/ChatConversation.jsx';
+import { getChatCopy } from '../components/chat/chatCopy.js';
 import NewDirectChatDialog from '../components/chat/NewDirectChatDialog.jsx';
+import ChatRoomList from '../components/chat/ChatRoomList.jsx';
+import { useAppSettings } from '../context/AppSettingsContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import {
+  downloadAttachment,
   getOrCreateDirectRoom,
   listChatUsers,
   listMessages,
@@ -12,6 +16,7 @@ import {
   sendMessage,
   uploadAttachment,
 } from '../services/chatApi.js';
+import { getUsers } from '../services/settingsApi.js';
 import { createChatSocket } from '../services/chatSocket.js';
 import '../components/chat/chat.css';
 
@@ -44,9 +49,31 @@ function mergeMessageList(prevMessages, incomingMessage) {
   return [...prevMessages, incomingMessage].sort((left, right) => Number(left.id) - Number(right.id));
 }
 
+function mapPortalUser(rawUser) {
+  const firstName = rawUser?.first_name || rawUser?.firstName || '';
+  const lastName = rawUser?.last_name || rawUser?.lastName || '';
+  const fullName =
+    rawUser?.name ||
+    rawUser?.full_name ||
+    rawUser?.display_name ||
+    [firstName, lastName].filter(Boolean).join(' ') ||
+    rawUser?.email ||
+    'User';
+
+  return {
+    id: rawUser?.id,
+    name: fullName,
+    email: rawUser?.email || '',
+    avatar_url: rawUser?.avatar_url || rawUser?.avatarUrl || rawUser?.photo_url || '',
+  };
+}
+
 export default function ChatPage() {
   const { user } = useAuth();
+  const { language } = useAppSettings();
+  const copy = React.useMemo(() => getChatCopy(language), [language]);
   const currentUserId = Number(user?.id || 0);
+
   const [rooms, setRooms] = React.useState([]);
   const [roomsLoading, setRoomsLoading] = React.useState(true);
   const [roomsError, setRoomsError] = React.useState('');
@@ -59,6 +86,16 @@ export default function ChatPage() {
   const [chatUsersError, setChatUsersError] = React.useState('');
   const [creatingDirect, setCreatingDirect] = React.useState(false);
   const [sendError, setSendError] = React.useState('');
+
+  const buildRoomsError = React.useCallback(
+    (error) => {
+      if (error?.status === 401) {
+        return 'Your session has expired. Please sign in again.';
+      }
+      return copy.roomUnavailable;
+    },
+    [copy.roomUnavailable]
+  );
 
   const selectedRoom = React.useMemo(
     () => rooms.find((room) => Number(room.id) === Number(selectedRoomId)) || null,
@@ -78,68 +115,100 @@ export default function ChatPage() {
       setRooms(sortRooms(items));
       setSelectedRoomId((prev) => prev || items[0]?.id || null);
     } catch (error) {
-      setRoomsError(error.message || 'Failed to load chat rooms');
+      setRoomsError(buildRoomsError(error));
     } finally {
       setRoomsLoading(false);
     }
-  }, [currentUserId]);
+  }, [buildRoomsError, currentUserId]);
 
-  const loadRoomMessages = React.useCallback(async (roomId, { cursor = null, appendOlder = false } = {}) => {
-    if (!roomId) return;
-    setMessagesByRoom((prev) => ({
-      ...prev,
-      [roomId]: {
-        ...(prev[roomId] || { items: [], nextCursor: null, loaded: false }),
-        loading: !appendOlder,
-        loadingMore: appendOlder,
-      },
-    }));
+  const loadRoomMessages = React.useCallback(
+    async (roomId, { cursor = null, appendOlder = false } = {}) => {
+      if (!roomId) return;
 
-    try {
-      const response = await listMessages(roomId, { cursor, limit: 30 });
-      setMessagesByRoom((prev) => {
-        const existing = prev[roomId] || { items: [], nextCursor: null };
-        const items = appendOlder
-          ? [...(response.items || []), ...existing.items].sort((left, right) => Number(left.id) - Number(right.id))
-          : response.items || [];
-        return {
-          ...prev,
-          [roomId]: {
-            items,
-            nextCursor: response.next_cursor,
-            loading: false,
-            loadingMore: false,
-            loaded: true,
-          },
-        };
-      });
-      await markRoomRead(roomId);
-    } catch (error) {
       setMessagesByRoom((prev) => ({
         ...prev,
         [roomId]: {
           ...(prev[roomId] || { items: [], nextCursor: null, loaded: false }),
-          loading: false,
-          loadingMore: false,
-          loaded: true,
-          error: error.message || 'Failed to load messages',
+          loading: !appendOlder,
+          loadingMore: appendOlder,
+          error: '',
         },
       }));
-    }
-  }, []);
+
+      try {
+        const response = await listMessages(roomId, { cursor, limit: 30 });
+        setMessagesByRoom((prev) => {
+          const existing = prev[roomId] || { items: [], nextCursor: null };
+          const items = appendOlder
+            ? [...(response.items || []), ...existing.items].sort((left, right) => Number(left.id) - Number(right.id))
+            : response.items || [];
+
+          return {
+            ...prev,
+            [roomId]: {
+              items,
+              nextCursor: response.next_cursor,
+              loading: false,
+              loadingMore: false,
+              loaded: true,
+              error: '',
+            },
+          };
+        });
+        await markRoomRead(roomId);
+      } catch (_error) {
+        setMessagesByRoom((prev) => ({
+          ...prev,
+          [roomId]: {
+            ...(prev[roomId] || { items: [], nextCursor: null, loaded: false }),
+            loading: false,
+            loadingMore: false,
+            loaded: true,
+            error: copy.messagesUnavailable,
+          },
+        }));
+      }
+    },
+    [copy.messagesUnavailable]
+  );
 
   const loadChatUsers = React.useCallback(async () => {
     setChatUsersLoading(true);
     setChatUsersError('');
+
     try {
-      const response = await listChatUsers();
-      setChatUsers(response.items || []);
-    } catch (error) {
-      setChatUsersError(error.message || 'Failed to load users');
+      let items = [];
+
+      try {
+        const response = await listChatUsers();
+        items = response.items || [];
+      } catch (_chatUsersError) {
+        items = [];
+      }
+
+      if (!items.length) {
+        const response = await getUsers({ limit: 500 });
+        const rawUsers = Array.isArray(response) ? response : response.items || response.users || [];
+        items = rawUsers.map(mapPortalUser);
+      }
+
+      const uniqueUsers = [];
+      const seen = new Set();
+      items.forEach((candidate) => {
+        const mapped = mapPortalUser(candidate);
+        const id = Number(mapped.id || 0);
+        if (!id || id === currentUserId || seen.has(id)) return;
+        seen.add(id);
+        uniqueUsers.push(mapped);
+      });
+
+      setChatUsers(uniqueUsers);
+    } catch (_error) {
+      setChatUsersError(copy.usersUnavailable);
     } finally {
       setChatUsersLoading(false);
     }
-  }, []);
+  }, [copy.usersUnavailable, currentUserId]);
 
   React.useEffect(() => {
     loadRooms();
@@ -190,6 +259,7 @@ export default function ChatPage() {
   async function handleSendMessage({ body, file }) {
     if (!selectedRoomId) return;
     setSendError('');
+
     setMessagesByRoom((prev) => ({
       ...prev,
       [selectedRoomId]: {
@@ -211,14 +281,16 @@ export default function ChatPage() {
             ...existing,
             sending: false,
             loaded: true,
+            error: '',
             items: mergeMessageList(existing.items || [], createdMessage),
           },
         };
       });
+
       await markRoomRead(selectedRoomId);
       await loadRooms();
-    } catch (error) {
-      setSendError(error.message || 'Failed to send message');
+    } catch (_error) {
+      setSendError(copy.sendUnavailable);
       setMessagesByRoom((prev) => ({
         ...prev,
         [selectedRoomId]: {
@@ -245,8 +317,8 @@ export default function ChatPage() {
       setSelectedRoomId(room.id);
       setIsDirectDialogOpen(false);
       await loadRoomMessages(room.id);
-    } catch (error) {
-      setChatUsersError(error.message || 'Failed to open direct chat');
+    } catch (_error) {
+      setChatUsersError(copy.usersUnavailable);
     } finally {
       setCreatingDirect(false);
     }
@@ -256,17 +328,17 @@ export default function ChatPage() {
     <section className="chat-page">
       <header className="chat-page-header">
         <div>
-          <h1>Internal Chat</h1>
-          <p>Realtime communication, direct messages, General room и безопасные вложения внутри системы.</p>
+          <h1>{copy.title}</h1>
+          <p>{copy.subtitle}</p>
         </div>
         <span className="chat-page-status" data-state={socketState}>
           {socketState === 'connected'
-            ? 'Realtime connected'
+            ? copy.statusConnected
             : socketState === 'reconnecting'
-              ? 'Reconnecting'
+              ? copy.statusReconnecting
               : socketState === 'error'
-                ? 'Connection issue'
-                : 'Connecting'}
+                ? copy.statusError
+                : copy.statusConnecting}
         </span>
       </header>
 
@@ -276,8 +348,9 @@ export default function ChatPage() {
           selectedRoomId={selectedRoomId}
           loading={roomsLoading}
           error={roomsError}
-          onSelectRoom={(room) => setSelectedRoomId(room.id)}
+          onSelectRoom={setSelectedRoomId}
           onStartDirectChat={handleOpenDirectDialog}
+          copy={copy}
         />
 
         <ChatConversation
@@ -296,6 +369,8 @@ export default function ChatPage() {
           onSendMessage={handleSendMessage}
           sending={selectedRoomMessagesState.sending}
           sendError={sendError || selectedRoomMessagesState.error}
+          onDownloadAttachment={downloadAttachment}
+          copy={copy}
         />
       </div>
 
@@ -307,6 +382,7 @@ export default function ChatPage() {
         creating={creatingDirect}
         onClose={() => setIsDirectDialogOpen(false)}
         onSelectUser={handleSelectDirectUser}
+        copy={copy}
       />
     </section>
   );
