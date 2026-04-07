@@ -760,6 +760,31 @@ export async function getDamageReportFormOptions() {
     })
   );
 
+  // Fallback when /employees/works is unavailable in Kenjo permissions:
+  if (!driverRows.length) {
+    const kenjoAccountsRaw = await getKenjoUserAccounts().catch(() => []);
+    const kenjoAccounts = Array.isArray(kenjoAccountsRaw)
+      ? kenjoAccountsRaw
+      : Array.isArray(kenjoAccountsRaw?.data)
+        ? kenjoAccountsRaw.data
+        : Array.isArray(kenjoAccountsRaw?.items)
+          ? kenjoAccountsRaw.items
+          : [];
+    pushDrivers(
+      kenjoAccounts.map((user) => {
+        const firstName = pickFirstString(user, ['firstName', 'first_name', 'givenName', 'given_name']);
+        const lastName = pickFirstString(user, ['lastName', 'last_name', 'familyName', 'family_name']);
+        const displayName =
+          pickFirstString(user, ['displayName', 'display_name', 'name', 'fullName', 'full_name']) ||
+          [firstName, lastName].filter(Boolean).join(' ').trim();
+        return {
+          name: displayName || pickFirstString(user, ['email', 'workEmail', 'work_email']),
+          email: pickFirstString(user, ['email', 'workEmail', 'work_email']),
+        };
+      })
+    );
+  }
+
   const employeesRawRes = await query(`SELECT * FROM employees ORDER BY id DESC LIMIT 2000`).catch(() => ({ rows: [] }));
   pushDrivers(
     (employeesRawRes.rows || [])
