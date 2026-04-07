@@ -797,6 +797,43 @@ export async function getDamageReportFormOptions() {
       }))
   );
 
+  // Fallback for environments where employee/user master tables are empty:
+  // collect driver names from operational tables used in daily workflow.
+  if (!driverRows.length) {
+    const carPlanningNamesRes = await query(
+      `
+        SELECT DISTINCT NULLIF(TRIM(driver_name), '') AS name
+        FROM car_planning
+        WHERE NULLIF(TRIM(driver_name), '') IS NOT NULL
+        ORDER BY 1 ASC
+        LIMIT 1000
+      `
+    ).catch(() => ({ rows: [] }));
+    pushDrivers((carPlanningNamesRes.rows || []).map((row) => ({ name: row.name, email: null })));
+
+    const damagesNamesRes = await query(
+      `
+        SELECT DISTINCT NULLIF(TRIM(driver_name), '') AS name
+        FROM damages
+        WHERE NULLIF(TRIM(driver_name), '') IS NOT NULL
+        ORDER BY 1 ASC
+        LIMIT 1000
+      `
+    ).catch(() => ({ rows: [] }));
+    pushDrivers((damagesNamesRes.rows || []).map((row) => ({ name: row.name, email: null })));
+
+    const publicReportsNamesRes = await query(
+      `
+        SELECT DISTINCT NULLIF(TRIM(driver_name), '') AS name
+        FROM public_damage_reports
+        WHERE NULLIF(TRIM(driver_name), '') IS NOT NULL
+        ORDER BY 1 ASC
+        LIMIT 1000
+      `
+    ).catch(() => ({ rows: [] }));
+    pushDrivers((publicReportsNamesRes.rows || []).map((row) => ({ name: row.name, email: null })));
+  }
+
   const carsRes = await query(
     `
       SELECT
