@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import DamageReportForm, { createEmptyDamageReport } from '../components/DamageReportForm.jsx';
+import { DAMAGE_REPORT_LOCALES, getDamageReportCopy, normalizeDamageReportLocale } from '../components/damageReportI18n.js';
 import { getDamageReportOptions, submitDamageReport } from '../services/publicFormsApi.js';
 
 const LANG_STORAGE_KEY = 'damage_report_public_lang';
@@ -9,12 +10,6 @@ const ATTACHMENT_CATEGORIES = [
   { key: 'ourDamages', required: true },
   { key: 'opponentDamages', required: true },
   { key: 'other', required: false },
-];
-
-const LOCALE_CHOICES = [
-  { locale: 'en', label: 'English' },
-  { locale: 'de', label: 'Deutsch' },
-  { locale: 'ru', label: 'Русский' },
 ];
 
 const COPY = {
@@ -171,8 +166,7 @@ const COPY = {
 };
 
 function normalizeLocale(locale) {
-  if (locale === 'de' || locale === 'ru') return locale;
-  return 'en';
+  return normalizeDamageReportLocale(locale);
 }
 
 function createEmptyAttachmentGroups() {
@@ -201,9 +195,35 @@ export default function DamageReportPublicPage() {
   const [showLanguageModal, setShowLanguageModal] = useState(true);
   const [locale, setLocale] = useState(() => normalizeLocale(localStorage.getItem(LANG_STORAGE_KEY)));
 
-  const copy = COPY[locale] || COPY.en;
+  const copy = useMemo(() => {
+    const legacy = getDamageReportCopy(locale) || {};
+    const base = COPY[locale] || COPY.en;
+    return {
+      ...base,
+      pageTitle: legacy.pageTitle || base.pageTitle,
+      pageSubtitle: legacy.pageSubtitle || base.pageSubtitle,
+      submit: legacy.submit || base.submit,
+      submitting: legacy.submitting || base.submitting,
+      languageModalTitle: legacy.modalTitle || base.languageModalTitle,
+      languageModalBody: legacy.modalBody || base.languageModalBody,
+      continue: legacy.continue || base.continue,
+      chooseFiles: legacy.uploadFiles || base.chooseFiles,
+      noFilesSelected: legacy.noFilesSelected || base.noFilesSelected,
+      useCurrentLocation: legacy.useCurrentLocation || base.useCurrentLocation,
+      locating: legacy.locating || base.locating,
+      incidentDate: legacy.incidentDate || base.incidentDate,
+      incidentTime: legacy.incidentTime || base.incidentTime,
+      location: legacy.location || base.location,
+      damageSummary: legacy.damageSummary || base.damageSummary,
+      description: legacy.description || base.description,
+      witnesses: legacy.witnesses || base.witnesses,
+    };
+  }, [locale]);
 
-  const localeChoices = useMemo(() => LOCALE_CHOICES, []);
+  const localeChoices = useMemo(
+    () => (Array.isArray(DAMAGE_REPORT_LOCALES) ? DAMAGE_REPORT_LOCALES : []),
+    []
+  );
 
   useEffect(() => {
     let cancelled = false;
