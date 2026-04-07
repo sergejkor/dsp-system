@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import authRoutes from './modules/auth/authRoutes.js';
@@ -24,20 +23,16 @@ import damagesRoutes from './modules/damages/damagesRoutes.js';
 import dashboardRoutes from './modules/dashboard/dashboardRoutes.js';
 import financeRoutes from './modules/finance/financeRoutes.js';
 import publicIntakePublicRoutes from './modules/publicIntake/publicIntakePublicRoutes.js';
-import publicIntakeAdminRoutes from './modules/publicIntake/publicIntakeAdminRoutes.js';
-import chatRoutes from './modules/chat/chatRoutes.js';
 import { getFinanceHealthInfo } from './modules/finance/financeService.js';
 import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
 import { startKenjoSyncScheduler } from './modules/kenjo/kenjoSyncScheduler.js';
-import { initChatRealtime } from './modules/chat/chatRealtime.js';
-import chatService from './modules/chat/chatService.js';
 
 const app = express();
-const server = http.createServer(app);
 const port = Number(process.env.PORT || 3001);
 
 const defaultAllowedOrigins = [
   'https://dsp-system.alfamile.com',
+  'https://schadensmeldung.alfamile.com',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ];
@@ -47,18 +42,10 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .filter(Boolean);
 const finalAllowedOrigins = allowedOrigins.length ? allowedOrigins : defaultAllowedOrigins;
 
-function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  if (finalAllowedOrigins.includes(origin)) return true;
-  if (/^https:\/\/([a-z0-9-]+\.)*alfamile\.com$/i.test(origin)) return true;
-  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
-  return false;
-}
-
 const corsOptions = {
   origin(origin, callback) {
     // Allow non-browser tools (no Origin header) and explicit allowed origins.
-    if (isAllowedOrigin(origin)) return callback(null, true);
+    if (!origin || finalAllowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true,
@@ -67,7 +54,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
   let finance;
@@ -84,11 +71,13 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+// Public intake routes must stay accessible without auth
 app.use('/api/public', publicIntakePublicRoutes);
 app.use('/api', authMiddleware.loadAuth);
 app.use('/api', (req, res, next) => {
   if (req.originalUrl === '/api/health') return next();
   if (req.originalUrl === '/api/auth/login' && req.method === 'POST') return next();
+  if (req.originalUrl.startsWith('/api/public/')) return next();
   return authMiddleware.requireAuth(req, res, next);
 });
 
@@ -111,18 +100,9 @@ app.use('/api/damages', damagesRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/insurance', insuranceRoutes);
 app.use('/api/finance', financeRoutes);
-app.use('/api/intake', publicIntakeAdminRoutes);
-app.use('/api/chat', chatRoutes);
 
-initChatRealtime(server);
-
-server.listen(port, async () => {
+app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
   startPaveSyncScheduler();
   startKenjoSyncScheduler();
-  try {
-    await chatService.backfillGlobalRoomParticipants();
-  } catch (error) {
-    console.error('chatService.backfillGlobalRoomParticipants', error);
-  }
 });
