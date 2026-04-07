@@ -15,8 +15,61 @@ function displayName(row) {
 }
 
 function normalizePayload(payload) {
-  return { ...createEmptyDamageReport(), ...(payload || {}) };
+  const normalized = { ...createEmptyDamageReport(), ...(payload || {}) };
+  if (String(normalized.descriptionDe || '').trim()) {
+    normalized.description = normalized.descriptionDe;
+  }
+  return normalized;
 }
+
+const REVIEW_COPY_DE = {
+  driverVehicleSection: 'Fahrer & Fahrzeug',
+  driverLabel: 'Fahrer',
+  driverPlaceholder: 'Fahrer wählen',
+  vehicleLabel: 'Fahrzeug (Kennzeichen)',
+  vehiclePlaceholder: 'Kennzeichen wählen',
+  rentalCar: 'Mietwagen',
+  rentalCarLicensePlate: 'Kennzeichen vom Mietwagen',
+  accidentSection: 'Unfall',
+  accidentTypeLabel: 'Unfallart',
+  accidentWithAnotherCar: 'Unfall mit anderem Fahrzeug',
+  accidentWithoutOtherCar: 'Unfall ohne anderes Fahrzeug',
+  thirdPartyPropertyDamaged: 'Fremdes Eigentum beschädigt?',
+  ownerFirstName: 'Vorname Eigentümer',
+  ownerLastName: 'Nachname Eigentümer',
+  ownerPhone: 'Kontakt Telefon',
+  ownerEmail: 'Kontakt E-Mail',
+  opponentName: 'Unfallgegner Name',
+  opponentEmail: 'Unfallgegner E-Mail',
+  opponentPhone: 'Unfallgegner Telefon',
+  opponentInsurance: 'Versicherung Unfallgegner',
+  selectInsurance: 'Versicherung wählen',
+  opponentInsuranceOther: 'Bitte Versicherungsname angeben',
+  opponentInsuranceNumber: 'Versicherungsnummer Unfallgegner',
+  incidentDate: 'Unfalldatum',
+  incidentTime: 'Unfallzeit',
+  location: 'Ort',
+  locationPlaceholder: 'Adresse suchen oder manuell eingeben',
+  useCurrentLocation: 'Aktuellen Standort verwenden',
+  locating: 'Standort wird ermittelt...',
+  searching: 'Suche...',
+  noAddresses: 'Keine Adressen gefunden',
+  street: 'Straße',
+  houseNumber: 'Hausnummer',
+  zipCode: 'PLZ',
+  city: 'Stadt',
+  policeOnSite: 'War die Polizei vor Ort?',
+  policeStation: 'Polizeidienststelle',
+  yes: 'Ja',
+  no: 'Nein',
+  description: 'Beschreibung',
+  descriptionPlaceholder: 'Beschreibung (automatisch auf Deutsch übersetzt).',
+  witnesses: 'Zeugen',
+  witnessName: 'Zeuge Vorname',
+  witnessSurname: 'Zeuge Nachname',
+  witnessPhone: 'Zeuge Telefon',
+  witnessEmail: 'Zeuge E-Mail',
+};
 
 export default function DamageReportReviewPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -234,7 +287,7 @@ export default function DamageReportReviewPage() {
               </div>
 
               <div className="card" style={{ marginBottom: '1rem' }}>
-                <DamageReportForm value={form} onChange={setForm} disabled={saving} />
+                <DamageReportForm value={form} onChange={setForm} disabled={saving} copy={REVIEW_COPY_DE} />
               </div>
 
               <div className="card">

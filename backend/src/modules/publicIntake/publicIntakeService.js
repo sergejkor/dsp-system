@@ -582,9 +582,37 @@ function normalizeDamagePayload(payload) {
     policeOnSite: payload?.policeOnSite === true,
     policeStation: stringOrNull(payload?.policeStation, 255),
     description: stringOrNull(payload?.description, 8000),
+    descriptionDe: stringOrNull(payload?.descriptionDe, 8000),
     damageSummary: stringOrNull(payload?.damageSummary, 4000),
     witnesses: stringOrNull(payload?.witnesses, 4000),
   });
+}
+
+async function translateTextToGerman(value) {
+  const text = stringOrNull(value, 8000);
+  if (!text) return null;
+  try {
+    const params = new URLSearchParams({
+      client: 'gtx',
+      sl: 'auto',
+      tl: 'de',
+      dt: 't',
+      q: text,
+    });
+    const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return text;
+    const data = await response.json().catch(() => null);
+    const segments = Array.isArray(data?.[0]) ? data[0] : [];
+    const translated = segments
+      .map((segment) => (Array.isArray(segment) ? String(segment[0] || '') : ''))
+      .join('')
+      .trim();
+    return translated || text;
+  } catch {
+    return text;
+  }
 }
 
 function validateDamageReportRequired(payload) {
@@ -687,6 +715,7 @@ export async function submitPersonalQuestionnaire(payload, files) {
 export async function submitDamageReport(payload, files) {
   await ensurePublicIntakeTables();
   const normalized = normalizeDamagePayload(payload);
+  normalized.descriptionDe = await translateTextToGerman(normalized.description);
   const summary = extractDamageSummary(normalized);
   const missing = validateDamageReportRequired(normalized);
   if (missing.length) {
@@ -1110,6 +1139,7 @@ export async function markDamageReportUnread(id) {
 export async function updateDamageReport(id, payload, status) {
   await ensurePublicIntakeTables();
   const normalized = normalizeDamagePayload(payload);
+  normalized.descriptionDe = await translateTextToGerman(normalized.description);
   const summary = extractDamageSummary(normalized);
   const nextStatus = stringOrNull(status, 32) || 'reviewing';
   const res = await query(
