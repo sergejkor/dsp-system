@@ -24,6 +24,7 @@ import dashboardRoutes from './modules/dashboard/dashboardRoutes.js';
 import financeRoutes from './modules/finance/financeRoutes.js';
 import publicIntakePublicRoutes from './modules/publicIntake/publicIntakePublicRoutes.js';
 import publicIntakeAdminRoutes from './modules/publicIntake/publicIntakeAdminRoutes.js';
+import chatRoutes from './modules/chat/chatRoutes.js';
 import { getFinanceHealthInfo } from './modules/finance/financeService.js';
 import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
 import { startKenjoSyncScheduler } from './modules/kenjo/kenjoSyncScheduler.js';
@@ -102,6 +103,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/insurance', insuranceRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/intake', publicIntakeAdminRoutes);
+app.use('/api/chat', chatRoutes);
 
 app.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
