@@ -560,6 +560,7 @@ function normalizePersonalPayload(payload) {
 
 function normalizeDamagePayload(payload) {
   return compactObject({
+    accidentType: stringOrNull(payload?.accidentType, 64),
     reporterName: stringOrNull(payload?.reporterName || payload?.opponentName, 255),
     reporterEmail: stringOrNull(payload?.reporterEmail || payload?.opponentEmail, 255),
     reporterPhone: stringOrNull(payload?.reporterPhone || payload?.opponentPhone, 255),
@@ -576,12 +577,27 @@ function normalizeDamagePayload(payload) {
     zipCode: stringOrNull(payload?.zipCode || payload?.postalCode, 32),
     city: stringOrNull(payload?.city, 255),
     opponentInsuranceNumber: stringOrNull(payload?.opponentInsuranceNumber, 128),
+    rentalCar: payload?.rentalCar === true,
+    rentalCarLicensePlate: stringOrNull(payload?.rentalCarLicensePlate, 64),
     policeOnSite: payload?.policeOnSite === true,
     policeStation: stringOrNull(payload?.policeStation, 255),
     description: stringOrNull(payload?.description, 8000),
     damageSummary: stringOrNull(payload?.damageSummary, 4000),
     witnesses: stringOrNull(payload?.witnesses, 4000),
   });
+}
+
+function validateDamageReportRequired(payload) {
+  const missing = [];
+  const accidentType = String(payload?.accidentType || '').trim();
+  const withOtherCar = accidentType !== 'without_other_car';
+
+  if (!stringOrNull(payload?.driverName, 255)) missing.push('Driver name');
+  if (!dateOnlyOrNull(payload?.incidentDate)) missing.push('Incident date');
+  if (withOtherCar && !stringOrNull(payload?.opponentName || payload?.reporterName, 255)) {
+    missing.push('Opponent name');
+  }
+  return missing;
 }
 
 function validatePersonalQuestionnaireRequired(payload) {
@@ -672,9 +688,9 @@ export async function submitDamageReport(payload, files) {
   await ensurePublicIntakeTables();
   const normalized = normalizeDamagePayload(payload);
   const summary = extractDamageSummary(normalized);
-
-  if (!summary.reporterName || !summary.driverName || !summary.incidentDate) {
-    throw new Error('Opponent name, driver name and incident date are required');
+  const missing = validateDamageReportRequired(normalized);
+  if (missing.length) {
+    throw new Error(`Please fill in the required fields: ${missing.join(', ')}`);
   }
 
   const res = await query(
