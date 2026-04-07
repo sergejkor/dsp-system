@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import DamageReportForm, { createEmptyDamageReport } from '../components/DamageReportForm.jsx';
-import { submitDamageReport } from '../services/publicFormsApi.js';
+import { getDamageReportOptions, submitDamageReport } from '../services/publicFormsApi.js';
 
 function formatFiles(files) {
   if (!files?.length) return 'No files selected';
@@ -10,11 +10,26 @@ function formatFiles(files) {
 export default function DamageReportPublicPage() {
   const [form, setForm] = useState(createEmptyDamageReport);
   const [files, setFiles] = useState([]);
+  const [options, setOptions] = useState({ drivers: [], cars: [] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(null);
 
   const fileLabel = useMemo(() => formatFiles(files), [files]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDamageReportOptions()
+      .then((data) => {
+        if (!cancelled) setOptions(data);
+      })
+      .catch(() => {
+        if (!cancelled) setOptions({ drivers: [], cars: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -51,7 +66,7 @@ export default function DamageReportPublicPage() {
         )}
 
         <form onSubmit={handleSubmit} className="public-page-form">
-          <DamageReportForm value={form} onChange={setForm} disabled={saving} />
+          <DamageReportForm value={form} onChange={setForm} disabled={saving} options={options} />
 
           <section className="public-form-section">
             <h3>Attachments</h3>

@@ -113,6 +113,16 @@ router.get('/address-search', async (req, res) => {
   }
 });
 
+router.get('/schadenmeldung/options', async (_req, res) => {
+  try {
+    const options = await publicIntakeService.getDamageReportFormOptions();
+    res.json(options);
+  } catch (error) {
+    console.error('GET /api/public/schadenmeldung/options error', error);
+    res.status(500).json({ error: 'Failed to load Schadenmeldung options' });
+  }
+});
+
 router.post('/personal-fragebogen', async (req, res) => {
   try {
     await runMultiUpload(req, res, 'files');

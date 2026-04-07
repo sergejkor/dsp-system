@@ -260,9 +260,9 @@ function extractPersonalSummary(payload) {
 
 function extractDamageSummary(payload) {
   return {
-    reporterName: stringOrNull(payload?.reporterName, 255),
-    reporterEmail: stringOrNull(payload?.reporterEmail, 255),
-    reporterPhone: stringOrNull(payload?.reporterPhone, 255),
+    reporterName: stringOrNull(payload?.opponentName || payload?.reporterName, 255),
+    reporterEmail: stringOrNull(payload?.opponentEmail || payload?.reporterEmail, 255),
+    reporterPhone: stringOrNull(payload?.opponentPhone || payload?.reporterPhone, 255),
     driverName: stringOrNull(payload?.driverName, 255),
     licensePlate: stringOrNull(payload?.licensePlate, 64),
     incidentDate: dateOnlyOrNull(payload?.incidentDate),
@@ -560,14 +560,21 @@ function normalizePersonalPayload(payload) {
 
 function normalizeDamagePayload(payload) {
   return compactObject({
-    reporterName: stringOrNull(payload?.reporterName, 255),
-    reporterEmail: stringOrNull(payload?.reporterEmail, 255),
-    reporterPhone: stringOrNull(payload?.reporterPhone, 255),
+    reporterName: stringOrNull(payload?.reporterName || payload?.opponentName, 255),
+    reporterEmail: stringOrNull(payload?.reporterEmail || payload?.opponentEmail, 255),
+    reporterPhone: stringOrNull(payload?.reporterPhone || payload?.opponentPhone, 255),
+    opponentName: stringOrNull(payload?.opponentName || payload?.reporterName, 255),
+    opponentEmail: stringOrNull(payload?.opponentEmail || payload?.reporterEmail, 255),
+    opponentPhone: stringOrNull(payload?.opponentPhone || payload?.reporterPhone, 255),
     driverName: stringOrNull(payload?.driverName, 255),
     licensePlate: stringOrNull(payload?.licensePlate, 64),
     incidentDate: dateOnlyOrNull(payload?.incidentDate),
     incidentTime: stringOrNull(payload?.incidentTime, 32),
     location: stringOrNull(payload?.location, 255),
+    streetName: stringOrNull(payload?.streetName || payload?.street, 255),
+    houseNumber: stringOrNull(payload?.houseNumber, 64),
+    zipCode: stringOrNull(payload?.zipCode || payload?.postalCode, 32),
+    city: stringOrNull(payload?.city, 255),
     description: stringOrNull(payload?.description, 8000),
     damageSummary: stringOrNull(payload?.damageSummary, 4000),
     witnesses: stringOrNull(payload?.witnesses, 4000),
@@ -664,7 +671,7 @@ export async function submitDamageReport(payload, files) {
   const summary = extractDamageSummary(normalized);
 
   if (!summary.reporterName || !summary.driverName || !summary.incidentDate) {
-    throw new Error('Reporter name, driver name and incident date are required');
+    throw new Error('Opponent name, driver name and incident date are required');
   }
 
   const res = await query(
@@ -697,6 +704,62 @@ export async function submitDamageReport(payload, files) {
     console.error('Failed to send Schadenmeldung notification email:', error);
   }
   return row;
+}
+
+export async function getDamageReportFormOptions() {
+  await ensurePublicIntakeTables();
+
+  const driversRes = await query(
+    `
+      SELECT DISTINCT name, email
+      FROM (
+        SELECT
+          NULLIF(TRIM(COALESCE(e.display_name, CONCAT_WS(' ', e.first_name, e.last_name))), '') AS name,
+          NULLIF(TRIM(e.email), '') AS email
+        FROM employees e
+        WHERE COALESCE(e.is_active, true) = true
+        UNION ALL
+        SELECT
+          NULLIF(TRIM(COALESCE(k.display_name, CONCAT_WS(' ', k.first_name, k.last_name))), '') AS name,
+          NULLIF(TRIM(k.email), '') AS email
+        FROM kenjo_employees k
+        WHERE COALESCE(k.is_active, true) = true
+      ) src
+      WHERE name IS NOT NULL
+      ORDER BY name ASC
+      LIMIT 1000
+    `
+  ).catch(() => ({ rows: [] }));
+
+  const carsRes = await query(
+    `
+      SELECT
+        c.id,
+        NULLIF(TRIM(c.license_plate), '') AS license_plate,
+        NULLIF(TRIM(c.vehicle_id), '') AS vehicle_id,
+        NULLIF(TRIM(c.model), '') AS model
+      FROM cars c
+      WHERE NULLIF(TRIM(c.license_plate), '') IS NOT NULL
+      ORDER BY c.license_plate ASC
+      LIMIT 1000
+    `
+  ).catch(() => ({ rows: [] }));
+
+  const drivers = (driversRes.rows || []).map((row, index) => ({
+    id: `driver-${index + 1}`,
+    name: String(row.name || '').trim(),
+    email: row.email || null,
+  }));
+
+  const cars = (carsRes.rows || []).map((row) => ({
+    id: Number(row.id),
+    licensePlate: String(row.license_plate || '').trim(),
+    vehicleId: row.vehicle_id || null,
+    model: row.model || null,
+    label: [row.license_plate, row.vehicle_id, row.model].filter(Boolean).join(' · '),
+  }));
+
+  return { drivers, cars };
 }
 
 export async function listPersonalQuestionnaires({ status } = {}) {
@@ -1555,6 +1618,7 @@ const publicIntakeService = {
   updateDamageReport,
   addDamageReportFiles,
   getDamageReportFile,
+  getDamageReportFormOptions,
   saveAndSendPersonalQuestionnaire,
   getPublicIntakeSummary,
   ensurePublicIntakeTables,

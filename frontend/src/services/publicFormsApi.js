@@ -26,6 +26,18 @@ export function submitDamageReport(payload, files) {
   return submitMultipart('/api/public/schadenmeldung', payload, files);
 }
 
+export async function getDamageReportOptions() {
+  const res = await fetch(`${API_BASE}/api/public/schadenmeldung/options`);
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(out.error || 'Failed to load options');
+  }
+  return {
+    drivers: Array.isArray(out?.drivers) ? out.drivers : [],
+    cars: Array.isArray(out?.cars) ? out.cars : [],
+  };
+}
+
 export async function searchAddressSuggestions(query) {
   const qs = new URLSearchParams({ q: String(query || '') });
   const res = await fetch(`${API_BASE}/api/public/address-search?${qs.toString()}`);
