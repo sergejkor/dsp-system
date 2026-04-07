@@ -715,6 +715,23 @@ export async function getDamageReportFormOptions() {
   const driverRows = [];
   const seenDriverKeys = new Set();
 
+  function pickFirstString(row, keys) {
+    for (const key of keys) {
+      const value = row?.[key];
+      if (value == null) continue;
+      const normalized = String(value).trim();
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
+  function composeName(row, firstNameKeys = [], lastNameKeys = []) {
+    const first = pickFirstString(row, firstNameKeys) || '';
+    const last = pickFirstString(row, lastNameKeys) || '';
+    const full = `${first} ${last}`.trim();
+    return full || null;
+  }
+
   function pushDrivers(rows) {
     for (const row of rows || []) {
       const name = String(row?.name || '').trim();
@@ -727,44 +744,58 @@ export async function getDamageReportFormOptions() {
     }
   }
 
-  const employeesDriversRes = await query(
-    `
-      SELECT DISTINCT
-        NULLIF(TRIM(COALESCE(e.display_name, e.name, CONCAT_WS(' ', e.first_name, e.last_name))), '') AS name,
-        NULLIF(TRIM(COALESCE(e.email, e.work_email, e.private_email)), '') AS email
-      FROM employees e
-      WHERE COALESCE(e.is_active, true) = true
-      ORDER BY 1 ASC
-      LIMIT 1000
-    `
-  ).catch(() => ({ rows: [] }));
-  pushDrivers(employeesDriversRes.rows);
+  const employeesRawRes = await query(`SELECT * FROM employees ORDER BY id DESC LIMIT 2000`).catch(() => ({ rows: [] }));
+  pushDrivers(
+    (employeesRawRes.rows || [])
+      .filter((row) => {
+        const active = row?.is_active;
+        if (active === false || String(active).toLowerCase() === 'false' || Number(active) === 0) return false;
+        return true;
+      })
+      .map((row) => ({
+        name:
+          pickFirstString(row, ['display_name', 'name', 'full_name']) ||
+          composeName(row, ['first_name', 'firstname', 'firstName'], ['last_name', 'lastname', 'lastName']) ||
+          pickFirstString(row, ['email', 'work_email', 'private_email']),
+        email: pickFirstString(row, ['email', 'work_email', 'private_email']),
+      }))
+  );
 
-  const kenjoDriversRes = await query(
-    `
-      SELECT DISTINCT
-        NULLIF(TRIM(COALESCE(k.display_name, k.full_name, k.name, CONCAT_WS(' ', k.first_name, k.last_name))), '') AS name,
-        NULLIF(TRIM(COALESCE(k.email, k.work_email, k.personal_email)), '') AS email
-      FROM kenjo_employees k
-      WHERE COALESCE(k.is_active, true) = true
-      ORDER BY 1 ASC
-      LIMIT 1000
-    `
-  ).catch(() => ({ rows: [] }));
-  pushDrivers(kenjoDriversRes.rows);
+  const kenjoRawRes = await query(`SELECT * FROM kenjo_employees ORDER BY id DESC LIMIT 4000`).catch(() => ({ rows: [] }));
+  pushDrivers(
+    (kenjoRawRes.rows || [])
+      .filter((row) => {
+        const active = row?.is_active;
+        if (active === false || String(active).toLowerCase() === 'false' || Number(active) === 0) return false;
+        return true;
+      })
+      .map((row) => ({
+        name:
+          pickFirstString(row, ['display_name', 'full_name', 'name']) ||
+          composeName(row, ['first_name', 'firstname', 'firstName'], ['last_name', 'lastname', 'lastName']) ||
+          pickFirstString(row, ['email', 'work_email', 'personal_email']),
+        email: pickFirstString(row, ['email', 'work_email', 'personal_email']),
+      }))
+  );
 
-  const usersDriversRes = await query(
-    `
-      SELECT DISTINCT
-        NULLIF(TRIM(COALESCE(u.full_name, CONCAT_WS(' ', u.first_name, u.last_name))), '') AS name,
-        NULLIF(TRIM(u.email), '') AS email
-      FROM settings_users u
-      WHERE COALESCE(NULLIF(TRIM(u.status), ''), 'active') NOT IN ('inactive', 'suspended')
-      ORDER BY 1 ASC
-      LIMIT 1000
-    `
-  ).catch(() => ({ rows: [] }));
-  pushDrivers(usersDriversRes.rows);
+  const settingsUsersRawRes = await query(`SELECT * FROM settings_users ORDER BY id DESC LIMIT 2000`).catch(() => ({ rows: [] }));
+  pushDrivers(
+    (settingsUsersRawRes.rows || [])
+      .filter((row) => {
+        const status = String(row?.status || '').trim().toLowerCase();
+        if (status && (status === 'inactive' || status === 'suspended')) return false;
+        const active = row?.is_active;
+        if (active === false || String(active).toLowerCase() === 'false' || Number(active) === 0) return false;
+        return true;
+      })
+      .map((row) => ({
+        name:
+          pickFirstString(row, ['full_name', 'display_name', 'name']) ||
+          composeName(row, ['first_name', 'firstname', 'firstName'], ['last_name', 'lastname', 'lastName']) ||
+          pickFirstString(row, ['email', 'work_email', 'private_email']),
+        email: pickFirstString(row, ['email', 'work_email', 'private_email']),
+      }))
+  );
 
   const carsRes = await query(
     `
