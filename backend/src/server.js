@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { createServer } from 'node:http';
 import authRoutes from './modules/auth/authRoutes.js';
 import authMiddleware from './modules/auth/authMiddleware.js';
 import employeesRoutes from './modules/employees/employeeRoutes.js';
@@ -25,6 +26,7 @@ import financeRoutes from './modules/finance/financeRoutes.js';
 import publicIntakePublicRoutes from './modules/publicIntake/publicIntakePublicRoutes.js';
 import publicIntakeAdminRoutes from './modules/publicIntake/publicIntakeAdminRoutes.js';
 import chatRoutes from './modules/chat/chatRoutes.js';
+import { initChatRealtime } from './modules/chat/chatRealtime.js';
 import searchRoutes from './modules/search/searchRoutes.js';
 import { getFinanceHealthInfo } from './modules/finance/financeService.js';
 import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
@@ -107,7 +109,10 @@ app.use('/api/intake', publicIntakeAdminRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/search', searchRoutes);
 
-app.listen(port, () => {
+const httpServer = createServer(app);
+initChatRealtime(httpServer);
+
+httpServer.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
   startPaveSyncScheduler();
   startKenjoSyncScheduler();
