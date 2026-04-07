@@ -712,27 +712,59 @@ export async function submitDamageReport(payload, files) {
 export async function getDamageReportFormOptions() {
   await ensurePublicIntakeTables();
 
-  const driversRes = await query(
+  const driverRows = [];
+  const seenDriverKeys = new Set();
+
+  function pushDrivers(rows) {
+    for (const row of rows || []) {
+      const name = String(row?.name || '').trim();
+      if (!name) continue;
+      const email = String(row?.email || '').trim() || null;
+      const key = `${name.toLowerCase()}|${(email || '').toLowerCase()}`;
+      if (seenDriverKeys.has(key)) continue;
+      seenDriverKeys.add(key);
+      driverRows.push({ name, email });
+    }
+  }
+
+  const employeesDriversRes = await query(
     `
-      SELECT DISTINCT name, email
-      FROM (
-        SELECT
-          NULLIF(TRIM(COALESCE(e.display_name, CONCAT_WS(' ', e.first_name, e.last_name))), '') AS name,
-          NULLIF(TRIM(e.email), '') AS email
-        FROM employees e
-        WHERE COALESCE(e.is_active, true) = true
-        UNION ALL
-        SELECT
-          NULLIF(TRIM(COALESCE(k.display_name, CONCAT_WS(' ', k.first_name, k.last_name))), '') AS name,
-          NULLIF(TRIM(k.email), '') AS email
-        FROM kenjo_employees k
-        WHERE COALESCE(k.is_active, true) = true
-      ) src
-      WHERE name IS NOT NULL
-      ORDER BY name ASC
+      SELECT DISTINCT
+        NULLIF(TRIM(COALESCE(e.display_name, e.name, CONCAT_WS(' ', e.first_name, e.last_name))), '') AS name,
+        NULLIF(TRIM(COALESCE(e.email, e.work_email, e.private_email)), '') AS email
+      FROM employees e
+      WHERE COALESCE(e.is_active, true) = true
+      ORDER BY 1 ASC
       LIMIT 1000
     `
   ).catch(() => ({ rows: [] }));
+  pushDrivers(employeesDriversRes.rows);
+
+  const kenjoDriversRes = await query(
+    `
+      SELECT DISTINCT
+        NULLIF(TRIM(COALESCE(k.display_name, k.full_name, k.name, CONCAT_WS(' ', k.first_name, k.last_name))), '') AS name,
+        NULLIF(TRIM(COALESCE(k.email, k.work_email, k.personal_email)), '') AS email
+      FROM kenjo_employees k
+      WHERE COALESCE(k.is_active, true) = true
+      ORDER BY 1 ASC
+      LIMIT 1000
+    `
+  ).catch(() => ({ rows: [] }));
+  pushDrivers(kenjoDriversRes.rows);
+
+  const usersDriversRes = await query(
+    `
+      SELECT DISTINCT
+        NULLIF(TRIM(COALESCE(u.full_name, CONCAT_WS(' ', u.first_name, u.last_name))), '') AS name,
+        NULLIF(TRIM(u.email), '') AS email
+      FROM settings_users u
+      WHERE COALESCE(NULLIF(TRIM(u.status), ''), 'active') NOT IN ('inactive', 'suspended')
+      ORDER BY 1 ASC
+      LIMIT 1000
+    `
+  ).catch(() => ({ rows: [] }));
+  pushDrivers(usersDriversRes.rows);
 
   const carsRes = await query(
     `
@@ -748,7 +780,7 @@ export async function getDamageReportFormOptions() {
     `
   ).catch(() => ({ rows: [] }));
 
-  const drivers = (driversRes.rows || []).map((row, index) => ({
+  const drivers = driverRows.map((row, index) => ({
     id: `driver-${index + 1}`,
     name: String(row.name || '').trim(),
     email: row.email || null,

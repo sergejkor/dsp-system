@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import DamageReportForm, { createEmptyDamageReport } from '../components/DamageReportForm.jsx';
 import { DAMAGE_REPORT_LOCALES, getDamageReportCopy, normalizeDamageReportLocale } from '../components/damageReportI18n.js';
 import { getDamageReportOptions, submitDamageReport } from '../services/publicFormsApi.js';
@@ -11,6 +12,17 @@ const ATTACHMENT_CATEGORIES = [
   { key: 'opponentDamages', required: true },
   { key: 'other', required: false },
 ];
+
+const COMPANY_INSURANCE_DEFAULT = {
+  companyName: 'AlfaMile UG',
+  street: 'Nadistr. 16',
+  cityLine: '80809 München',
+  hrb: 'HRB 28268576',
+  contactEmail: 'unfall@alfamile.com',
+  phone: '0176 31555520',
+  insurance: 'VHV',
+  insuranceNumber: 'K 73-319078/ff DNO',
+};
 
 const COPY = {
   en: {
@@ -193,6 +205,9 @@ export default function DamageReportPublicPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(null);
   const [showLanguageModal, setShowLanguageModal] = useState(true);
+  const [showInsuranceModal, setShowInsuranceModal] = useState(false);
+  const [showInsuranceQr, setShowInsuranceQr] = useState(false);
+  const [companyInsurance, setCompanyInsurance] = useState(COMPANY_INSURANCE_DEFAULT);
   const [locale, setLocale] = useState(() => normalizeLocale(localStorage.getItem(LANG_STORAGE_KEY)));
 
   const copy = useMemo(() => {
@@ -221,7 +236,11 @@ export default function DamageReportPublicPage() {
   }, [locale]);
 
   const localeChoices = useMemo(
-    () => (Array.isArray(DAMAGE_REPORT_LOCALES) ? DAMAGE_REPORT_LOCALES : []),
+    () =>
+      (Array.isArray(DAMAGE_REPORT_LOCALES) ? DAMAGE_REPORT_LOCALES : []).map((item) => ({
+        locale: item.locale,
+        label: item.label || item.nativeLabel || item.germanValue || item.locale,
+      })),
     []
   );
 
@@ -251,6 +270,20 @@ export default function DamageReportPublicPage() {
       return acc;
     }, {});
   }, [attachmentGroups, copy.noFilesSelected]);
+
+  const companyInsuranceQrValue = useMemo(() => {
+    const lines = [
+      companyInsurance.companyName,
+      companyInsurance.street,
+      companyInsurance.cityLine,
+      `HRB: ${companyInsurance.hrb}`,
+      `Contact e-mail: ${companyInsurance.contactEmail}`,
+      `Phone: ${companyInsurance.phone}`,
+      `Insurance: ${companyInsurance.insurance}`,
+      `Insurance number: ${companyInsurance.insuranceNumber}`,
+    ];
+    return lines.filter(Boolean).join('\n');
+  }, [companyInsurance]);
 
   function setAttachmentFiles(categoryKey, files) {
     setAttachmentGroups((prev) => ({
@@ -317,11 +350,117 @@ export default function DamageReportPublicPage() {
         </div>
       )}
 
+      {showInsuranceModal && (
+        <div className="public-language-modal-backdrop">
+          <div className="public-language-modal">
+            <h2>Company Insurance Data</h2>
+            <div className="public-form-grid">
+              <label className="public-form-field">
+                <span>Company name</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.companyName}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, companyName: e.target.value }))}
+                />
+              </label>
+              <label className="public-form-field">
+                <span>Street</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.street}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, street: e.target.value }))}
+                />
+              </label>
+              <label className="public-form-field">
+                <span>City</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.cityLine}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, cityLine: e.target.value }))}
+                />
+              </label>
+              <label className="public-form-field">
+                <span>HRB</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.hrb}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, hrb: e.target.value }))}
+                />
+              </label>
+              <label className="public-form-field">
+                <span>Contact e-mail</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.contactEmail}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, contactEmail: e.target.value }))}
+                />
+              </label>
+              <label className="public-form-field">
+                <span>Phone</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.phone}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, phone: e.target.value }))}
+                />
+              </label>
+              <label className="public-form-field">
+                <span>Insurance</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.insurance}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, insurance: e.target.value }))}
+                />
+              </label>
+              <label className="public-form-field">
+                <span>Insurance number</span>
+                <input
+                  className="public-form-control"
+                  value={companyInsurance.insuranceNumber}
+                  onChange={(e) => setCompanyInsurance((prev) => ({ ...prev, insuranceNumber: e.target.value }))}
+                />
+              </label>
+            </div>
+
+            <div className="public-language-modal-actions public-company-insurance-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowInsuranceQr((prev) => !prev)}
+                title="Show QR"
+              >
+                <span className="public-qr-inline-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" />
+                    <path d="M14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z" />
+                  </svg>
+                </span>
+                Show QR
+              </button>
+              <button type="button" className="btn-primary" onClick={() => setShowInsuranceModal(false)}>
+                Close
+              </button>
+            </div>
+
+            {showInsuranceQr && (
+              <div className="public-company-insurance-qr">
+                <p>QR data</p>
+                <QRCodeCanvas value={companyInsuranceQrValue} size={240} level="M" includeMargin />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="public-page-card">
         <header className="public-page-header">
           <div>
             <h1>{copy.pageTitle}</h1>
             <p>{copy.pageSubtitle}</p>
+          </div>
+          <div className="public-page-actions public-page-header-actions">
+            <button type="button" className="btn-primary" onClick={() => setShowInsuranceModal(true)}>
+              Show Company Insurance Data
+            </button>
           </div>
         </header>
 
