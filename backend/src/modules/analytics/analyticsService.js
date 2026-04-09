@@ -6,8 +6,6 @@ import { query } from '../../db.js';
 import { getInsuranceOverviewKpis } from './insuranceAnalyticsService.js';
 import { getInsuranceDomainData } from './insuranceAnalyticsService.js';
 import { getDamagesDomainData } from './damagesAnalyticsService.js';
-import XLSX from 'xlsx';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 function formatPersonalNumber(raw) {
   if (raw == null || String(raw).trim() === '') return null;
@@ -19,348 +17,6 @@ function formatPersonalNumber(raw) {
 const CAR_STATUS_ACTIVE = 'Active';
 const CAR_STATUS_MAINTENANCE = 'Maintenance';
 const CAR_STATUS_OUT_OF_SERVICE = 'Out of Service';
-const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
-const KENJO_TYPE_URLAUB = '685e7223e6bac64cb0a27e38';
-
-function toNumber(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function roundTo(value, digits = 1) {
-  const factor = 10 ** digits;
-  return Math.round(toNumber(value) * factor) / factor;
-}
-
-function shiftMonthKey(monthKey, diff) {
-  const raw = String(monthKey || '').trim();
-  if (!/^\d{4}-\d{2}$/.test(raw)) return raw;
-  const [year, month] = raw.split('-').map(Number);
-  const date = new Date(year, month - 1 + diff, 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function buildMonthKeyRange(startMonthKey, endMonthKey) {
-  if (!/^\d{4}-\d{2}$/.test(String(startMonthKey || '')) || !/^\d{4}-\d{2}$/.test(String(endMonthKey || ''))) {
-    return [];
-  }
-  const out = [];
-  let cursor = String(startMonthKey);
-  while (cursor <= endMonthKey) {
-    out.push(cursor);
-    cursor = shiftMonthKey(cursor, 1);
-  }
-  return out;
-}
-
-function toDateOnly(value) {
-  if (!value) return '';
-  const str = String(value).slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(str) ? str : '';
-}
-
-function listYearMonths(year) {
-  return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`);
-}
-
-function countWeekdaysInclusive(startYmd, endYmd) {
-  const start = toDateOnly(startYmd);
-  const end = toDateOnly(endYmd);
-  if (!start || !end || start > end) return 0;
-  const startT = new Date(`${start}T12:00:00`).getTime();
-  const endT = new Date(`${end}T12:00:00`).getTime();
-  let count = 0;
-  for (let t = startT; t <= endT; t += 86400000) {
-    const day = new Date(t).getDay();
-    if (day !== 0 && day !== 6) count += 1;
-  }
-  return count;
-}
-
-function timeOffKindFromRow(row) {
-  const typeId = String(row.time_off_type ?? row.time_off_type_id ?? row.type ?? '').trim();
-  const typeName = String(row.time_off_type_name ?? row.type_name ?? '').trim().toLowerCase();
-  if (typeId === KENJO_TYPE_URLAUB || /urlaub|vacation|paid leave/.test(typeName)) return 'urlaub';
-  if (typeId === KENJO_TYPE_KRANK || /krank|sick|ill/.test(typeName)) return 'krank';
-  return null;
-}
-
-function normalizeEmployeeName(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-}
-
-function buildTimeOffMonthlyAnalytics(rows, year, employeeById, employeeIdByName, selectedEmployeeIds = null) {
-  const monthKeys = listYearMonths(year);
-  const monthMap = new Map(
-    monthKeys.map((monthKey) => [monthKey, { month_key: monthKey, urlaub_days: 0, krank_days: 0 }]),
-  );
-  const byEmployee = new Map();
-
-  for (const row of rows || []) {
-    const explicitEmployeeId = String(row.kenjo_user_id ?? row.user_id ?? row.userId ?? '').trim();
-    const fallbackName = String(row.employee_name ?? row.employeeName ?? '').trim();
-    const resolvedEmployeeId = explicitEmployeeId || employeeIdByName.get(normalizeEmployeeName(fallbackName)) || '';
-    const employeeId = String(resolvedEmployeeId || fallbackName || '').trim();
-    if (!employeeId) continue;
-    if (selectedEmployeeIds && !selectedEmployeeIds.has(employeeId)) continue;
-    const kind = timeOffKindFromRow(row);
-    if (!kind) continue;
-    const status = String(row.status ?? '').trim().toLowerCase();
-    if (status && ['rejected', 'cancelled', 'canceled', 'declined'].includes(status)) continue;
-
-    const requestStart = toDateOnly(row.start_date ?? row.from ?? row.startDate);
-    const requestEnd = toDateOnly(row.end_date ?? row.to ?? row.endDate);
-    if (!requestStart || !requestEnd) continue;
-
-    const employee = employeeById.get(employeeId) || { id: employeeId, label: fallbackName || row.employee_name || employeeId };
-    if (!byEmployee.has(employeeId)) {
-      byEmployee.set(employeeId, {
-        employee_id: employeeId,
-        employee_name: employee.label || employeeId,
-        urlaub_days: 0,
-        krank_days: 0,
-      });
-    }
-    const employeeRec = byEmployee.get(employeeId);
-
-    for (const monthKey of monthKeys) {
-      const monthStart = `${monthKey}-01`;
-      const [yy, mm] = monthKey.split('-').map(Number);
-      const monthEnd = `${monthKey}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`;
-      const clampedStart = requestStart > monthStart ? requestStart : monthStart;
-      const clampedEnd = requestEnd < monthEnd ? requestEnd : monthEnd;
-      if (!clampedStart || !clampedEnd || clampedStart > clampedEnd) continue;
-      const days = countWeekdaysInclusive(clampedStart, clampedEnd);
-      if (!days) continue;
-      const monthRec = monthMap.get(monthKey);
-      if (kind === 'urlaub') {
-        monthRec.urlaub_days += days;
-        employeeRec.urlaub_days += days;
-      } else if (kind === 'krank') {
-        monthRec.krank_days += days;
-        employeeRec.krank_days += days;
-      }
-    }
-  }
-
-  const monthly = monthKeys.map((monthKey) => monthMap.get(monthKey));
-  const employees = Array.from(byEmployee.values()).sort((a, b) => a.employee_name.localeCompare(b.employee_name));
-  return {
-    monthly,
-    employees,
-  };
-}
-
-function buildSingleKindTimeOffAnalytics(rows, year, employeeById, employeeIdByName, selectedEmployeeIds = null, kind = 'urlaub') {
-  const monthKeys = listYearMonths(year);
-  const valueKey = kind === 'krank' ? 'krank_days' : 'urlaub_days';
-  const monthMap = new Map(
-    monthKeys.map((monthKey) => [monthKey, { month_key: monthKey, [valueKey]: 0 }]),
-  );
-  const byEmployee = new Map();
-
-  for (const row of rows || []) {
-    const explicitEmployeeId = String(row.kenjo_user_id ?? row.user_id ?? row.userId ?? '').trim();
-    const fallbackName = String(row.employee_name ?? row.employeeName ?? '').trim();
-    const resolvedEmployeeId = explicitEmployeeId || employeeIdByName.get(normalizeEmployeeName(fallbackName)) || '';
-    const employeeId = String(resolvedEmployeeId || fallbackName || '').trim();
-    if (!employeeId) continue;
-    if (selectedEmployeeIds && !selectedEmployeeIds.has(employeeId)) continue;
-    if (timeOffKindFromRow(row) !== kind) continue;
-
-    const status = String(row.status ?? '').trim().toLowerCase();
-    if (status && ['rejected', 'cancelled', 'canceled', 'declined'].includes(status)) continue;
-
-    const requestStart = toDateOnly(row.start_date ?? row.from ?? row.startDate);
-    const requestEnd = toDateOnly(row.end_date ?? row.to ?? row.endDate);
-    if (!requestStart || !requestEnd) continue;
-
-    const employee = employeeById.get(employeeId) || { id: employeeId, label: fallbackName || row.employee_name || employeeId };
-    if (!byEmployee.has(employeeId)) {
-      byEmployee.set(employeeId, {
-        employee_id: employeeId,
-        employee_name: employee.label || employeeId,
-        [valueKey]: 0,
-      });
-    }
-    const employeeRec = byEmployee.get(employeeId);
-
-    for (const monthKey of monthKeys) {
-      const monthStart = `${monthKey}-01`;
-      const [yy, mm] = monthKey.split('-').map(Number);
-      const monthEnd = `${monthKey}-${String(new Date(yy, mm, 0).getDate()).padStart(2, '0')}`;
-      const clampedStart = requestStart > monthStart ? requestStart : monthStart;
-      const clampedEnd = requestEnd < monthEnd ? requestEnd : monthEnd;
-      if (!clampedStart || !clampedEnd || clampedStart > clampedEnd) continue;
-      const days = countWeekdaysInclusive(clampedStart, clampedEnd);
-      if (!days) continue;
-      monthMap.get(monthKey)[valueKey] += days;
-      employeeRec[valueKey] += days;
-    }
-  }
-
-  return {
-    monthly: monthKeys.map((monthKey) => monthMap.get(monthKey)),
-    employees: Array.from(byEmployee.values()).sort((a, b) => a.employee_name.localeCompare(b.employee_name)),
-    valueKey,
-  };
-}
-
-async function getTimeOffDomainData(params = {}, kind = 'urlaub') {
-  const year = Math.max(2020, Math.min(2099, Number(params.year) || new Date().getFullYear()));
-  const employeeIds = String(params.employeeIds || '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const selectedEmployeeIds = employeeIds.length ? new Set(employeeIds) : null;
-  const yearStart = `${year}-01-01`;
-  const yearEnd = `${year}-12-31`;
-
-  const [timeOffRes, employeesRes] = await Promise.all([
-    query(
-      `SELECT kenjo_user_id, employee_name, start_date, end_date, time_off_type, time_off_type_name, status
-       FROM kenjo_time_off
-       WHERE start_date <= $2::date AND end_date >= $1::date`,
-      [yearStart, yearEnd]
-    ),
-    query(
-      `SELECT kenjo_user_id AS id, first_name, last_name, display_name
-       FROM kenjo_employees
-       ORDER BY last_name, first_name`
-    ),
-  ]);
-
-  const employeeById = new Map(
-    (employeesRes.rows || []).map((row) => [
-      String(row.id),
-      {
-        id: String(row.id),
-        label: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.display_name || String(row.id),
-      },
-    ]),
-  );
-  const employeeIdByName = new Map(
-    (employeesRes.rows || []).flatMap((row) => {
-      const id = String(row.id || '').trim();
-      if (!id) return [];
-      const labels = [
-        [row.first_name, row.last_name].filter(Boolean).join(' '),
-        row.display_name,
-      ]
-        .map((value) => normalizeEmployeeName(value))
-        .filter(Boolean);
-      return labels.map((label) => [label, id]);
-    }),
-  );
-
-  const { monthly, employees, valueKey } = buildSingleKindTimeOffAnalytics(
-    timeOffRes.rows || [],
-    year,
-    employeeById,
-    employeeIdByName,
-    selectedEmployeeIds,
-    kind,
-  );
-  const totalDays = monthly.reduce((sum, row) => sum + toNumber(row[valueKey]), 0);
-  const titlePrefix = kind === 'krank' ? 'Sick days' : 'Vacation days';
-  const keyPrefix = kind === 'krank' ? 'sickdays' : 'vacation';
-
-  return {
-    table: monthly,
-    year,
-    selectedEmployeeIds: employeeIds,
-    charts: {
-      monthlyTotals: monthly,
-      employeeTotals: employees.slice(0, 24).map((row) => ({
-        employee_name: row.employee_name,
-        [valueKey]: row[valueKey],
-      })),
-    },
-    insightTables: [
-      { title: 'Employee year totals', rows: employees },
-    ],
-    kpis: [
-      { key: `${keyPrefix}_selected_employees`, label: 'Selected employees', value: selectedEmployeeIds ? selectedEmployeeIds.size : employeesRes.rows?.length || 0, format: 'number' },
-      { key: `${keyPrefix}_total_days`, label: `${titlePrefix} in ${year}`, value: totalDays, format: 'number' },
-      { key: `${keyPrefix}_employees_with_days`, label: 'Employees with records', value: employees.length, format: 'number' },
-    ],
-    timeOffKind: kind,
-    valueKey,
-  };
-}
-
-export function rowsToWorksheetBuffer(sheetName, rows) {
-  const normalizedRows = Array.isArray(rows) ? rows : [];
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet(normalizedRows.length ? normalizedRows : [{}]);
-  XLSX.utils.book_append_sheet(wb, ws, (sheetName || 'Analytics').slice(0, 31));
-  return XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' });
-}
-
-export async function buildAnalyticsPdfBuffer(title, rows) {
-  const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  let page = pdf.addPage([842, 595]);
-  let { width, height } = page.getSize();
-  let y = height - 42;
-
-  const drawHeader = () => {
-    page.drawText(String(title || 'Analytics export'), {
-      x: 36,
-      y,
-      size: 18,
-      font: fontBold,
-      color: rgb(0.11, 0.18, 0.31),
-    });
-    y -= 24;
-    page.drawText(`Generated: ${new Date().toISOString().slice(0, 10)}`, {
-      x: 36,
-      y,
-      size: 9,
-      font,
-      color: rgb(0.42, 0.48, 0.58),
-    });
-    y -= 20;
-  };
-
-  const ensurePage = () => {
-    if (y > 52) return;
-    page = pdf.addPage([842, 595]);
-    ({ width, height } = page.getSize());
-    y = height - 42;
-    drawHeader();
-  };
-
-  drawHeader();
-  const list = Array.isArray(rows) ? rows : [];
-  if (!list.length) {
-    page.drawText('No rows', { x: 36, y, size: 11, font, color: rgb(0.2, 0.2, 0.2) });
-    return Buffer.from(await pdf.save());
-  }
-  const columns = Object.keys(list[0]);
-  for (const row of list) {
-    ensurePage();
-    const line = columns.map((key) => `${key}: ${row[key] == null ? '' : String(row[key])}`).join(' | ');
-    const chunks = line.match(/.{1,120}/g) || [''];
-    for (const chunk of chunks) {
-      ensurePage();
-      page.drawText(chunk, {
-        x: 36,
-        y,
-        size: 9,
-        font,
-        color: rgb(0.18, 0.18, 0.18),
-      });
-      y -= 12;
-    }
-    y -= 6;
-  }
-  return Buffer.from(await pdf.save());
-}
 
 /**
  * Resolve start/end date from preset or custom range.
@@ -674,33 +330,20 @@ export async function getOverview(params = {}) {
 
   // Chart data: routes by day, driver status, vehicles by status
   let routesByDay = [];
-  let routesDriversByDay = [];
   let driverStatusDistribution = [];
   let vehiclesByStatus = [];
   let insuranceVehiclesByStatus = [];
-  let payrollByMonth = [];
-  let hrMovementByMonth = [];
-  let scoreTrend = [];
 
   try {
     const byDayRes = await query(
-      `SELECT
-         to_char(day_key, 'YYYY-MM-DD') AS date,
-         COUNT(*)::int AS count,
-         COUNT(DISTINCT transporter_id)::int AS drivers
+      `SELECT to_char(day_key, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
        FROM daily_upload_rows
        WHERE day_key >= $1 AND day_key <= $2
        GROUP BY day_key
        ORDER BY day_key`,
       [start, end]
     );
-    routesDriversByDay = (byDayRes.rows || []).map((row) => ({
-      date: row.date,
-      count: toNumber(row.count),
-      drivers: toNumber(row.drivers),
-      routes_per_driver: toNumber(row.drivers) > 0 ? roundTo(toNumber(row.count) / toNumber(row.drivers), 2) : 0,
-    }));
-    routesByDay = routesDriversByDay.map((row) => ({ date: row.date, count: row.count }));
+    routesByDay = byDayRes.rows || [];
   } catch (_) {}
 
   try {
@@ -756,90 +399,6 @@ export async function getOverview(params = {}) {
       }));
   } catch (_) {}
 
-  try {
-    const payrollEndMonth = end.slice(0, 7);
-    const payrollStartMonth = shiftMonthKey(payrollEndMonth, -5);
-    const payrollRes = await query(
-      `SELECT
-         period_id AS month_key,
-         COUNT(*)::int AS employees,
-         COALESCE(SUM(total_bonus), 0)::numeric AS total_bonus,
-         COALESCE(SUM(bonus), 0)::numeric AS bonus,
-         COALESCE(SUM(vorschuss), 0)::numeric AS vorschuss,
-         COALESCE(SUM(abzug), 0)::numeric AS abzug
-       FROM payroll_manual_entries
-       WHERE period_id >= $1 AND period_id <= $2
-       GROUP BY period_id
-       ORDER BY period_id`,
-      [payrollStartMonth, payrollEndMonth],
-    );
-    payrollByMonth = buildMonthKeyRange(payrollStartMonth, payrollEndMonth).map((monthKey) => {
-      const row = (payrollRes.rows || []).find((entry) => entry.month_key === monthKey) || {};
-      return {
-        month_key: monthKey,
-        employees: toNumber(row.employees),
-        total_bonus: roundTo(row.total_bonus, 2),
-        bonus: roundTo(row.bonus, 2),
-        vorschuss: roundTo(row.vorschuss, 2),
-        abzug: roundTo(row.abzug, 2),
-      };
-    });
-  } catch (_) {}
-
-  try {
-    const hrEndMonth = end.slice(0, 7);
-    const hrStartMonth = shiftMonthKey(hrEndMonth, -5);
-    const hrStartDate = `${hrStartMonth}-01`;
-    const [hiresRes, termsRes] = await Promise.all([
-      query(
-        `SELECT to_char(date_trunc('month', start_date::date), 'YYYY-MM') AS month_key, COUNT(*)::int AS hires
-         FROM kenjo_employees
-         WHERE start_date::date >= $1::date AND start_date::date <= $2::date
-         GROUP BY date_trunc('month', start_date::date)
-         ORDER BY month_key`,
-        [hrStartDate, end],
-      ),
-      query(
-        `SELECT to_char(date_trunc('month', termination_date::date), 'YYYY-MM') AS month_key, COUNT(*)::int AS terminations
-         FROM employee_terminations
-         WHERE termination_date::date >= $1::date AND termination_date::date <= $2::date
-         GROUP BY date_trunc('month', termination_date::date)
-         ORDER BY month_key`,
-        [hrStartDate, end],
-      ),
-    ]);
-    const hiresMap = new Map((hiresRes.rows || []).map((row) => [row.month_key, toNumber(row.hires)]));
-    const termsMap = new Map((termsRes.rows || []).map((row) => [row.month_key, toNumber(row.terminations)]));
-    hrMovementByMonth = buildMonthKeyRange(hrStartMonth, hrEndMonth).map((monthKey) => {
-      const hires = hiresMap.get(monthKey) || 0;
-      const terminations = termsMap.get(monthKey) || 0;
-      return {
-        month_key: monthKey,
-        hires,
-        terminations,
-        net: hires - terminations,
-      };
-    });
-  } catch (_) {}
-
-  try {
-    const scoreTrendRes = await query(
-      `SELECT year, week, overall_score, safe_driving_fico, delivery_completion_rate_dcr, capacity_reliability
-       FROM company_scorecard
-       ORDER BY year DESC, week DESC
-       LIMIT 12`,
-    );
-    scoreTrend = (scoreTrendRes.rows || [])
-      .reverse()
-      .map((row) => ({
-        week_label: `${row.year} W${String(row.week).padStart(2, '0')}`,
-        overall_score: row.overall_score != null ? toNumber(row.overall_score) : null,
-        safe_driving_fico: row.safe_driving_fico != null ? toNumber(row.safe_driving_fico) : null,
-        delivery_completion_rate_dcr: row.delivery_completion_rate_dcr != null ? toNumber(row.delivery_completion_rate_dcr) : null,
-        capacity_reliability: row.capacity_reliability != null ? toNumber(row.capacity_reliability) : null,
-      }));
-  } catch (_) {}
-
   return {
     period: { start, end },
     comparison: comparison ? { start: comparison.start, end: comparison.end } : null,
@@ -850,13 +409,9 @@ export async function getOverview(params = {}) {
     companyScorecardRecent,
     charts: {
       routesByDay,
-      routesDriversByDay,
       driverStatusDistribution,
       vehiclesByStatus,
       insuranceVehiclesByStatus,
-      payrollByMonth,
-      hrMovementByMonth,
-      scoreTrend,
     },
   };
 }
@@ -866,7 +421,7 @@ export async function getOverview(params = {}) {
  */
 export async function getFiltersMeta() {
   const [driversRes, stationsRes, vehiclesRes] = await Promise.all([
-    query(`SELECT kenjo_user_id AS id, first_name, last_name, display_name, employee_number, is_active FROM kenjo_employees ORDER BY is_active DESC, last_name, first_name`),
+    query(`SELECT kenjo_user_id AS id, first_name, last_name, display_name FROM kenjo_employees WHERE is_active = true ORDER BY last_name, first_name`),
     query(`SELECT DISTINCT station AS id FROM cars WHERE station IS NOT NULL AND station != '' ORDER BY station`).catch(() => ({ rows: [] })),
     query(`SELECT id, vehicle_id, license_plate FROM cars ORDER BY vehicle_id`),
   ]);
@@ -874,8 +429,6 @@ export async function getFiltersMeta() {
   const drivers = (driversRes.rows || []).map((r) => ({
     id: r.id,
     label: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.display_name || r.id,
-    employee_number: formatPersonalNumber(r.employee_number),
-    is_active: !!r.is_active,
   }));
   const stations = (stationsRes.rows || []).map((r) => ({ id: r.id, label: r.id }));
   const vehicles = (vehiclesRes.rows || []).map((r) => ({
@@ -928,32 +481,7 @@ export async function getDomainData(domain, params = {}) {
        GROUP BY day_key ORDER BY day_key`,
       [start, end]
     );
-    const rows = (res.rows || []).map((row) => ({
-      date: row.date,
-      routes_completed: toNumber(row.routes_completed),
-      drivers_worked: toNumber(row.drivers_worked),
-      routes_per_driver: toNumber(row.drivers_worked) > 0 ? roundTo(toNumber(row.routes_completed) / toNumber(row.drivers_worked), 2) : 0,
-    }));
-    const totalRoutes = rows.reduce((sum, row) => sum + row.routes_completed, 0);
-    const totalDriversWorked = rows.reduce((sum, row) => sum + row.drivers_worked, 0);
-    const busiestDay = rows.reduce((best, row) => (row.routes_completed > (best?.routes_completed || 0) ? row : best), null);
-    return {
-      summary: rows,
-      table: rows,
-      charts: {
-        dailyVolume: rows,
-        productivityByDay: rows.map((row) => ({
-          date: row.date,
-          routes_per_driver: row.routes_per_driver,
-        })),
-      },
-      kpis: [
-        { key: 'operations_total_routes', label: 'Total routes in range', value: totalRoutes, format: 'number' },
-        { key: 'operations_avg_routes_per_day', label: 'Average routes per day', value: rows.length ? roundTo(totalRoutes / rows.length, 1) : 0, format: 'number' },
-        { key: 'operations_avg_routes_per_driver', label: 'Average routes per active driver-day', value: totalDriversWorked ? roundTo(totalRoutes / totalDriversWorked, 2) : 0, format: 'number' },
-        { key: 'operations_peak_day_routes', label: 'Peak day routes', value: busiestDay?.routes_completed || 0, format: 'number' },
-      ],
-    };
+    return { summary: res.rows, table: res.rows };
   }
 
   if (domain === 'insurance') {
@@ -971,124 +499,6 @@ export async function getDomainData(domain, params = {}) {
       endDate: end,
       limit,
     });
-  }
-
-  if (domain === 'drivers' && params.question !== '__legacy__') {
-    const [res, endingSoonRes, noRoutesRes, recentStartersRes] = await Promise.all([
-      query(
-        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
-          k.first_name, k.last_name, k.email, k.transporter_id, k.start_date::date AS start_date,
-          k.contract_end::date AS contract_end, k.is_active,
-          (SELECT COUNT(*) FROM daily_upload_rows d WHERE d.transporter_id = k.transporter_id AND d.day_key >= $1 AND d.day_key <= $2) AS routes_completed
-         FROM kenjo_employees k
-         WHERE k.transporter_id IS NOT NULL AND k.transporter_id != ''
-         ORDER BY k.last_name, k.first_name
-         LIMIT $3`,
-        [start, end, limit]
-      ),
-      query(
-        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
-          k.first_name, k.last_name, k.contract_end::date AS contract_end, k.is_active
-         FROM kenjo_employees k
-         WHERE k.contract_end::date IS NOT NULL
-           AND k.contract_end::date >= CURRENT_DATE
-           AND k.contract_end::date <= CURRENT_DATE + INTERVAL '60 days'
-         ORDER BY k.contract_end::date ASC, k.last_name, k.first_name
-         LIMIT 12`
-      ),
-      query(
-        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
-          k.first_name, k.last_name, k.transporter_id, k.start_date::date AS start_date, k.is_active
-         FROM kenjo_employees k
-         WHERE k.transporter_id IS NOT NULL AND k.transporter_id != ''
-           AND NOT EXISTS (
-             SELECT 1
-             FROM daily_upload_rows d
-             WHERE d.transporter_id = k.transporter_id
-               AND d.day_key >= $1
-               AND d.day_key <= $2
-           )
-         ORDER BY k.last_name, k.first_name
-         LIMIT 12`,
-        [start, end]
-      ),
-      query(
-        `SELECT NULLIF(TRIM(COALESCE(k.employee_number, '')), '') AS employee_number,
-          k.first_name, k.last_name, k.start_date::date AS start_date, k.contract_end::date AS contract_end
-         FROM kenjo_employees k
-         WHERE k.start_date::date IS NOT NULL
-           AND k.start_date::date >= CURRENT_DATE - INTERVAL '45 days'
-         ORDER BY k.start_date::date DESC, k.last_name, k.first_name
-         LIMIT 12`
-      ),
-    ]);
-    const rows = (res.rows || []).map((r) => ({
-      pn: formatPersonalNumber(r.employee_number) ?? '—',
-      name: [r.first_name, r.last_name].filter(Boolean).join(' ') || '—',
-      email: r.email || '—',
-      transporter_id: r.transporter_id || '—',
-      start_date: r.start_date,
-      contract_end: r.contract_end,
-      is_active: r.is_active,
-      routes_completed: Number(r.routes_completed) || 0,
-    }));
-    const activeCount = rows.filter((row) => row.is_active).length;
-    const inactiveCount = rows.length - activeCount;
-    const avgRoutes = rows.length ? roundTo(rows.reduce((sum, row) => sum + toNumber(row.routes_completed), 0) / rows.length, 1) : 0;
-    const topRoutesRows = [...rows].sort((a, b) => toNumber(b.routes_completed) - toNumber(a.routes_completed)).slice(0, 10);
-    return {
-      table: rows,
-      summary: { total: rows.length },
-      charts: {
-        activeMix: [
-          { label: 'Active', value: activeCount },
-          { label: 'Inactive', value: inactiveCount },
-        ],
-        topRoutesByDriver: topRoutesRows.map((row) => ({
-          label: row.name,
-          value: toNumber(row.routes_completed),
-        })),
-      },
-      insightTables: [
-        { title: 'Top drivers by routes', rows: topRoutesRows },
-        {
-          title: 'Contracts ending in next 60 days',
-          rows: (endingSoonRes.rows || []).map((row) => ({
-            pn: formatPersonalNumber(row.employee_number) ?? '—',
-            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
-            contract_end: row.contract_end,
-            is_active: row.is_active,
-          })),
-        },
-        {
-          title: 'Drivers with zero routes in selected period',
-          rows: (noRoutesRes.rows || []).map((row) => ({
-            pn: formatPersonalNumber(row.employee_number) ?? '—',
-            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
-            transporter_id: row.transporter_id || '—',
-            start_date: row.start_date,
-            is_active: row.is_active,
-          })),
-        },
-        {
-          title: 'Recent starters',
-          rows: (recentStartersRes.rows || []).map((row) => ({
-            pn: formatPersonalNumber(row.employee_number) ?? '—',
-            name: [row.first_name, row.last_name].filter(Boolean).join(' ') || '—',
-            start_date: row.start_date,
-            contract_end: row.contract_end,
-          })),
-        },
-      ],
-      kpis: [
-        { key: 'drivers_total', label: 'Drivers in analytics set', value: rows.length, format: 'number' },
-        { key: 'drivers_active', label: 'Active drivers', value: activeCount, format: 'number' },
-        { key: 'drivers_inactive', label: 'Inactive drivers', value: inactiveCount, format: 'number' },
-        { key: 'drivers_avg_routes', label: 'Average routes per driver', value: avgRoutes, format: 'number' },
-        { key: 'drivers_contracts_ending_soon', label: 'Contracts ending soon', value: endingSoonRes.rows?.length || 0, format: 'number' },
-        { key: 'drivers_zero_routes', label: 'Drivers with zero routes', value: noRoutesRes.rows?.length || 0, format: 'number' },
-      ],
-    };
   }
 
   if (domain === 'drivers') {
@@ -1115,74 +525,29 @@ export async function getDomainData(domain, params = {}) {
 
   if (domain === 'payroll') {
     const monthStr = params.payrollMonth || start.slice(0, 7);
-    const [res, monthlyRes] = await Promise.all([
-      query(
-        `SELECT period_id, kenjo_employee_id, working_days, total_bonus, abzug, bonus, vorschuss
-         FROM payroll_manual_entries
-         WHERE period_id = $1
-         ORDER BY total_bonus DESC NULLS LAST
-         LIMIT $2`,
-        [monthStr, limit]
-      ),
-      query(
-        `SELECT
-           period_id AS month_key,
-           COUNT(*)::int AS employees,
-           COALESCE(SUM(total_bonus), 0)::numeric AS total_bonus,
-           COALESCE(SUM(bonus), 0)::numeric AS bonus,
-           COALESCE(SUM(vorschuss), 0)::numeric AS vorschuss,
-           COALESCE(SUM(abzug), 0)::numeric AS abzug
-         FROM payroll_manual_entries
-         WHERE period_id >= $1 AND period_id <= $2
-         GROUP BY period_id
-         ORDER BY period_id`,
-        [shiftMonthKey(monthStr, -11), monthStr]
-      ),
-    ]);
+    const res = await query(
+      `SELECT period_id, kenjo_employee_id, working_days, total_bonus, abzug, bonus, vorschuss FROM payroll_manual_entries WHERE period_id = $1 ORDER BY total_bonus DESC NULLS LAST LIMIT $2`,
+      [monthStr, limit]
+    );
     const rows = (res.rows || []).map((r) => ({
       period_id: r.period_id,
       kenjo_employee_id: r.kenjo_employee_id,
-      working_days: toNumber(r.working_days),
-      total_bonus: roundTo(r.total_bonus, 2),
-      abzug: roundTo(r.abzug, 2),
-      bonus: roundTo(r.bonus, 2),
-      vorschuss: roundTo(r.vorschuss, 2),
+      working_days: r.working_days,
+      total_bonus: r.total_bonus,
+      abzug: r.abzug,
+      bonus: r.bonus,
+      vorschuss: r.vorschuss,
     }));
     const totals = rows.reduce(
       (acc, r) => {
-        acc.total_bonus += toNumber(r.total_bonus);
-        acc.abzug += toNumber(r.abzug);
-        acc.vorschuss += toNumber(r.vorschuss);
-        acc.bonus += toNumber(r.bonus);
+        acc.total_bonus += Number(r.total_bonus) || 0;
+        acc.abzug += Number(r.abzug) || 0;
+        acc.vorschuss += Number(r.vorschuss) || 0;
         return acc;
       },
-      { total_bonus: 0, abzug: 0, vorschuss: 0, bonus: 0 }
+      { total_bonus: 0, abzug: 0, vorschuss: 0 }
     );
-    const monthlyMap = new Map((monthlyRes.rows || []).map((row) => [row.month_key, row]));
-    const monthlyTotals = buildMonthKeyRange(shiftMonthKey(monthStr, -11), monthStr).map((monthKey) => {
-      const row = monthlyMap.get(monthKey) || {};
-      return {
-        month_key: monthKey,
-        employees: toNumber(row.employees),
-        total_bonus: roundTo(row.total_bonus, 2),
-        bonus: roundTo(row.bonus, 2),
-        vorschuss: roundTo(row.vorschuss, 2),
-        abzug: roundTo(row.abzug, 2),
-      };
-    });
-    return {
-      table: rows,
-      summary: totals,
-      charts: {
-        monthlyTotals,
-      },
-      kpis: [
-        { key: 'payroll_current_total', label: `Total variable payroll (${monthStr})`, value: roundTo(totals.total_bonus, 2), format: 'currency' },
-        { key: 'payroll_current_bonus', label: `Bonus total (${monthStr})`, value: roundTo(totals.bonus, 2), format: 'currency' },
-        { key: 'payroll_current_advances', label: `Advances total (${monthStr})`, value: roundTo(totals.vorschuss, 2), format: 'currency' },
-        { key: 'payroll_avg_per_employee', label: `Average per employee (${monthStr})`, value: rows.length ? roundTo(totals.total_bonus / rows.length, 2) : 0, format: 'currency' },
-      ],
-    };
+    return { table: rows, summary: totals };
   }
 
   if (domain === 'attendance') {
@@ -1192,101 +557,7 @@ export async function getDomainData(domain, params = {}) {
        GROUP BY day_key ORDER BY day_key`,
       [start, end]
     );
-    const rows = (res.rows || []).map((row) => ({
-      date: row.date,
-      present: toNumber(row.present),
-    }));
-    const bestDay = rows.reduce((best, row) => (row.present > (best?.present || 0) ? row : best), null);
-    const totalPresent = rows.reduce((sum, row) => sum + row.present, 0);
-    return {
-      table: rows,
-      summary: { days: rows.length },
-      charts: { dailyPresence: rows },
-      kpis: [
-        { key: 'attendance_total_presence', label: 'Driver presence records', value: totalPresent, format: 'number' },
-        { key: 'attendance_avg_presence', label: 'Average drivers present per day', value: rows.length ? roundTo(totalPresent / rows.length, 1) : 0, format: 'number' },
-        { key: 'attendance_peak_day', label: 'Highest attendance day', value: bestDay?.present || 0, format: 'number' },
-      ],
-    };
-  }
-
-  if (domain === 'timeoff') {
-    const year = Math.max(2020, Math.min(2099, Number(params.year) || new Date().getFullYear()));
-    const employeeIds = String(params.employeeIds || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-    const selectedEmployeeIds = employeeIds.length ? new Set(employeeIds) : null;
-    const yearStart = `${year}-01-01`;
-    const yearEnd = `${year}-12-31`;
-
-    const [timeOffRes, employeesRes] = await Promise.all([
-      query(
-        `SELECT kenjo_user_id, employee_name, start_date, end_date, time_off_type, time_off_type_name, status
-         FROM kenjo_time_off
-         WHERE start_date <= $2::date AND end_date >= $1::date`,
-        [yearStart, yearEnd]
-      ),
-      query(
-        `SELECT kenjo_user_id AS id, first_name, last_name, display_name
-         FROM kenjo_employees
-         ORDER BY last_name, first_name`
-      ),
-    ]);
-    const employeeById = new Map(
-      (employeesRes.rows || []).map((row) => [
-        String(row.id),
-        {
-          id: String(row.id),
-          label: [row.first_name, row.last_name].filter(Boolean).join(' ') || row.display_name || String(row.id),
-        },
-      ]),
-    );
-    const employeeIdByName = new Map(
-      (employeesRes.rows || []).flatMap((row) => {
-        const id = String(row.id || '').trim();
-        if (!id) return [];
-        const labels = [
-          [row.first_name, row.last_name].filter(Boolean).join(' '),
-          row.display_name,
-        ]
-          .map((value) => normalizeEmployeeName(value))
-          .filter(Boolean);
-        return labels.map((label) => [label, id]);
-      }),
-    );
-    const { monthly, employees } = buildTimeOffMonthlyAnalytics(timeOffRes.rows || [], year, employeeById, employeeIdByName, selectedEmployeeIds);
-    const totalUrlaub = monthly.reduce((sum, row) => sum + toNumber(row.urlaub_days), 0);
-    const totalKrank = monthly.reduce((sum, row) => sum + toNumber(row.krank_days), 0);
-    return {
-      table: monthly,
-      year,
-      selectedEmployeeIds: employeeIds,
-      charts: {
-        monthlyTotals: monthly,
-        employeeTotals: employees.slice(0, 24).map((row) => ({
-          employee_name: row.employee_name,
-          urlaub_days: row.urlaub_days,
-          krank_days: row.krank_days,
-        })),
-      },
-      insightTables: [
-        { title: 'Employee year totals', rows: employees },
-      ],
-      kpis: [
-        { key: 'timeoff_selected_employees', label: 'Selected employees', value: selectedEmployeeIds ? selectedEmployeeIds.size : employeesRes.rows?.length || 0, format: 'number' },
-        { key: 'timeoff_total_urlaub', label: `Vacation days in ${year}`, value: totalUrlaub, format: 'number' },
-        { key: 'timeoff_total_krank', label: `Sick days in ${year}`, value: totalKrank, format: 'number' },
-      ],
-    };
-  }
-
-  if (domain === 'vacation') {
-    return getTimeOffDomainData(params, 'urlaub');
-  }
-
-  if (domain === 'sickdays') {
-    return getTimeOffDomainData(params, 'krank');
+    return { table: res.rows || [], summary: { days: (res.rows || []).length } };
   }
 
   if (domain === 'routes') {
@@ -1317,20 +588,13 @@ export async function getDomainData(domain, params = {}) {
     const table = dailyRes.rows || [];
     const totalsWeekly = weekRes.rows || [];
     const totalsMonthly = monthRes.rows || [];
-    const total = table.reduce((s, r) => s + toNumber(r.routes), 0);
-    const totalWeeks = totalsWeekly.reduce((s, r) => s + toNumber(r.routes), 0);
-    const totalMonths = totalsMonthly.reduce((s, r) => s + toNumber(r.routes), 0);
-    const peakDay = table.reduce((best, row) => (toNumber(row.routes) > toNumber(best?.routes) ? row : best), null);
-    const peakWeek = totalsWeekly.reduce((best, row) => (toNumber(row.routes) > toNumber(best?.routes) ? row : best), null);
+    const total = table.reduce((s, r) => s + (Number(r.routes) || 0), 0);
+    const totalWeeks = totalsWeekly.reduce((s, r) => s + (Number(r.routes) || 0), 0);
+    const totalMonths = totalsMonthly.reduce((s, r) => s + (Number(r.routes) || 0), 0);
     return {
       table,
       totalsWeekly,
       totalsMonthly,
-      charts: {
-        dailyRoutes: table,
-        weeklyRoutes: totalsWeekly,
-        monthlyRoutes: totalsMonthly,
-      },
       summary: {
         total,
         total_weeks_sum: totalWeeks,
@@ -1338,13 +602,6 @@ export async function getDomainData(domain, params = {}) {
         weeks_in_range: totalsWeekly.length,
         months_in_range: totalsMonthly.length,
       },
-      kpis: [
-        { key: 'routes_total', label: 'Total routes in range', value: total, format: 'number' },
-        { key: 'routes_avg_day', label: 'Average routes per day', value: table.length ? roundTo(total / table.length, 1) : 0, format: 'number' },
-        { key: 'routes_avg_week', label: 'Average routes per week', value: totalsWeekly.length ? roundTo(totalWeeks / totalsWeekly.length, 1) : 0, format: 'number' },
-        { key: 'routes_peak_day', label: 'Peak day routes', value: toNumber(peakDay?.routes), format: 'number' },
-        { key: 'routes_peak_week', label: 'Peak week routes', value: toNumber(peakWeek?.routes), format: 'number' },
-      ],
     };
   }
 
@@ -1387,127 +644,14 @@ export async function getDomainData(domain, params = {}) {
       capacity_reliability: r.capacity_reliability,
       recommended_focus_areas: r.recommended_focus_areas,
     }));
-    const latest = rows[rows.length - 1] || null;
-    const bestWeek = rows.reduce((best, row) => (toNumber(row.overall_score) > toNumber(best?.overall_score) ? row : best), null);
-    const avgScore = rows.length ? roundTo(rows.reduce((sum, row) => sum + toNumber(row.overall_score), 0) / rows.length, 1) : 0;
-    return {
-      table: rows,
-      summary: { rows: rows.length },
-      charts: {
-        overallScoreTrend: rows.map((row) => ({
-          week_label: row.week_label,
-          overall_score: toNumber(row.overall_score),
-          safe_driving_fico: toNumber(row.safe_driving_fico),
-          delivery_completion_rate_dcr: toNumber(row.delivery_completion_rate_dcr),
-          capacity_reliability: toNumber(row.capacity_reliability),
-        })),
-      },
-      kpis: [
-        { key: 'performance_latest_score', label: 'Latest overall score', value: toNumber(latest?.overall_score), format: 'number' },
-        { key: 'performance_average_score', label: 'Average overall score', value: avgScore, format: 'number' },
-        { key: 'performance_best_week', label: 'Best weekly score', value: toNumber(bestWeek?.overall_score), format: 'number' },
-        { key: 'performance_latest_rank', label: 'Latest rank at DBX9', value: toNumber(latest?.rank_at_dbx9), format: 'number' },
-      ],
-    };
-  }
-
-  if (domain === 'fleet' && params.question !== '__legacy__') {
-    const [res, totalsRes, withoutDriverRes, workshopRes] = await Promise.all([
-      query(`SELECT status, COUNT(*)::int AS count FROM cars GROUP BY status`),
-      query(`
-        SELECT
-          COUNT(*)::int AS total_vehicles,
-          COUNT(*) FILTER (WHERE assigned_driver_id IS NULL OR assigned_driver_id = '')::int AS without_driver,
-          COUNT(*) FILTER (WHERE status = $1)::int AS active_vehicles,
-          COUNT(*) FILTER (WHERE status = $2)::int AS maintenance_vehicles
-        FROM cars
-      `, [CAR_STATUS_ACTIVE, CAR_STATUS_MAINTENANCE]),
-      query(
-        `SELECT vehicle_id, license_plate, status, assigned_driver_id
-         FROM cars
-         WHERE assigned_driver_id IS NULL OR assigned_driver_id = ''
-         ORDER BY status, vehicle_id
-         LIMIT 20`
-      ),
-      query(
-        `SELECT vehicle_id, license_plate, planned_workshop_from::date AS planned_workshop_from,
-                planned_workshop_to::date AS planned_workshop_to, planned_workshop_name, status
-         FROM cars
-         WHERE planned_workshop_from IS NOT NULL
-           AND planned_workshop_from <= CURRENT_DATE + INTERVAL '45 days'
-           AND COALESCE(planned_workshop_to::date, planned_workshop_from::date) >= CURRENT_DATE
-         ORDER BY planned_workshop_from ASC, vehicle_id
-         LIMIT 20`
-      ),
-    ]);
-    const totalsRow = totalsRes.rows[0] || {};
-    const totalVehicles = toNumber(totalsRow.total_vehicles);
-    const withoutDriver = toNumber(totalsRow.without_driver);
-    const assignmentCoverage = totalVehicles > 0 ? roundTo(((totalVehicles - withoutDriver) / totalVehicles) * 100, 1) : 0;
-    return {
-      table: res.rows || [],
-      summary: res.rows?.reduce((a, r) => ({ ...a, [r.status]: r.count }), {}) || {},
-      charts: {
-        statusDistribution: (res.rows || []).map((row) => ({ label: row.status || 'Unknown', value: toNumber(row.count) })),
-        assignmentCoverage: [
-          { label: 'Assigned', value: Math.max(0, totalVehicles - withoutDriver) },
-          { label: 'Without driver', value: withoutDriver },
-        ],
-        workshopTimeline: (workshopRes.rows || []).map((row) => ({
-          label: row.license_plate || row.vehicle_id || '—',
-          value: 1,
-          planned_workshop_from: row.planned_workshop_from,
-          planned_workshop_to: row.planned_workshop_to,
-        })),
-      },
-      insightTables: [
-        { title: 'Vehicles without driver assignment', rows: withoutDriverRes.rows || [] },
-        { title: 'Upcoming workshops', rows: workshopRes.rows || [] },
-      ],
-      kpis: [
-        { key: 'fleet_total_vehicles', label: 'Total fleet vehicles', value: totalVehicles, format: 'number' },
-        { key: 'fleet_active_vehicles', label: 'Active vehicles', value: toNumber(totalsRow.active_vehicles), format: 'number' },
-        { key: 'fleet_maintenance_vehicles', label: 'Vehicles in maintenance', value: toNumber(totalsRow.maintenance_vehicles), format: 'number' },
-        { key: 'fleet_assignment_coverage', label: 'Assignment coverage', value: assignmentCoverage, format: 'percent' },
-        { key: 'fleet_without_driver', label: 'Vehicles without driver', value: withoutDriver, format: 'number' },
-        { key: 'fleet_upcoming_workshops', label: 'Upcoming workshops', value: workshopRes.rows?.length || 0, format: 'number' },
-      ],
-    };
+    return { table: rows, summary: { rows: rows.length } };
   }
 
   if (domain === 'fleet') {
-    const [res, totalsRes] = await Promise.all([
-      query(`SELECT status, COUNT(*)::int AS count FROM cars GROUP BY status`),
-      query(`
-        SELECT
-          COUNT(*)::int AS total_vehicles,
-          COUNT(*) FILTER (WHERE assigned_driver_id IS NULL OR assigned_driver_id = '')::int AS without_driver,
-          COUNT(*) FILTER (WHERE status = $1)::int AS active_vehicles,
-          COUNT(*) FILTER (WHERE status = $2)::int AS maintenance_vehicles
-        FROM cars
-      `, [CAR_STATUS_ACTIVE, CAR_STATUS_MAINTENANCE]),
-    ]);
-    const totalsRow = totalsRes.rows[0] || {};
-    const totalVehicles = toNumber(totalsRow.total_vehicles);
-    const withoutDriver = toNumber(totalsRow.without_driver);
-    const assignmentCoverage = totalVehicles > 0 ? roundTo(((totalVehicles - withoutDriver) / totalVehicles) * 100, 1) : 0;
-    return {
-      table: res.rows || [],
-      summary: res.rows?.reduce((a, r) => ({ ...a, [r.status]: r.count }), {}) || {},
-      charts: {
-        statusDistribution: (res.rows || []).map((row) => ({ label: row.status || 'Unknown', value: toNumber(row.count) })),
-        assignmentCoverage: [
-          { label: 'Assigned', value: Math.max(0, totalVehicles - withoutDriver) },
-          { label: 'Without driver', value: withoutDriver },
-        ],
-      },
-      kpis: [
-        { key: 'fleet_total_vehicles', label: 'Total fleet vehicles', value: totalVehicles, format: 'number' },
-        { key: 'fleet_active_vehicles', label: 'Active vehicles', value: toNumber(totalsRow.active_vehicles), format: 'number' },
-        { key: 'fleet_maintenance_vehicles', label: 'Vehicles in maintenance', value: toNumber(totalsRow.maintenance_vehicles), format: 'number' },
-        { key: 'fleet_assignment_coverage', label: 'Assignment coverage', value: assignmentCoverage, format: 'percent' },
-      ],
-    };
+    const res = await query(
+      `SELECT status, COUNT(*)::int AS count FROM cars GROUP BY status`
+    );
+    return { table: res.rows || [], summary: res.rows?.reduce((a, r) => ({ ...a, [r.status]: r.count }), {}) };
   }
 
   if (domain === 'hr') {
@@ -1525,147 +669,13 @@ export async function getDomainData(domain, params = {}) {
          FROM employee_terminations
          WHERE termination_date::date >= $1::date AND termination_date::date <= $2::date
          GROUP BY termination_date::date
-        ORDER BY termination_date`,
+         ORDER BY termination_date`,
         [start, end],
       ),
     ]);
-    const hiresTotal = (newHiresRes.rows || []).reduce((sum, row) => sum + toNumber(row.cnt), 0);
-    const terminationsTotal = (termsRes.rows || []).reduce((sum, row) => sum + toNumber(row.cnt), 0);
-    const monthlyStart = shiftMonthKey(end.slice(0, 7), -11);
-    const monthlyStartDate = `${monthlyStart}-01`;
-    const [hiresMonthlyRes, termsMonthlyRes] = await Promise.all([
-      query(
-        `SELECT to_char(date_trunc('month', start_date::date), 'YYYY-MM') AS month_key, COUNT(*)::int AS hires
-         FROM kenjo_employees
-         WHERE start_date::date >= $1::date AND start_date::date <= $2::date
-         GROUP BY date_trunc('month', start_date::date)
-         ORDER BY month_key`,
-        [monthlyStartDate, end],
-      ),
-      query(
-        `SELECT to_char(date_trunc('month', termination_date::date), 'YYYY-MM') AS month_key, COUNT(*)::int AS terminations
-         FROM employee_terminations
-         WHERE termination_date::date >= $1::date AND termination_date::date <= $2::date
-         GROUP BY date_trunc('month', termination_date::date)
-         ORDER BY month_key`,
-        [monthlyStartDate, end],
-      ),
-    ]);
-    const hiresMonthlyMap = new Map((hiresMonthlyRes.rows || []).map((row) => [row.month_key, toNumber(row.hires)]));
-    const termsMonthlyMap = new Map((termsMonthlyRes.rows || []).map((row) => [row.month_key, toNumber(row.terminations)]));
-    const monthlyMovement = buildMonthKeyRange(monthlyStart, end.slice(0, 7)).map((monthKey) => {
-      const hires = hiresMonthlyMap.get(monthKey) || 0;
-      const terminations = termsMonthlyMap.get(monthKey) || 0;
-      return {
-        month_key: monthKey,
-        hires,
-        terminations,
-        net: hires - terminations,
-      };
-    });
     return {
       newHires: newHiresRes.rows || [],
       terminations: termsRes.rows || [],
-      charts: {
-        monthlyMovement,
-      },
-      kpis: [
-        { key: 'hr_hires_total', label: 'New hires in selected range', value: hiresTotal, format: 'number' },
-        { key: 'hr_terminations_total', label: 'Terminations in selected range', value: terminationsTotal, format: 'number' },
-        { key: 'hr_net_movement', label: 'Net employee movement', value: hiresTotal - terminationsTotal, format: 'number' },
-      ],
-    };
-  }
-
-  if (domain === 'safety') {
-    const [statusRes, dailyRes] = await Promise.all([
-      query(
-        `SELECT COALESCE(NULLIF(TRIM(status), ''), 'Unknown') AS status, COUNT(*)::int AS count
-         FROM pave_sessions
-         WHERE created_at >= $1::date AND created_at < ($2::date + 1)
-         GROUP BY COALESCE(NULLIF(TRIM(status), ''), 'Unknown')
-         ORDER BY count DESC, status`,
-        [start, end],
-      ),
-      query(
-        `SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS date, COUNT(*)::int AS inspections
-         FROM pave_sessions
-         WHERE created_at >= $1::date AND created_at < ($2::date + 1)
-         GROUP BY date_trunc('day', created_at)
-         ORDER BY date`,
-        [start, end],
-      ),
-    ]);
-    const statusRows = (statusRes.rows || []).map((row) => ({ status: row.status, count: toNumber(row.count) }));
-    const dailyRows = (dailyRes.rows || []).map((row) => ({ date: row.date, inspections: toNumber(row.inspections) }));
-    const totalInspections = dailyRows.reduce((sum, row) => sum + row.inspections, 0);
-    return {
-      table: statusRows,
-      charts: {
-        statusDistribution: statusRows.map((row) => ({ label: row.status, value: row.count })),
-        inspectionsByDay: dailyRows,
-      },
-      kpis: [
-        { key: 'safety_total_inspections', label: 'PAVE inspections in range', value: totalInspections, format: 'number' },
-        { key: 'safety_avg_per_day', label: 'Average inspections per day', value: dailyRows.length ? roundTo(totalInspections / dailyRows.length, 1) : 0, format: 'number' },
-        { key: 'safety_status_count', label: 'Distinct inspection statuses', value: statusRows.length, format: 'number' },
-      ],
-    };
-  }
-
-  if (domain === 'compliance' && params.question !== '__legacy__') {
-    const [res, typeRes, urgentRes] = await Promise.all([
-      query(`
-        SELECT document_type, expiry_date, COUNT(*)::int AS cnt FROM car_documents
-        WHERE expiry_date IS NOT NULL AND expiry_date <= CURRENT_DATE + INTERVAL '90 days'
-        GROUP BY document_type, expiry_date ORDER BY expiry_date
-      `),
-      query(`
-        SELECT document_type, COUNT(*)::int AS cnt
-        FROM car_documents
-        WHERE expiry_date IS NOT NULL
-          AND expiry_date <= CURRENT_DATE + INTERVAL '90 days'
-          AND expiry_date >= CURRENT_DATE
-        GROUP BY document_type
-        ORDER BY cnt DESC, document_type
-      `),
-      query(`
-        SELECT car_id, document_type, expiry_date
-        FROM car_documents
-        WHERE expiry_date IS NOT NULL
-          AND expiry_date <= CURRENT_DATE + INTERVAL '30 days'
-          AND expiry_date >= CURRENT_DATE
-        ORDER BY expiry_date ASC, document_type
-        LIMIT 25
-      `),
-    ]);
-    const rows = (res.rows || []).map((row) => ({
-      document_type: row.document_type,
-      expiry_date: row.expiry_date,
-      cnt: toNumber(row.cnt),
-    }));
-    const totalExpiring = rows.reduce((sum, row) => sum + row.cnt, 0);
-    return {
-      table: rows,
-      charts: {
-        expiringByType: (typeRes.rows || []).map((row) => ({
-          label: row.document_type || 'Unknown',
-          value: toNumber(row.cnt),
-        })),
-        expiriesTimeline: rows.map((row) => ({
-          date: row.expiry_date,
-          count: row.cnt,
-          document_type: row.document_type,
-        })),
-      },
-      insightTables: [
-        { title: 'Urgent renewals in next 30 days', rows: urgentRes.rows || [] },
-      ],
-      kpis: [
-        { key: 'compliance_expiring_docs', label: 'Expiring documents in next 90 days', value: totalExpiring, format: 'number' },
-        { key: 'compliance_document_types', label: 'Document types affected', value: new Set(rows.map((row) => row.document_type)).size, format: 'number' },
-        { key: 'compliance_urgent_30d', label: 'Urgent renewals in 30 days', value: urgentRes.rows?.length || 0, format: 'number' },
-      ],
     };
   }
 
@@ -1675,19 +685,7 @@ export async function getDomainData(domain, params = {}) {
       WHERE expiry_date IS NOT NULL AND expiry_date <= CURRENT_DATE + INTERVAL '90 days'
       GROUP BY document_type, expiry_date ORDER BY expiry_date
     `);
-    const rows = (res.rows || []).map((row) => ({
-      document_type: row.document_type,
-      expiry_date: row.expiry_date,
-      cnt: toNumber(row.cnt),
-    }));
-    const totalExpiring = rows.reduce((sum, row) => sum + row.cnt, 0);
-    return {
-      table: rows,
-      kpis: [
-        { key: 'compliance_expiring_docs', label: 'Expiring documents in next 90 days', value: totalExpiring, format: 'number' },
-        { key: 'compliance_document_types', label: 'Document types affected', value: new Set(rows.map((row) => row.document_type)).size, format: 'number' },
-      ],
-    };
+    return { table: res.rows || [] };
   }
 
   return { table: [], summary: {} };

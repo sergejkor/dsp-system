@@ -43,6 +43,13 @@ export const sidebarMenuItems = [
         matchPatterns: ['/car-planning'],
       },
       {
+        id: 'internal-inspections',
+        type: 'item',
+        path: '/fleet-inspections',
+        labelKey: 'nav.internalInspections',
+        matchPatterns: ['/fleet-inspections*'],
+      },
+      {
         id: 'damages',
         type: 'item',
         path: '/damages',
@@ -130,6 +137,15 @@ export const sidebarMenuItems = [
     labelKey: 'nav.calendar',
     icon: 'calendar',
     matchPatterns: ['/kenjo-calendar'],
+  },
+  {
+    id: 'analytics',
+    type: 'item',
+    path: '/analytics',
+    labelKey: 'nav.analytics',
+    icon: 'analytics',
+    permissionCode: 'page_analytics',
+    matchPatterns: ['/analytics'],
   },
   {
     id: 'documents-reports',

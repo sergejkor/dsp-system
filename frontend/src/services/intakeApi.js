@@ -120,6 +120,13 @@ export async function markDamageReportUnread(id) {
   return ensureOk(res, 'Failed to mark damage report as unread');
 }
 
+export async function addDamageReportToDamages(id) {
+  const res = await fetch(`${API_BASE}/api/intake/damage-reports/${id}/add-to-damages`, authOpts({
+    method: 'POST',
+  }));
+  return ensureOk(res, 'Failed to add damage report to damages');
+}
+
 export async function uploadDamageReportFiles(id, files) {
   const form = new FormData();
   for (const file of files || []) form.append('files', file);

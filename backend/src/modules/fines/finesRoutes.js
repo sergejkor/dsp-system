@@ -42,30 +42,10 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid id' });
     }
     const fine = await finesService.updateFine(id, req.body || {});
-    if (!fine) {
-      return res.status(404).json({ error: 'Fine not found' });
-    }
     res.json(fine);
   } catch (err) {
     console.error('PUT /api/fines/:id error', err);
     res.status(500).json({ error: err.message || 'Failed to update fine' });
-  }
-});
-
-router.delete('/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) {
-      return res.status(400).json({ error: 'Invalid id' });
-    }
-    const ok = await finesService.deleteFine(id);
-    if (!ok) {
-      return res.status(404).json({ error: 'Fine not found' });
-    }
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('DELETE /api/fines/:id error', err);
-    res.status(500).json({ error: err.message || 'Failed to delete fine' });
   }
 });
 

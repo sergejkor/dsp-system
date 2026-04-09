@@ -13,6 +13,7 @@ import {
   updateEmployeePersonals,
   updateEmployeeWork,
 } from '../kenjo/kenjoClient.js';
+import damagesService from '../damages/damagesService.js';
 import { sendPersonalQuestionnaireNotification, sendDamageReportNotification } from './publicIntakeNotificationService.js';
 
 let tablesReady = false;
@@ -561,12 +562,15 @@ function normalizePersonalPayload(payload) {
 function normalizeDamagePayload(payload) {
   return compactObject({
     accidentType: stringOrNull(payload?.accidentType, 64),
+    thirdPartyPropertyDamaged: payload?.thirdPartyPropertyDamaged === true,
     reporterName: stringOrNull(payload?.reporterName || payload?.opponentName, 255),
     reporterEmail: stringOrNull(payload?.reporterEmail || payload?.opponentEmail, 255),
     reporterPhone: stringOrNull(payload?.reporterPhone || payload?.opponentPhone, 255),
     opponentName: stringOrNull(payload?.opponentName || payload?.reporterName, 255),
     opponentEmail: stringOrNull(payload?.opponentEmail || payload?.reporterEmail, 255),
     opponentPhone: stringOrNull(payload?.opponentPhone || payload?.reporterPhone, 255),
+    opponentInsurance: stringOrNull(payload?.opponentInsurance, 255),
+    opponentInsuranceOther: stringOrNull(payload?.opponentInsuranceOther, 255),
     driverName: stringOrNull(payload?.driverName, 255),
     licensePlate: stringOrNull(payload?.licensePlate, 64),
     incidentDate: dateOnlyOrNull(payload?.incidentDate),
@@ -576,6 +580,10 @@ function normalizeDamagePayload(payload) {
     houseNumber: stringOrNull(payload?.houseNumber, 64),
     zipCode: stringOrNull(payload?.zipCode || payload?.postalCode, 32),
     city: stringOrNull(payload?.city, 255),
+    ownerFirstName: stringOrNull(payload?.ownerFirstName, 255),
+    ownerLastName: stringOrNull(payload?.ownerLastName, 255),
+    ownerPhone: stringOrNull(payload?.ownerPhone, 255),
+    ownerEmail: stringOrNull(payload?.ownerEmail, 255),
     opponentInsuranceNumber: stringOrNull(payload?.opponentInsuranceNumber, 128),
     rentalCar: payload?.rentalCar === true,
     rentalCarLicensePlate: stringOrNull(payload?.rentalCarLicensePlate, 64),
@@ -585,34 +593,193 @@ function normalizeDamagePayload(payload) {
     descriptionDe: stringOrNull(payload?.descriptionDe, 8000),
     damageSummary: stringOrNull(payload?.damageSummary, 4000),
     witnesses: stringOrNull(payload?.witnesses, 4000),
+    witnessesPresent: payload?.witnessesPresent === true,
+    witnessName: stringOrNull(payload?.witnessName, 255),
+    witnessSurname: stringOrNull(payload?.witnessSurname, 255),
+    witnessPhone: stringOrNull(payload?.witnessPhone, 255),
+    witnessEmail: stringOrNull(payload?.witnessEmail, 255),
   });
 }
 
 async function translateTextToGerman(value) {
   const text = stringOrNull(value, 8000);
   if (!text) return null;
-  try {
-    const params = new URLSearchParams({
-      client: 'gtx',
-      sl: 'auto',
-      tl: 'de',
-      dt: 't',
-      q: text,
-    });
-    const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params.toString()}`, {
-      headers: { Accept: 'application/json' },
-    });
-    if (!response.ok) return text;
-    const data = await response.json().catch(() => null);
-    const segments = Array.isArray(data?.[0]) ? data[0] : [];
-    const translated = segments
-      .map((segment) => (Array.isArray(segment) ? String(segment[0] || '') : ''))
-      .join('')
-      .trim();
-    return translated || text;
-  } catch {
-    return text;
+  const chunkSize = 1400;
+  const chunks = [];
+  for (let start = 0; start < text.length; start += chunkSize) {
+    chunks.push(text.slice(start, start + chunkSize));
   }
+  try {
+    const translatedChunks = [];
+    for (const chunk of chunks) {
+      const params = new URLSearchParams({
+        client: 'gtx',
+        sl: 'auto',
+        tl: 'de',
+        dt: 't',
+        q: chunk,
+      });
+      const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params.toString()}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) return null;
+      const data = await response.json().catch(() => null);
+      const segments = Array.isArray(data?.[0]) ? data[0] : [];
+      const translatedChunk = segments
+        .map((segment) => (Array.isArray(segment) ? String(segment[0] || '') : ''))
+        .join('')
+        .trim();
+      if (!translatedChunk) return null;
+      translatedChunks.push(translatedChunk);
+    }
+    return translatedChunks.join(' ').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureGermanDescriptionOnReportRow(reportRow) {
+  if (!reportRow) return reportRow;
+  const payload = reportRow?.payload && typeof reportRow.payload === 'object' ? { ...reportRow.payload } : {};
+  const sourceDescription = stringOrNull(payload.description, 8000);
+  const existingGerman = stringOrNull(payload.descriptionDe, 8000);
+  const hasRealGerman = existingGerman && existingGerman !== sourceDescription;
+  if (!sourceDescription || hasRealGerman) return reportRow;
+
+  const translated = await translateTextToGerman(sourceDescription);
+  const translatedGerman = stringOrNull(translated, 8000);
+  if (!translatedGerman || translatedGerman === sourceDescription) return reportRow;
+  payload.descriptionDe = translatedGerman;
+
+  await query(
+    `UPDATE public_damage_reports
+     SET payload = $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [Number(reportRow.id), JSON.stringify(payload)]
+  ).catch(() => null);
+
+  return { ...reportRow, payload };
+}
+
+function buildDamageImportSchadensnummer(reportId) {
+  return `PUBLIC-REPORT-${Number(reportId)}`;
+}
+
+function buildDamageImportUnfallnummer(reportId, payload = {}) {
+  const date = dateOnlyOrNull(payload.incidentDate) || 'unknown-date';
+  const rawPlate = stringOrNull(
+    payload.rentalCar ? payload.rentalCarLicensePlate || payload.licensePlate : payload.licensePlate || payload.rentalCarLicensePlate,
+    64
+  );
+  const cleanedPlate = String(rawPlate || `REPORT-${reportId}`)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '');
+  return `${date}_${cleanedPlate || `REPORT${Number(reportId)}`}`.slice(0, 255);
+}
+
+function buildDamageImportDescription(payload = {}) {
+  return stringOrNull(payload.descriptionDe || payload.description || payload.damageSummary, 2000);
+}
+
+function buildDamageImportComments(reportId, payload = {}) {
+  const lines = [
+    `Imported from Schadenmeldung Review #${Number(reportId)}`,
+    `Accident type: ${stringOrNull(payload.accidentType, 64) || '-'}`,
+    `Driver: ${stringOrNull(payload.driverName, 255) || '-'}`,
+    `Vehicle: ${stringOrNull(payload.licensePlate || payload.rentalCarLicensePlate, 64) || '-'}`,
+    `Rental car: ${payload.rentalCar === true ? 'Yes' : 'No'}`,
+    `Opponent: ${stringOrNull(payload.opponentName, 255) || '-'}`,
+    `Opponent contact: ${[payload.opponentPhone, payload.opponentEmail].filter(Boolean).join(' / ') || '-'}`,
+    `Opponent insurance: ${stringOrNull(payload.opponentInsuranceOther || payload.opponentInsurance, 255) || '-'}`,
+    `Opponent insurance no.: ${stringOrNull(payload.opponentInsuranceNumber, 128) || '-'}`,
+    `Location: ${stringOrNull(payload.location, 255) || '-'}`,
+    `Address: ${[payload.streetName, payload.houseNumber, payload.zipCode, payload.city].filter(Boolean).join(', ') || '-'}`,
+    `Police on site: ${payload.policeOnSite === true ? 'Yes' : 'No'}`,
+    `Police station: ${stringOrNull(payload.policeStation, 255) || '-'}`,
+    `Third-party property damaged: ${payload.thirdPartyPropertyDamaged === true ? 'Yes' : 'No'}`,
+    `Owner: ${[payload.ownerFirstName, payload.ownerLastName].filter(Boolean).join(' ') || '-'}`,
+    `Owner contact: ${[payload.ownerPhone, payload.ownerEmail].filter(Boolean).join(' / ') || '-'}`,
+    `Witnesses: ${
+      payload.witnessesPresent === true
+        ? [payload.witnessName, payload.witnessSurname, payload.witnessPhone, payload.witnessEmail].filter(Boolean).join(' / ') || 'Yes'
+        : (stringOrNull(payload.witnesses, 4000) || 'No')
+    }`,
+    '',
+    'Description (DE):',
+    stringOrNull(payload.descriptionDe || payload.description, 8000) || '-',
+  ];
+  return stringOrNull(lines.join('\n'), 5000);
+}
+
+export async function addDamageReportToDamages(id) {
+  await ensurePublicIntakeTables();
+  const reportId = Number(id);
+  if (!Number.isFinite(reportId)) {
+    throw new Error('Invalid damage report id');
+  }
+
+  const report = await getDamageReportById(reportId);
+  if (!report) return null;
+
+  const payload = normalizeDamagePayload(report?.payload || {});
+  const schadensnummer = buildDamageImportSchadensnummer(reportId);
+
+  const existingRes = await query(
+    `SELECT * FROM damages WHERE schadensnummer = $1 LIMIT 1`,
+    [schadensnummer]
+  );
+  const existing = existingRes.rows?.[0] || null;
+  if (existing) {
+    return {
+      created: false,
+      copiedFiles: 0,
+      damage: existing,
+    };
+  }
+
+  const damageDraft = {
+    case_closed: false,
+    date: dateOnlyOrNull(payload.incidentDate),
+    unfallnummer: buildDamageImportUnfallnummer(reportId, payload),
+    fahrer: stringOrNull(payload.driverName || report.driver_name || report.reporter_name, 255) || 'Unknown',
+    schadensnummer,
+    polizeiliches_aktenzeichen: null,
+    vorgang_angelegt: 'Ja',
+    fahrerformular_vollstaendig: 'Ja',
+    meldung_an_partner_abgegeben: 'Nein',
+    offen_geschlossen: 'Offen',
+    kurzbeschreibung: buildDamageImportDescription(payload),
+    kommentare: buildDamageImportComments(reportId, payload),
+  };
+
+  const damage = await damagesService.createDamage(damageDraft);
+
+  const fileRes = await query(
+    `SELECT file_name, mime_type, file_content
+     FROM public_damage_report_files
+     WHERE report_id = $1
+     ORDER BY created_at ASC, id ASC`,
+    [reportId]
+  );
+  const sourceFiles = Array.isArray(fileRes.rows) ? fileRes.rows : [];
+  if (sourceFiles.length) {
+    await damagesService.addDamageFiles(
+      damage.id,
+      sourceFiles.map((file, index) => ({
+        originalname: String(file.file_name || `damage-report-${reportId}-${index + 1}`),
+        mimetype: stringOrNull(file.mime_type, 255) || 'application/octet-stream',
+        size: Buffer.isBuffer(file.file_content) ? file.file_content.length : Buffer.byteLength(file.file_content || ''),
+        buffer: Buffer.isBuffer(file.file_content) ? file.file_content : Buffer.from(file.file_content || ''),
+      }))
+    );
+  }
+
+  return {
+    created: true,
+    copiedFiles: sourceFiles.length,
+    damage,
+  };
 }
 
 function validateDamageReportRequired(payload) {
@@ -624,6 +791,9 @@ function validateDamageReportRequired(payload) {
   if (!dateOnlyOrNull(payload?.incidentDate)) missing.push('Incident date');
   if (withOtherCar && !stringOrNull(payload?.opponentName || payload?.reporterName, 255)) {
     missing.push('Opponent name');
+  }
+  if (withOtherCar && !stringOrNull(payload?.opponentPhone || payload?.reporterPhone, 255)) {
+    missing.push('Opponent phone');
   }
   return missing;
 }
@@ -1117,8 +1287,9 @@ export async function getDamageReportById(id) {
     [Number(id)]
   );
   const res = await query(`SELECT *, (notification_read_at IS NULL) AS is_new FROM public_damage_reports WHERE id = $1 LIMIT 1`, [Number(id)]);
-  const report = res.rows[0] || null;
+  let report = res.rows[0] || null;
   if (!report) return null;
+  report = await ensureGermanDescriptionOnReportRow(report);
   const files = await listFiles('public_damage_report_files', 'report_id', Number(id));
   return { ...report, files };
 }
@@ -1806,6 +1977,7 @@ const publicIntakeService = {
   getDamageReportById,
   markDamageReportUnread,
   updateDamageReport,
+  addDamageReportToDamages,
   addDamageReportFiles,
   getDamageReportFile,
   getDamageReportFormOptions,

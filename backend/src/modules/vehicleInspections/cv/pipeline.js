@@ -1,0 +1,11 @@
+export { default as qualityGate, QualityGate } from './qualityGate.js';
+export { default as vehicleRegionEstimator, VehicleRegionEstimator } from './vehicleRegionEstimator.js';
+export { default as alignmentEngine, AlignmentEngine } from './alignmentEngine.js';
+export { default as zoneProvider, ZoneProvider } from './zoneProvider.js';
+export { default as zoneComparator, ZoneComparator } from './comparison.js';
+export { default as candidateExtractor, CandidateExtractor } from './candidateExtractor.js';
+export { default as reflectionSuppressor, ReflectionSuppressor } from './reflectionSuppressor.js';
+export { default as damageReasoner, DamageReasoner } from './reasoner.js';
+export { default as DamageHistoryMatcher } from './damageHistoryMatcher.js';
+export { default as debugArtifactStorage, DebugArtifactStorage } from './storage.js';
+export { default as damageEventPublisher, DamageEventPublisher } from './eventPublisher.js';

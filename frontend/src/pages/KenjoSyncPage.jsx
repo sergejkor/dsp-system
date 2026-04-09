@@ -215,18 +215,19 @@ export default function KenjoSyncPage() {
       <h2>{t('employeeList.title')}</h2>
       {error && <p className="error-text">{error}</p>}
 
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+      <div className="kenjo-sync-toolbar">
         {loading && <span className="muted">Loading…</span>}
         <input
           type="text"
           placeholder={t('employeeList.searchPlaceholder')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          style={{ flex: 1 }}
+          className="kenjo-sync-search-input"
         />
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
+          className="kenjo-sync-status-filter"
         >
           <option value="active">{t('employeeList.filterActiveOnly')}</option>
           <option value="inactive">{t('employeeList.filterInactiveOnly')}</option>

@@ -6,15 +6,40 @@ const STATUS_OUT_OF_SERVICE = 'Out of Service';
 const STATUS_GROUNDED = 'Grounded';
 const STATUS_DECOMMISSIONED = 'Decommissioned';
 const STATUS_DEFLEETING_CANDIDATE = 'Defleeting candidate';
-let carsExtraColumnsReady = false;
+const INSPECTION_VEHICLE_TYPES = new Set([
+  'sprinter_high_roof_long',
+  'peugeot_boxer',
+  'rivian_edv',
+]);
 
-async function ensureCarsExtraColumns() {
-  if (carsExtraColumnsReady) return;
-  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_from DATE`);
-  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_to DATE`);
-  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_name TEXT`);
-  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_comment TEXT`);
-  carsExtraColumnsReady = true;
+let inspectionVehicleColumnsReady = false;
+
+function normalizeInspectionVehicleType(value) {
+  const normalized = value == null ? '' : String(value).trim();
+  return INSPECTION_VEHICLE_TYPES.has(normalized) ? normalized : null;
+}
+
+function inferInspectionVehicleType(car) {
+  const direct = normalizeInspectionVehicleType(car?.inspection_vehicle_type);
+  if (direct) return direct;
+
+  const combined = [car?.model, car?.vehicle_type, car?.vehicle_id]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (combined.includes('sprinter')) return 'sprinter_high_roof_long';
+  if (combined.includes('boxer')) return 'peugeot_boxer';
+  if (combined.includes('rivian') || combined.includes('edv') || combined.includes('step van')) {
+    return 'rivian_edv';
+  }
+  return null;
+}
+
+async function ensureInspectionVehicleColumns() {
+  if (inspectionVehicleColumnsReady) return;
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS inspection_vehicle_type VARCHAR(64)`).catch(() => null);
+  inspectionVehicleColumnsReady = true;
 }
 
 function toDateOnly(value) {
@@ -39,8 +64,6 @@ function normalizeCarDates(car) {
     insurance_expiry: toDateOnly(car.insurance_expiry),
     lease_expiry: toDateOnly(car.lease_expiry),
     planned_defleeting_date: toDateOnly(car.planned_defleeting_date),
-    planned_workshop_from: toDateOnly(car.planned_workshop_from),
-    planned_workshop_to: toDateOnly(car.planned_workshop_to),
     created_at: toDateOnly(car.created_at),
     updated_at: toDateOnly(car.updated_at),
   };
@@ -118,11 +141,11 @@ function buildCarsWhere(filters, params) {
  * Get cars list with optional search and filters. Joins kenjo_employees for driver name.
  */
 async function getCars(filters = {}) {
-  await ensureCarsExtraColumns();
+  await ensureInspectionVehicleColumns();
   const params = [];
   const where = buildCarsWhere(filters, params);
   const res = await query(
-    `SELECT c.id, c.vehicle_id, c.license_plate, c.vin, c.model, c.year, c.fuel_type, c.vehicle_type,
+    `SELECT c.id, c.vehicle_id, c.license_plate, c.vin, c.model, c.year, c.fuel_type, c.vehicle_type, c.inspection_vehicle_type,
             c.status, c.station, c.fleet_provider, c.assigned_driver_id, c.mileage,
             c.last_maintenance_date, c.next_maintenance_date, c.next_maintenance_mileage,
             c.safety_score, c.incidents, c.registration_expiry, c.insurance_expiry, c.lease_expiry,
@@ -172,7 +195,6 @@ async function getCars(filters = {}) {
  * Get KPI counts for cars dashboard.
  */
 async function getCarsKpis() {
-  await ensureCarsExtraColumns();
   const res = await query(`
     SELECT
       COUNT(*)::int AS total_vehicles,
@@ -215,7 +237,7 @@ async function getCarsKpis() {
  * Get single car by id with maintenance history, documents, driver assignment history.
  */
 async function getCarById(id) {
-  await ensureCarsExtraColumns();
+  await ensureInspectionVehicleColumns();
   const carRes = await query(
     `SELECT c.*, k.first_name AS driver_first_name, k.last_name AS driver_last_name
      FROM cars c
@@ -309,12 +331,13 @@ async function getCarDocumentForDownload(carId, docId) {
  * Create car.
  */
 async function createCar(data) {
-  await ensureCarsExtraColumns();
+  await ensureInspectionVehicleColumns();
   const res = await query(
     `INSERT INTO cars (
       vehicle_id, license_plate, vin, model, year, fuel_type, vehicle_type, status,
-      station, fleet_provider, mileage, registration_expiry, insurance_expiry, lease_expiry
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      station, fleet_provider, mileage, registration_expiry, insurance_expiry, lease_expiry,
+      inspection_vehicle_type
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     RETURNING *`,
     [
       data.vehicle_id || null,
@@ -331,6 +354,7 @@ async function createCar(data) {
       data.registration_expiry || null,
       data.insurance_expiry || null,
       data.lease_expiry || null,
+      normalizeInspectionVehicleType(data.inspection_vehicle_type),
     ]
   );
   return normalizeCarDates(res.rows[0]);
@@ -340,16 +364,17 @@ async function createCar(data) {
  * Update car.
  */
 async function updateCar(id, data) {
-  await ensureCarsExtraColumns();
+  await ensureInspectionVehicleColumns();
   const fields = [];
   const values = [];
   let idx = 1;
-  const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to', 'planned_workshop_name', 'planned_workshop_comment'];
+  const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'inspection_vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date'];
   for (const key of allow) {
     if (data[key] !== undefined) {
       fields.push(`${key} = $${idx}`);
       if (['year', 'mileage', 'incidents', 'safety_score'].includes(key) && data[key] !== null) values.push(Number(data[key]));
-      else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to'].includes(key)) values.push(data[key] || null);
+      else if (key === 'inspection_vehicle_type') values.push(normalizeInspectionVehicleType(data[key]));
+      else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date'].includes(key)) values.push(data[key] || null);
       else values.push(data[key] ?? null);
       idx++;
     }
@@ -422,7 +447,36 @@ async function deleteCar(id) {
   return true;
 }
 
+async function resolveVehicleByVin(vin) {
+  await ensureInspectionVehicleColumns();
+  const normalizedVin = String(vin || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (!normalizedVin) return null;
+
+  const res = await query(
+    `SELECT id, vehicle_id, license_plate, vin, model, vehicle_type, inspection_vehicle_type
+     FROM cars
+     WHERE REGEXP_REPLACE(UPPER(COALESCE(vin, '')), '[^A-Z0-9]', '', 'g') = $1
+     LIMIT 1`,
+    [normalizedVin],
+  );
+  const car = res.rows[0];
+  if (!car) return null;
+
+  return {
+    carId: car.id,
+    vehicleId: car.vehicle_id || String(car.id),
+    vin: car.vin || normalizedVin,
+    licensePlate: car.license_plate || null,
+    model: car.model || null,
+    vehicleType: inferInspectionVehicleType(car),
+  };
+}
+
 export default {
+  ensureInspectionVehicleColumns,
   getCars,
   getCarsKpis,
   getCarById,
@@ -434,6 +488,7 @@ export default {
   addCarComment,
   addCarDocument,
   getCarDocumentForDownload,
+  resolveVehicleByVin,
   STATUS_ACTIVE,
   STATUS_MAINTENANCE,
   STATUS_OUT_OF_SERVICE,

@@ -1,0 +1,50 @@
+export const networkTheme = {
+  dark: {
+    line: "rgba(110,160,255,0.16)",
+    lineActive: "rgba(255,190,110,0.30)",
+    pulseBlue: "rgba(90,150,255,0.78)",
+    pulseOrange: "rgba(255,170,80,0.75)",
+    pulseWhite: "rgba(255,255,255,0.95)",
+    nodeGlow: 1.0,
+    overlay: "rgba(3,8,20,0.12)",
+    particleDensity: 1.0,
+    glowIntensity: 1.0,
+    speedMultiplier: 1.0,
+    animationGraceMs: 1200,
+  },
+  light: {
+    line: "rgba(120,150,210,0.12)",
+    lineActive: "rgba(255,195,120,0.22)",
+    pulseBlue: "rgba(100,150,255,0.55)",
+    pulseOrange: "rgba(255,185,110,0.52)",
+    pulseWhite: "rgba(255,255,255,0.82)",
+    nodeGlow: 0.7,
+    overlay: "rgba(255,255,255,0.06)",
+    particleDensity: 0.72,
+    glowIntensity: 0.72,
+    speedMultiplier: 0.92,
+    animationGraceMs: 1100,
+  },
+  loginDark: {
+    line: "rgba(132,182,255,0.12)",
+    lineActive: "rgba(255,204,126,0.76)",
+    pulseBlue: "rgba(148,198,255,1)",
+    pulseOrange: "rgba(96,184,255,1)",
+    pulseWhite: "rgba(255,255,255,1)",
+    nodeGlow: 1.75,
+    overlay: "rgba(4,10,24,0.12)",
+    particleDensity: 1.28,
+    glowIntensity: 2.1,
+    speedMultiplier: 1.48,
+    animationGraceMs: 2600,
+  },
+} as const;
+
+export const networkBackgroundImages = {
+  dark: "/images/leitcore-network-dark.png",
+  light: "/images/leitcore-network-light.png",
+  loginDark: "/images/leitcore-login-bg.png",
+} as const;
+
+export type NetworkVariant = keyof typeof networkTheme;
+export type NetworkThemeProfile = (typeof networkTheme)[NetworkVariant];

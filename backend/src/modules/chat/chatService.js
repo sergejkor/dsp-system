@@ -169,6 +169,31 @@ async function getUnreadCounts(userId, roomIds, db = pool) {
   return unreadByRoom;
 }
 
+async function getLastReadMessageIdsByOthers(userId, roomIds, db = pool) {
+  if (!roomIds?.length) return new Map();
+  const res = await db.query(
+    `SELECT m.room_id, MAX(mr.message_id)::bigint AS last_read_message_id_by_others
+     FROM chat_message_reads mr
+     JOIN chat_messages m ON m.id = mr.message_id
+     WHERE m.room_id = ANY($1::int[])
+       AND mr.user_id <> $2
+       AND COALESCE(m.sender_id, 0) <> mr.user_id
+     GROUP BY m.room_id`,
+    [roomIds, userId]
+  );
+
+  const lastReadByRoom = new Map();
+  for (const row of res.rows || []) {
+    lastReadByRoom.set(
+      Number(row.room_id),
+      row.last_read_message_id_by_others != null
+        ? Number(row.last_read_message_id_by_others)
+        : null
+    );
+  }
+  return lastReadByRoom;
+}
+
 async function getLastMessages(roomIds, db = pool) {
   if (!roomIds?.length) return new Map();
   const res = await db.query(
@@ -253,10 +278,11 @@ async function hydrateRoomSummariesForUser(userId, roomIds, db = pool) {
 
   const rooms = roomRes.rows || [];
   const foundRoomIds = rooms.map((room) => Number(room.id));
-  const [participantsByRoom, unreadByRoom, lastMessageByRoom] = await Promise.all([
+  const [participantsByRoom, unreadByRoom, lastMessageByRoom, lastReadByOthersByRoom] = await Promise.all([
     getRoomParticipants(foundRoomIds, db),
     getUnreadCounts(userId, foundRoomIds, db),
     getLastMessages(foundRoomIds, db),
+    getLastReadMessageIdsByOthers(userId, foundRoomIds, db),
   ]);
 
   return rooms
@@ -282,6 +308,7 @@ async function hydrateRoomSummariesForUser(userId, roomIds, db = pool) {
         last_message: lastMessage,
         last_message_at: lastMessage?.created_at || room.updated_at || room.created_at,
         unread_count: unreadByRoom.get(roomId) || 0,
+        last_read_message_id_by_others: lastReadByOthersByRoom.get(roomId) || null,
       };
     })
     .sort((left, right) => {

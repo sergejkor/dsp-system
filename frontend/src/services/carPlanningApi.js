@@ -94,7 +94,7 @@ export async function getReport(date) {
   return Array.isArray(data) ? data : [];
 }
 
-export async function addCar(numberPlate, vin, sourceType, activeFrom, activeTo) {
+export async function addCar(numberPlate, vin, sourceType, serviceType, activeFrom, activeTo) {
   const res = await fetchWithHint(`${API_BASE}/api/car-planning/add-car`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -102,6 +102,7 @@ export async function addCar(numberPlate, vin, sourceType, activeFrom, activeTo)
       number_plate: numberPlate,
       vin,
       source_type: sourceType,
+      service_type: serviceType || null,
       active_from: activeFrom || null,
       active_to: activeTo || null,
     }),

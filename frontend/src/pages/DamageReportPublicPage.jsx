@@ -5,11 +5,12 @@ import { DAMAGE_REPORT_LOCALES, getDamageReportCopy, normalizeDamageReportLocale
 import { getDamageReportOptions, submitDamageReport } from '../services/publicFormsApi.js';
 
 const LANG_STORAGE_KEY = 'damage_report_public_lang';
-const ATTACHMENT_CATEGORIES = [
+const ALL_ATTACHMENT_CATEGORIES = [
   { key: 'generalSituation', required: true },
-  { key: 'opponentLicensePlate', required: true },
+  { key: 'opponentLicensePlate', required: false },
   { key: 'ourDamages', required: true },
-  { key: 'opponentDamages', required: true },
+  { key: 'opponentDamages', required: false },
+  { key: 'damagedProperty', required: false },
   { key: 'other', required: false },
 ];
 
@@ -39,7 +40,18 @@ const COPY = {
     driverLabel: 'Driver',
     driverPlaceholder: 'Select or type a driver',
     vehicleLabel: 'Vehicle (License plate)',
-    vehiclePlaceholder: 'Select or type a license plate',
+    vehiclePlaceholder: 'Select a license plate',
+    rentalCar: 'Rental car (If not in the list)',
+    rentalCarLicensePlate: 'Input rental car license plate',
+    accidentSection: 'Accident',
+    accidentTypeLabel: 'Accident type',
+    accidentWithAnotherCar: 'Accident with another car',
+    accidentWithoutOtherCar: 'Accident without other car',
+    thirdPartyPropertyDamaged: 'Third-party property damaged?',
+    ownerFirstName: 'Property owner first name',
+    ownerLastName: 'Property owner last name',
+    ownerPhone: 'Contact phone',
+    ownerEmail: 'Contact email',
     opponentSection: 'Opponent',
     opponentName: 'Opponent name',
     opponentEmail: 'Opponent email',
@@ -63,6 +75,7 @@ const COPY = {
     no: 'No',
     damageSummary: 'Damage summary',
     description: 'Description',
+    descriptionPlaceholder: 'Please describe the incident in your preferred language with as much detail as possible.',
     witnesses: 'Witnesses',
     attachmentsTitle: 'Required photos',
     chooseFiles: 'Choose files',
@@ -72,6 +85,7 @@ const COPY = {
     opponentLicensePlate: 'Opponent license plate',
     ourDamages: 'Our damages',
     opponentDamages: 'Opponent damages',
+    damagedProperty: 'Damaged third-party property',
     other: 'Other files',
     missingAttachments: 'Please upload all required photo categories.',
   },
@@ -90,6 +104,7 @@ const COPY = {
     driverPlaceholder: 'Fahrer wählen oder eingeben',
     vehicleLabel: 'Fahrzeug (Kennzeichen)',
     vehiclePlaceholder: 'Kennzeichen wählen oder eingeben',
+    rentalCar: 'Mietwagen (wenn nicht in der Liste)',
     opponentSection: 'Unfallgegner',
     opponentName: 'Name des Unfallgegners',
     opponentEmail: 'E-Mail des Unfallgegners',
@@ -113,6 +128,7 @@ const COPY = {
     no: 'Nein',
     damageSummary: 'Schadenzusammenfassung',
     description: 'Beschreibung',
+    descriptionPlaceholder: 'Bitte beschreiben Sie den Vorfall in Ihrer bevorzugten Sprache so detailliert wie möglich.',
     witnesses: 'Zeugen',
     attachmentsTitle: 'Pflichtfotos',
     chooseFiles: 'Dateien auswählen',
@@ -140,6 +156,7 @@ const COPY = {
     driverPlaceholder: 'Выберите или введите водителя',
     vehicleLabel: 'Автомобиль (номер)',
     vehiclePlaceholder: 'Выберите или введите номер',
+    rentalCar: 'Арендованный автомобиль (если нет в списке)',
     opponentSection: 'Оппонент',
     opponentName: 'Имя оппонента',
     opponentEmail: 'E-mail оппонента',
@@ -163,6 +180,7 @@ const COPY = {
     no: 'Нет',
     damageSummary: 'Краткое описание ущерба',
     description: 'Описание',
+    descriptionPlaceholder: 'Пожалуйста, опишите ситуацию на удобном для вас языке как можно подробнее.',
     witnesses: 'Свидетели',
     attachmentsTitle: 'Обязательные фото',
     chooseFiles: 'Выбрать файлы',
@@ -182,15 +200,47 @@ function normalizeLocale(locale) {
 }
 
 function createEmptyAttachmentGroups() {
-  return ATTACHMENT_CATEGORIES.reduce((acc, item) => {
+  return ALL_ATTACHMENT_CATEGORIES.reduce((acc, item) => {
     acc[item.key] = [];
     return acc;
   }, {});
 }
 
-function mapGroupedFiles(groups) {
+function getActiveAttachmentCategories(form) {
+  const withoutOtherCar = form?.accidentType === 'without_other_car';
+  const thirdPartyDamaged = withoutOtherCar && !!form?.thirdPartyPropertyDamaged;
+  if (withoutOtherCar) {
+    return ALL_ATTACHMENT_CATEGORIES
+      .map((item) => {
+        if (item.key === 'opponentLicensePlate' || item.key === 'opponentDamages') {
+          return { ...item, hidden: true, required: false };
+        }
+        if (item.key === 'damagedProperty') {
+          return { ...item, hidden: !thirdPartyDamaged, required: thirdPartyDamaged };
+        }
+        if (item.key === 'generalSituation' || item.key === 'ourDamages') {
+          return { ...item, required: true };
+        }
+        return item;
+      })
+      .filter((item) => !item.hidden);
+  }
+  return ALL_ATTACHMENT_CATEGORIES
+    .map((item) => {
+      if (item.key === 'opponentLicensePlate' || item.key === 'opponentDamages') {
+        return { ...item, required: true };
+      }
+      if (item.key === 'damagedProperty') {
+        return { ...item, hidden: true, required: false };
+      }
+      return item;
+    })
+    .filter((item) => !item.hidden);
+}
+
+function mapGroupedFiles(groups, categories) {
   const files = [];
-  for (const item of ATTACHMENT_CATEGORIES) {
+  for (const item of categories) {
     const list = Array.isArray(groups[item.key]) ? groups[item.key] : [];
     for (const file of list) files.push(file);
   }
@@ -209,6 +259,8 @@ export default function DamageReportPublicPage() {
   const [showInsuranceQr, setShowInsuranceQr] = useState(false);
   const [companyInsurance, setCompanyInsurance] = useState(COMPANY_INSURANCE_DEFAULT);
   const [locale, setLocale] = useState(() => normalizeLocale(localStorage.getItem(LANG_STORAGE_KEY)));
+  const [modalLocale, setModalLocale] = useState(() => normalizeLocale(localStorage.getItem(LANG_STORAGE_KEY)));
+  const [validationErrors, setValidationErrors] = useState({});
 
   const copy = useMemo(() => {
     const legacy = getDamageReportCopy(locale) || {};
@@ -234,6 +286,7 @@ export default function DamageReportPublicPage() {
       witnesses: legacy.witnesses || base.witnesses,
     };
   }, [locale]);
+  const activeAttachmentCategories = useMemo(() => getActiveAttachmentCategories(form), [form]);
 
   const localeChoices = useMemo(
     () =>
@@ -261,15 +314,16 @@ export default function DamageReportPublicPage() {
   useEffect(() => {
     document.documentElement.lang = locale;
     localStorage.setItem(LANG_STORAGE_KEY, locale);
+    setModalLocale(locale);
   }, [locale]);
 
   const attachmentSummary = useMemo(() => {
-    return ATTACHMENT_CATEGORIES.reduce((acc, item) => {
+    return activeAttachmentCategories.reduce((acc, item) => {
       const list = attachmentGroups[item.key] || [];
       acc[item.key] = list.length ? list.map((file) => file.name).join(', ') : copy.noFilesSelected;
       return acc;
     }, {});
-  }, [attachmentGroups, copy.noFilesSelected]);
+  }, [activeAttachmentCategories, attachmentGroups, copy.noFilesSelected]);
 
   const companyInsuranceQrValue = useMemo(() => {
     const lines = [
@@ -286,10 +340,52 @@ export default function DamageReportPublicPage() {
   }, [companyInsurance]);
 
   function setAttachmentFiles(categoryKey, files) {
-    setAttachmentGroups((prev) => ({
-      ...prev,
+    const nextAttachments = {
+      ...attachmentGroups,
       [categoryKey]: Array.from(files || []),
-    }));
+    };
+    setAttachmentGroups(nextAttachments);
+    if (Object.keys(validationErrors).length) {
+      setValidationErrors(validateForm(form, nextAttachments));
+    }
+  }
+
+  function validateForm(nextForm = form, nextAttachments = attachmentGroups) {
+    const next = {};
+    const requiredText = 'Required field';
+    const isRentalCar = nextForm.rentalCar === true || nextForm.rentalCar === 'true' || nextForm.rentalCar === 1;
+    const withOtherCar = String(nextForm.accidentType || '').trim() !== 'without_other_car';
+    if (!String(nextForm.driverName || '').trim()) next.driverName = requiredText;
+    if (isRentalCar) {
+      if (!String(nextForm.rentalCarLicensePlate || '').trim()) next.rentalCarLicensePlate = requiredText;
+    } else if (!String(nextForm.licensePlate || '').trim()) {
+      next.licensePlate = requiredText;
+    }
+    if (!String(nextForm.incidentDate || '').trim()) next.incidentDate = requiredText;
+    if (!String(nextForm.incidentTime || '').trim()) next.incidentTime = requiredText;
+    if (nextForm.policeOnSite !== true && nextForm.policeOnSite !== false) next.policeOnSite = requiredText;
+    if (!String(nextForm.streetName || '').trim()) next.streetName = requiredText;
+    if (!String(nextForm.city || '').trim()) next.city = requiredText;
+    if (withOtherCar && !String(nextForm.opponentName || '').trim()) next.opponentName = requiredText;
+    if (withOtherCar && !String(nextForm.opponentPhone || '').trim()) next.opponentPhone = requiredText;
+    if (!String(nextForm.description || '').trim()) next.description = requiredText;
+    for (const item of getActiveAttachmentCategories(nextForm)) {
+      if (item.required && !(nextAttachments[item.key] && nextAttachments[item.key].length)) {
+        next[`attachment.${item.key}`] = requiredText;
+      }
+    }
+    return next;
+  }
+
+  function handleFormChange(nextForm) {
+    const isRentalCar = nextForm.rentalCar === true || nextForm.rentalCar === 'true' || nextForm.rentalCar === 1;
+    const normalizedForm = isRentalCar
+      ? nextForm
+      : { ...nextForm, rentalCarLicensePlate: '' };
+    setForm(normalizedForm);
+    if (Object.keys(validationErrors).length) {
+      setValidationErrors(validateForm(normalizedForm, attachmentGroups));
+    }
   }
 
   async function handleSubmit(event) {
@@ -298,23 +394,28 @@ export default function DamageReportPublicPage() {
     setError('');
     setSuccess(null);
     try {
-      const missingRequired = ATTACHMENT_CATEGORIES.some(
-        (item) => item.required && !(attachmentGroups[item.key] && attachmentGroups[item.key].length)
-      );
-      if (missingRequired) {
-        throw new Error(copy.missingAttachments);
+      const isRentalCar = form.rentalCar === true || form.rentalCar === 'true' || form.rentalCar === 1;
+      const normalizedForm = isRentalCar ? form : { ...form, rentalCarLicensePlate: '' };
+      if (!isRentalCar && form.rentalCarLicensePlate) {
+        setForm(normalizedForm);
       }
-      const files = mapGroupedFiles(attachmentGroups);
+      const nextValidationErrors = validateForm(normalizedForm, attachmentGroups);
+      setValidationErrors(nextValidationErrors);
+      if (Object.keys(nextValidationErrors).length) {
+        throw new Error('Please fill all required fields marked with *.');
+      }
+      const files = mapGroupedFiles(attachmentGroups, activeAttachmentCategories);
       const payload = {
-        ...form,
+        ...normalizedForm,
         attachmentCategories: Object.fromEntries(
-          ATTACHMENT_CATEGORIES.map((item) => [item.key, (attachmentGroups[item.key] || []).map((f) => f.name)])
+          activeAttachmentCategories.map((item) => [item.key, (attachmentGroups[item.key] || []).map((f) => f.name)])
         ),
       };
       const result = await submitDamageReport(payload, files);
       setSuccess(result?.report || { id: null });
       setForm(createEmptyDamageReport());
       setAttachmentGroups(createEmptyAttachmentGroups());
+      setValidationErrors({});
     } catch (err) {
       setError(err?.message || 'Submission failed');
     } finally {
@@ -329,20 +430,29 @@ export default function DamageReportPublicPage() {
           <div className="public-language-modal">
             <h2>{copy.languageModalTitle}</h2>
             <p>{copy.languageModalBody}</p>
-            <div className="public-language-grid">
-              {localeChoices.map((item) => (
-                <button
-                  key={item.locale}
-                  type="button"
-                  className={`public-language-option${locale === item.locale ? ' is-active' : ''}`}
-                  onClick={() => setLocale(item.locale)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            <label className="public-form-field public-page-language-switch">
+              <span>Language</span>
+              <select
+                className="public-form-control"
+                value={modalLocale}
+                onChange={(e) => setModalLocale(e.target.value)}
+              >
+                {localeChoices.map((item) => (
+                  <option key={item.locale} value={item.locale}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="public-language-modal-actions">
-              <button type="button" className="btn-primary" onClick={() => setShowLanguageModal(false)}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  setLocale(modalLocale);
+                  setShowLanguageModal(false);
+                }}
+              >
                 {copy.continue}
               </button>
             </div>
@@ -425,7 +535,7 @@ export default function DamageReportPublicPage() {
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={() => setShowInsuranceQr((prev) => !prev)}
+                onClick={() => setShowInsuranceQr(true)}
                 title="Show QR"
               >
                 <span className="public-qr-inline-icon" aria-hidden="true">
@@ -440,13 +550,22 @@ export default function DamageReportPublicPage() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
 
-            {showInsuranceQr && (
-              <div className="public-company-insurance-qr">
-                <p>QR data</p>
-                <QRCodeCanvas value={companyInsuranceQrValue} size={240} level="M" includeMargin />
-              </div>
-            )}
+      {showInsuranceQr && (
+        <div className="public-language-modal-backdrop public-qr-modal-backdrop">
+          <div className="public-language-modal public-qr-modal">
+            <h2>Company Insurance QR</h2>
+            <div className="public-company-insurance-qr public-company-insurance-qr--modal">
+              <QRCodeCanvas value={companyInsuranceQrValue} size={360} level="M" includeMargin />
+            </div>
+            <div className="public-language-modal-actions">
+              <button type="button" className="btn-primary" onClick={() => setShowInsuranceQr(false)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -466,24 +585,40 @@ export default function DamageReportPublicPage() {
 
         {error && <div className="analytics-error">{error}</div>}
         {success && (
-          <div className="cars-message cars-message--success">
-            {copy.success}{success.id ? ` (ID ${success.id})` : ''}.
+          <div className="public-language-modal-backdrop">
+            <div className="public-language-modal public-success-modal">
+              <h2>{copy.success}</h2>
+              <p>{success.id ? `ID ${success.id}` : 'ID not available'}</p>
+              <div className="public-language-modal-actions">
+                <button type="button" className="btn-primary" onClick={() => setSuccess(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="public-page-form">
-          <DamageReportForm value={form} onChange={setForm} disabled={saving} options={options} copy={copy} />
+          <DamageReportForm
+            value={form}
+            onChange={handleFormChange}
+            disabled={saving}
+            options={options}
+            copy={copy}
+            errors={validationErrors}
+          />
 
           <section className="public-form-section">
             <h3>{copy.attachmentsTitle}</h3>
             <div className="public-form-grid">
-              {ATTACHMENT_CATEGORIES.map((item) => {
+              {activeAttachmentCategories.map((item) => {
                 const inputId = `attachment-${item.key}`;
+                const attachmentError = validationErrors[`attachment.${item.key}`];
                 return (
-                  <label key={item.key} className="public-form-field public-form-field--boxed">
+                  <label key={item.key} className={`public-form-field public-form-field--boxed${attachmentError ? ' is-invalid' : ''}`}>
                     <span>
                       {copy[item.key] || item.key}
-                      {item.required ? ` (${copy.requiredLabel})` : ''}
+                      {item.required ? ' *' : ''}
                     </span>
                     <div className="public-file-picker">
                       <input
@@ -503,6 +638,7 @@ export default function DamageReportPublicPage() {
                         {copy.chooseFiles}
                       </button>
                       <p className="muted small">{attachmentSummary[item.key]}</p>
+                      {attachmentError ? <small className="public-field-error">{attachmentError}</small> : null}
                     </div>
                   </label>
                 );

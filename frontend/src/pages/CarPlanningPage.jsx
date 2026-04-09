@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
-import html2canvas from 'html2canvas';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getCars, getDrivers, getPlanningData, savePlanningData, getReport, addCar } from '../services/carPlanningApi';
 import { syncKenjoEmployees } from '../services/kenjoApi';
@@ -111,6 +110,11 @@ function DriverCell({
 
   return (
     <div className="car-planning-cell-wrap" ref={ref}>
+      {abfahrtskontrolleDone ? (
+        <span className="car-planning-cell-abfahrt-badge" title="Abfahrtskontrolle set" aria-hidden="true">
+          ✓
+        </span>
+      ) : null}
       <input
         type="text"
         className={`car-planning-cell-input ${abfahrtskontrolleDone ? 'car-planning-cell-green' : ''}`}
@@ -250,20 +254,39 @@ const YELLOW_PLATES = new Set([
   'HHF3365', 'HHF3640', 'HHF3690', 'HHF3860',
 ]);
 
+const SERVICE_TYPES = [
+  'Rivian',
+  'Standard Parcel',
+  'Medium Van',
+  'Electric Vehicle 2.0',
+  'Electric Vehicle 1.0',
+];
+
 function getCarPlateDisplay(car) {
   const plateRaw = car.license_plate || car.vehicle_id || '';
   const plateKey = plateRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  let plateStyle = null;
-  if (BLUE_PLATES.has(plateKey)) {
-    plateStyle = { backgroundColor: '#e0f2fe' };
+  let plateClass = '';
+  const serviceType = String(car?.service_type || '').trim().toLowerCase();
+  if (serviceType === 'rivian') {
+    plateClass = 'car-planning-plate-blue';
+  } else if (serviceType === 'standard parcel') {
+    plateClass = 'car-planning-plate-white';
+  } else if (serviceType === 'medium van') {
+    plateClass = 'car-planning-plate-gray';
+  } else if (serviceType === 'electric vehicle 2.0') {
+    plateClass = 'car-planning-plate-green';
+  } else if (serviceType === 'electric vehicle 1.0') {
+    plateClass = 'car-planning-plate-yellow';
+  } else if (BLUE_PLATES.has(plateKey)) {
+    plateClass = 'car-planning-plate-blue';
   } else if (GREEN_PLATES.has(plateKey)) {
-    plateStyle = { backgroundColor: '#dcfce7' };
+    plateClass = 'car-planning-plate-green';
   } else if (YELLOW_PLATES.has(plateKey)) {
-    plateStyle = { backgroundColor: '#fef9c3' };
+    plateClass = 'car-planning-plate-yellow';
   } else if (GRAY_PLATES.has(plateKey)) {
-    plateStyle = { backgroundColor: '#e5e7eb' };
+    plateClass = 'car-planning-plate-gray';
   }
-  return { plateRaw, plateStyle };
+  return { plateRaw, plateClass };
 }
 
 /** Match header/body row heights between fixed-col and scrollable day tables. */
@@ -315,6 +338,7 @@ export default function CarPlanningPage() {
     plate: '',
     vin: '',
     sourceType: 'LMR',
+    serviceType: 'Standard Parcel',
     from: '',
     to: '',
   });
@@ -367,6 +391,9 @@ export default function CarPlanningPage() {
       const next = { ...prev };
       const beforeToday = scrollDates.filter((d) => d < newDayDate).sort();
       cars.forEach((car) => {
+        if (isCarUnavailableForPlanning(car, newDayDate) || !!carStates[car.id]) {
+          return;
+        }
         const todayKey = `${car.id}_${newDayDate}`;
         const todayName = (prev[todayKey]?.driver_identifier || '').toString().trim();
         if (!todayName) {
@@ -410,28 +437,136 @@ export default function CarPlanningPage() {
     });
   };
 
-  const handleReportScreenshot = () => {
-    if (!reportRows.length || !navigator.clipboard) return;
-    const node = reportRef.current;
-    if (!node) return;
-    html2canvas(node, { backgroundColor: '#ffffff', scale: 2 })
-      .then((canvas) => {
-        canvas.toBlob(async (blob) => {
-          if (!blob) return;
-          try {
-            await navigator.clipboard.write([
-              new ClipboardItem({
-                'image/png': blob,
-              }),
-            ]);
-            setScreenshotStatus('Copied to clipboard');
-            setTimeout(() => setScreenshotStatus(''), 2000);
-          } catch {
-            // ignore clipboard errors
-          }
-        }, 'image/png');
-      })
-      .catch(() => {});
+  const handleReportScreenshot = async () => {
+    if (!reportRows.length) {
+      setScreenshotStatus('Nothing to capture');
+      setTimeout(() => setScreenshotStatus(''), 2000);
+      return;
+    }
+    try {
+      const title = `${t('carPlanning.reportTitle')} - ${formatShort(newDayDate)}`;
+      const columns = [
+        t('carPlanning.vehicle'),
+        t('carPlanning.driver'),
+        t('carPlanning.abfahrtskontrolleCol'),
+      ];
+      const rows = reportRows.map((row) => [
+        row.license_plate || row.vehicle_id || '-',
+        row.driver_identifier || '-',
+        row.abfahrtskontrolle ? 'Yes' : '',
+      ]);
+
+      const canvas = document.createElement('canvas');
+      const width = 1180;
+      const paddingX = 44;
+      const headerHeight = 64;
+      const tableHeaderHeight = 44;
+      const rowHeight = 38;
+      const footerHeight = 28;
+      const height = headerHeight + tableHeaderHeight + rows.length * rowHeight + footerHeight + 24;
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Canvas context is not available');
+      }
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '700 28px Segoe UI, Arial, sans-serif';
+      ctx.fillText(title, paddingX, 42);
+
+      const colWidths = [260, 560, 220];
+      const colXs = [
+        paddingX,
+        paddingX + colWidths[0],
+        paddingX + colWidths[0] + colWidths[1],
+      ];
+      const tableWidth = colWidths.reduce((sum, value) => sum + value, 0);
+      const tableTop = 74;
+
+      ctx.fillStyle = '#eaf1fb';
+      ctx.fillRect(paddingX, tableTop, tableWidth, tableHeaderHeight);
+
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(paddingX, tableTop, tableWidth, tableHeaderHeight + rows.length * rowHeight);
+
+      ctx.font = '600 16px Segoe UI, Arial, sans-serif';
+      ctx.fillStyle = '#0f172a';
+      columns.forEach((column, index) => {
+        ctx.fillText(column, colXs[index] + 14, tableTop + 28);
+      });
+
+      rows.forEach((row, rowIndex) => {
+        const y = tableTop + tableHeaderHeight + rowIndex * rowHeight;
+        ctx.fillStyle = rowIndex % 2 === 0 ? '#ffffff' : '#f8fafc';
+        ctx.fillRect(paddingX, y, tableWidth, rowHeight);
+
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.beginPath();
+        ctx.moveTo(paddingX, y);
+        ctx.lineTo(paddingX + tableWidth, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '500 15px Segoe UI, Arial, sans-serif';
+        row.forEach((cell, cellIndex) => {
+          ctx.fillText(String(cell ?? ''), colXs[cellIndex] + 14, y + 24);
+        });
+      });
+
+      [colXs[1], colXs[2]].forEach((x) => {
+        ctx.strokeStyle = '#dbe4f0';
+        ctx.beginPath();
+        ctx.moveTo(x, tableTop);
+        ctx.lineTo(x, tableTop + tableHeaderHeight + rows.length * rowHeight);
+        ctx.stroke();
+      });
+
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) {
+        throw new Error('Failed to generate screenshot blob');
+      }
+
+      const canCopyImage =
+        typeof window !== 'undefined' &&
+        typeof window.ClipboardItem !== 'undefined' &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.write === 'function';
+
+      if (canCopyImage) {
+        try {
+          await navigator.clipboard.write([
+            new window.ClipboardItem({
+              'image/png': blob,
+            }),
+          ]);
+          setScreenshotStatus('Copied to clipboard');
+          setTimeout(() => setScreenshotStatus(''), 2000);
+          return;
+        } catch {
+          // fall back to file download below
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `car-planning-report-${newDayDate || 'today'}.png`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setScreenshotStatus('PNG downloaded');
+      setTimeout(() => setScreenshotStatus(''), 2000);
+    } catch {
+      setScreenshotStatus('Screenshot failed');
+      setTimeout(() => setScreenshotStatus(''), 2000);
+    }
   };
 
   useEffect(() => {
@@ -566,16 +701,15 @@ export default function CarPlanningPage() {
   const buildPayload = () => {
     const slotList = [];
     cars.forEach((car) => {
-      allPlanningDates.forEach((date) => {
-        if (isCarUnavailableForPlanning(car, date)) return;
-        const key = `${car.id}_${date}`;
-        const s = slots[key];
-        slotList.push({
-          car_id: car.id,
-          plan_date: date,
-          driver_identifier: (s?.driver_identifier || '').toString().trim(),
-          abfahrtskontrolle: !!s?.abfahrtskontrolle,
-        });
+      const date = newDayDate;
+      if (isCarUnavailableForPlanning(car, date)) return;
+      const key = `${car.id}_${date}`;
+      const s = slots[key];
+      slotList.push({
+        car_id: car.id,
+        plan_date: date,
+        driver_identifier: (s?.driver_identifier || '').toString().trim(),
+        abfahrtskontrolle: !!s?.abfahrtskontrolle,
       });
     });
     return { carStates, slots: slotList };
@@ -698,7 +832,7 @@ export default function CarPlanningPage() {
                   <span>{t('carPlanning.newDay')} ({formatShort(newDayDate)})</span>
                   <button
                     type="button"
-                    className="car-planning-sort-btn"
+                    className="btn-secondary car-planning-sort-btn"
                     disabled={!copiedSlotsByCarIdRef.current || !copiedDayDate || frozen}
                     title={copiedDayDate ? `Paste from ${formatShort(copiedDayDate)}` : 'Copy a day first'}
                     onClick={() => {
@@ -724,7 +858,7 @@ export default function CarPlanningPage() {
                   </button>
                   <button
                     type="button"
-                    className="car-planning-sort-btn"
+                    className="btn-secondary car-planning-sort-btn"
                     title={t('carPlanning.sortAZ')}
                     onClick={() => {
                       setSortByDate((prev) => {
@@ -744,7 +878,7 @@ export default function CarPlanningPage() {
             </thead>
             <tbody>
               {sortedCars.map((car) => {
-                const { plateRaw, plateStyle } = getCarPlateDisplay(car);
+                const { plateRaw, plateClass } = getCarPlateDisplay(car);
                 const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
                 const statusBlocked = isStatusAutoDeactivated(car.status);
                 const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
@@ -756,17 +890,23 @@ export default function CarPlanningPage() {
                 return (
                   <tr key={car.id} className={rowInactive ? 'car-planning-row-inactive' : ''} title={rowInactiveTitle}>
                     <td className="car-planning-td-fixed">
-                      <label className="car-planning-check-label">
-                        <input
-                          type="checkbox"
-                          checked={!!carStates[car.id]}
-                          onChange={(e) => setCarState(car.id, e.target.checked)}
-                          disabled={statusBlocked || !!newDayWorkshopBlock}
-                          title={rowInactiveTitle}
-                        />
-                      </label>
+                      <div className="car-planning-fixed-pill">
+                        <label className="car-planning-check-label">
+                          <input
+                            type="checkbox"
+                            checked={!!carStates[car.id]}
+                            onChange={(e) => setCarState(car.id, e.target.checked)}
+                            disabled={statusBlocked || !!newDayWorkshopBlock}
+                            title={rowInactiveTitle}
+                          />
+                        </label>
+                      </div>
                     </td>
-                    <td className="car-planning-td-car" style={plateStyle}>{plateRaw || car.id}</td>
+                    <td className="car-planning-td-car">
+                      <div className={`car-planning-vehicle-pill ${plateClass}`.trim()}>
+                        {plateRaw || car.id}
+                      </div>
+                    </td>
                     <td
                       className="car-planning-td-cell car-planning-td-newday"
                       style={statusBlocked ? { backgroundColor: '#f3f4f6' } : newDayWorkshopBlock ? { backgroundColor: '#fef2f2' } : undefined}
@@ -818,7 +958,7 @@ export default function CarPlanningPage() {
                           onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, newDayDate)}
                           abfahrtskontrolleMode={abfahrtskontrolleMode}
                           abfahrtskontrolleDone={!!slots[`${car.id}_${newDayDate}`]?.abfahrtskontrolle}
-                          disabled={!!carStates[car.id] || frozen}
+                          disabled={!!carStates[car.id] || (frozen && !abfahrtskontrolleMode)}
                         />
                       )}
                     </td>
@@ -837,7 +977,7 @@ export default function CarPlanningPage() {
                     <span>{t(`carPlanning.weekdays.${weekdayKeyFromYmd(d)}`)} ({formatShort(d)})</span>
                     <button
                       type="button"
-                      className="car-planning-sort-btn"
+                      className="btn-secondary car-planning-sort-btn"
                       title={`Copy names from ${formatShort(d)}`}
                       onClick={() => {
                         const map = {};
@@ -852,7 +992,7 @@ export default function CarPlanningPage() {
                     </button>
                     <button
                       type="button"
-                      className="car-planning-sort-btn"
+                      className="btn-secondary car-planning-sort-btn"
                       title={t('carPlanning.sortAZ')}
                       onClick={() => {
                         setSortByDate((prev) => {
@@ -931,7 +1071,7 @@ export default function CarPlanningPage() {
                               onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, date)}
                               abfahrtskontrolleMode={abfahrtskontrolleMode}
                               abfahrtskontrolleDone={!!slots[`${car.id}_${date}`]?.abfahrtskontrolle}
-                              disabled={!!carStates[car.id] || (frozen && date <= newDayDate)}
+                              disabled={!!carStates[car.id] || ((frozen && date <= newDayDate) && !abfahrtskontrolleMode)}
                             />
                           )}
                         </td>
@@ -956,10 +1096,9 @@ export default function CarPlanningPage() {
                 )}
                 <button
                   type="button"
-                  className="car-planning-btn-sm"
+                  className="btn-secondary car-planning-btn-sm car-planning-icon-btn"
                   onClick={handleReportScreenshot}
                   title="Copy report screenshot to clipboard"
-                  style={{ borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-card)', cursor: 'pointer' }}
                 >
                   📷
                 </button>
@@ -1026,6 +1165,20 @@ export default function CarPlanningPage() {
                   <option value="Self source">Self source</option>
                 </select>
               </label>
+              <label>
+                Service Type
+                <select
+                  value={addCarForm.serviceType}
+                  onChange={(e) => setAddCarForm((f) => ({ ...f, serviceType: e.target.value }))}
+                  style={{ width: '100%', padding: '0.35rem' }}
+                >
+                  {SERVICE_TYPES.map((serviceType) => (
+                    <option key={serviceType} value={serviceType}>
+                      {serviceType}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div style={{ display: 'flex', gap: '0.75rem' }}>
                 <label style={{ flex: 1 }}>
                   Active from
@@ -1062,7 +1215,14 @@ export default function CarPlanningPage() {
                 onClick={async () => {
                   try {
                     setAddCarSaving(true);
-                    const car = await addCar(addCarForm.plate, addCarForm.vin, addCarForm.sourceType, addCarForm.from || null, addCarForm.to || null);
+                    const car = await addCar(
+                      addCarForm.plate,
+                      addCarForm.vin,
+                      addCarForm.sourceType,
+                      addCarForm.serviceType,
+                      addCarForm.from || null,
+                      addCarForm.to || null
+                    );
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
                     let deactivated = false;
@@ -1079,7 +1239,14 @@ export default function CarPlanningPage() {
                     setCars((prev) => [...prev, car]);
                     setCarStates((prev) => ({ ...prev, [car.id]: deactivated }));
                     setAddCarOpen(false);
-                    setAddCarForm({ plate: '', vin: '', sourceType: 'LMR', from: '', to: '' });
+                    setAddCarForm({
+                      plate: '',
+                      vin: '',
+                      sourceType: 'LMR',
+                      serviceType: 'Standard Parcel',
+                      from: '',
+                      to: '',
+                    });
                   } catch (e) {
                     setError(e?.message || 'Failed to add car');
                   } finally {

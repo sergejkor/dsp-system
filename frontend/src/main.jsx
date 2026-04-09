@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import './styles.css';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppSettingsProvider, useAppSettings } from './context/AppSettingsContext';
@@ -14,6 +14,7 @@ import EmployeeProfilePage from './pages/EmployeeProfilePage';
 import PayrollPage from './pages/PayrollPage';
 import PersonalQuestionnairePublicPage from './pages/PersonalQuestionnairePublicPage.jsx';
 import DamageReportPublicPage from './pages/DamageReportPublicPage.jsx';
+import FleetInspectionPublicPage from './pages/FleetInspectionPublicPage.jsx';
 import PersonalQuestionnaireReviewPage from './pages/PersonalQuestionnaireReviewPage.jsx';
 import PersonalQuestionnaireNotificationsPage from './pages/PersonalQuestionnaireNotificationsPage.jsx';
 import DamageReportReviewPage from './pages/DamageReportReviewPage.jsx';
@@ -36,6 +37,8 @@ import GiftCardsPage from './pages/GiftCardsPage';
 import CarPlanningPage from './pages/CarPlanningPage';
 import FinesPage from './pages/FinesPage';
 import DamagesPage from './pages/DamagesPage';
+import FleetInspectionsPage from './pages/FleetInspectionsPage.jsx';
+import FleetInspectionDetailPage from './pages/FleetInspectionDetailPage.jsx';
 import InsurancePage from './pages/InsurancePage';
 import InsuranceVehiclePage from './pages/InsuranceVehiclePage';
 import FinancePage from './pages/FinancePage';
@@ -61,12 +64,14 @@ import SettingsSecurityPage from './pages/settings/SettingsSecurityPage';
 import SettingsAuditPage from './pages/settings/SettingsAuditPage';
 import SettingsAdvancedPage from './pages/settings/SettingsAdvancedPage';
 import { getIntakeSummary } from './services/intakeApi.js';
+import { searchGlobal } from './services/searchApi.js';
 
 function resolvePublicHostKind() {
   if (typeof window === 'undefined') return null;
   const host = String(window.location.hostname || '').toLowerCase();
   if (host.startsWith('personalfragebogen.') || host.startsWith('personal-fragebogen.')) return 'personal';
   if (host.startsWith('schadenmeldung.') || host.startsWith('schadensmeldung.')) return 'damage';
+  if (host.startsWith('fleetcheck.') || host.startsWith('fleet-check.')) return 'fleet';
   return null;
 }
 
@@ -86,6 +91,13 @@ function AppRoutes() {
       </Routes>
     );
   }
+  if (publicHostKind === 'fleet') {
+    return (
+      <Routes>
+        <Route path="*" element={<FleetInspectionPublicPage />} />
+      </Routes>
+    );
+  }
 
   return (
     <>
@@ -94,6 +106,7 @@ function AppRoutes() {
         <Route path="/unauthorized" element={<UnauthorizedPage />} />
         <Route path="/personal-fragebogen" element={<PersonalQuestionnairePublicPage />} />
         <Route path="/schadenmeldung" element={<DamageReportPublicPage />} />
+        <Route path="/fleet-check" element={<FleetInspectionPublicPage />} />
         <Route path="*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
       </Routes>
     </>
@@ -137,15 +150,23 @@ function CloseIcon() {
 
 function TopbarPageSearch({ scopeSelector = '.content' }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [query, setQuery] = React.useState('');
   const [status, setStatus] = React.useState('');
   const [currentIndex, setCurrentIndex] = React.useState(0);
+  const [globalResults, setGlobalResults] = React.useState([]);
+  const [globalLoading, setGlobalLoading] = React.useState(false);
+  const [globalError, setGlobalError] = React.useState('');
+  const [globalOpen, setGlobalOpen] = React.useState(false);
   const matchesRef = React.useRef([]);
 
   React.useEffect(() => {
     setQuery('');
     setStatus('');
     setCurrentIndex(0);
+    setGlobalResults([]);
+    setGlobalError('');
+    setGlobalOpen(false);
   }, [location.pathname, location.search]);
 
   const normalizeText = React.useCallback((value) => String(value || '').toLowerCase(), []);
@@ -219,6 +240,38 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
   }, [normalizeText]);
 
   React.useEffect(() => {
+    const text = String(query || '').trim();
+    if (text.length < 2) {
+      setGlobalResults([]);
+      setGlobalLoading(false);
+      setGlobalError('');
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setGlobalLoading(true);
+      setGlobalError('');
+      try {
+        const data = await searchGlobal(text);
+        if (!cancelled) {
+          setGlobalResults(Array.isArray(data?.items) ? data.items : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setGlobalResults([]);
+          setGlobalError(String(error?.message || 'Search failed'));
+        }
+      } finally {
+        if (!cancelled) setGlobalLoading(false);
+      }
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  React.useEffect(() => {
     const scope = document.querySelector(scopeSelector);
     const root = scope?.querySelector('.content-body');
     if (!root) return undefined;
@@ -235,7 +288,7 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
     const marks = highlightMatches(root, trimmed);
     matchesRef.current = marks;
     if (!marks.length) {
-      setStatus('Nothing found on this page');
+      setStatus(globalResults.length ? `${globalResults.length} system result${globalResults.length === 1 ? '' : 's'}` : 'Nothing found on this page');
       return undefined;
     }
 
@@ -245,7 +298,7 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
       clearHighlights(root);
       matchesRef.current = [];
     };
-  }, [query, location.pathname, location.search, scopeSelector, clearHighlights, highlightMatches]);
+  }, [query, location.pathname, location.search, scopeSelector, clearHighlights, highlightMatches, globalResults.length]);
 
   React.useEffect(() => {
     const matches = matchesRef.current || [];
@@ -287,6 +340,12 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
 
   function handleSubmit(e) {
     e.preventDefault();
+    const firstResult = globalResults[0];
+    if (firstResult?.path) {
+      navigate(firstResult.path);
+      setGlobalOpen(false);
+      return;
+    }
     runSearch(1);
   }
 
@@ -299,10 +358,14 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
+            setGlobalOpen(true);
+            setGlobalError('');
             if (status) setStatus('');
           }}
-          placeholder="Search this page"
-          aria-label="Search this page"
+          onFocus={() => setGlobalOpen(true)}
+          onBlur={() => setTimeout(() => setGlobalOpen(false), 120)}
+          placeholder="Search across the system"
+          aria-label="Search across the system"
         />
         {query ? (
           <>
@@ -323,6 +386,7 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
                 setQuery('');
                 setStatus('');
                 setCurrentIndex(0);
+                setGlobalError('');
               }}
               title="Clear search"
             >
@@ -331,6 +395,30 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
           </>
         ) : null}
       </div>
+      {globalOpen && String(query || '').trim().length >= 2 ? (
+        <div className="topbar-search-results" onMouseDown={(e) => e.preventDefault()}>
+          {globalLoading ? <div className="topbar-search-result muted">Searching…</div> : null}
+          {!globalLoading && globalError ? <div className="topbar-search-result muted">{globalError}</div> : null}
+          {!globalLoading && globalResults.map((item, index) => (
+            <button
+              key={`${item.type || 'item'}-${index}-${item.path || ''}`}
+              type="button"
+              className="topbar-search-result"
+              onClick={() => {
+                if (!item.path) return;
+                navigate(item.path);
+                setGlobalOpen(false);
+              }}
+            >
+              <strong>{item.label || 'Result'}</strong>
+              {item.description ? <span>{item.description}</span> : null}
+            </button>
+          ))}
+          {!globalLoading && !globalError && globalResults.length === 0 ? (
+            <div className="topbar-search-result muted">No system results</div>
+          ) : null}
+        </div>
+      ) : null}
       {status ? <span className="topbar-search-status">{status}</span> : null}
     </form>
   );
@@ -339,16 +427,13 @@ function TopbarPageSearch({ scopeSelector = '.content' }) {
 function AppLayout() {
   const { hasPermission, isSuperAdmin } = useAuth();
   const location = useLocation();
-  const [sidebarPresentation, setSidebarPresentation] = React.useState({
-    isCollapsed: false,
-    isHoverExpanded: false,
-  });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
   const can = (code) => isSuperAdmin || hasPermission(code);
   const canEmployees = can('page_employees');
   const canDamages = can('page_damages');
   const [intakeSummary, setIntakeSummary] = React.useState(null);
 
-  React.useEffect(() => {
+  const refreshIntakeSummary = React.useCallback(() => {
     if (!canEmployees && !canDamages) {
       setIntakeSummary(null);
       return;
@@ -364,34 +449,46 @@ function AppLayout() {
     return () => {
       cancelled = true;
     };
-  }, [location.pathname, location.search, canEmployees, canDamages]);
+  }, [canEmployees, canDamages]);
+
+  React.useEffect(() => {
+    return refreshIntakeSummary();
+  }, [location.pathname, location.search, refreshIntakeSummary]);
+
+  React.useEffect(() => {
+    function handleIntakeSummaryRefresh() {
+      refreshIntakeSummary();
+    }
+    window.addEventListener('intake-summary-refresh', handleIntakeSummaryRefresh);
+    return () => window.removeEventListener('intake-summary-refresh', handleIntakeSummaryRefresh);
+  }, [refreshIntakeSummary]);
 
   const unreadPersonalNotifications = Number(intakeSummary?.personalQuestionnaires?.unread || 0);
   const unreadDamageNotifications = Number(intakeSummary?.damageReports?.unread || 0);
   const unreadNotificationTotal = unreadPersonalNotifications + unreadDamageNotifications;
+  const isChatRoute = location.pathname.startsWith('/chat');
 
-  const PagePermissionRoute = ({ permission, children }) => {
-    if (can(permission)) return children;
-    return <Navigate to="/unauthorized" replace />;
-  };
+  const withPermission = (permission, element) => (
+    can(permission) ? element : <Navigate to="/unauthorized" replace />
+  );
 
   const shellClassName = [
     'app-shell',
-    sidebarPresentation.isCollapsed ? 'is-sidebar-collapsed' : '',
-    sidebarPresentation.isCollapsed && sidebarPresentation.isHoverExpanded ? 'is-sidebar-hover-expanded' : '',
+    isSidebarCollapsed ? 'is-sidebar-collapsed' : '',
   ]
     .filter(Boolean)
     .join(' ');
+  const contentClassName = ['content', isChatRoute ? 'content--chat' : ''].filter(Boolean).join(' ');
 
   return (
     <div className={shellClassName}>
-      <AppSidebar canAccess={can} onPresentationChange={setSidebarPresentation} />
-      <main className="content">
+      <AppSidebar canAccess={can} onPresentationChange={({ isCollapsed }) => setIsSidebarCollapsed(Boolean(isCollapsed))} />
+      <main className={contentClassName}>
         <div className="content-topbar">
           <TopbarPageSearch />
           <SidebarUser unreadNotificationTotal={unreadNotificationTotal} />
         </div>
-        <div className="content-body">
+        <div className={`content-body ${isChatRoute ? 'content-body--chat' : ''}`.trim()}>
           <Routes>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -399,30 +496,32 @@ function AppLayout() {
             <Route path="/kenjo-sync" element={<KenjoSyncPage />} />
             <Route path="/employee" element={<EmployeeProfilePage />} />
             <Route path="/personal-fragebogen-notifications" element={<PersonalQuestionnaireNotificationsPage />} />
-            <Route path="/personal-fragebogen-review" element={<PagePermissionRoute permission="page_employees"><PersonalQuestionnaireReviewPage /></PagePermissionRoute>} />
-            <Route path="/payroll" element={<PagePermissionRoute permission="page_payroll"><PayrollPage /></PagePermissionRoute>} />
+            <Route path="/personal-fragebogen-review" element={withPermission('page_employees', <PersonalQuestionnaireReviewPage />)} />
+            <Route path="/payroll" element={withPermission('page_payroll', <PayrollPage />)} />
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/scorecard-uploads" element={<ScorecardUploadsPage />} />
             <Route path="/kenjo-calendar" element={<TimeOffCalendarPage />} />
             <Route path="/kenjo-sync" element={<KenjoSyncPage />} />
-            <Route path="/sync-kenjo" element={<PagePermissionRoute permission="page_sync_kenjo"><SyncWithKenjoPage /></PagePermissionRoute>} />
+            <Route path="/sync-kenjo" element={withPermission('page_sync_kenjo', <SyncWithKenjoPage />)} />
             <Route path="/o2-telefonica" element={<O2TelefonicaPage />} />
             <Route path="/cars" element={<CarsPage />} />
+            <Route path="/fleet-inspections" element={<FleetInspectionsPage />} />
+            <Route path="/fleet-inspections/:id" element={<FleetInspectionDetailPage />} />
             <Route path="/pave" element={<PavePage />} />
             <Route path="/pave/new" element={<PaveNewPage />} />
             <Route path="/pave/settings" element={<PaveSettingsPage />} />
             <Route path="/pave/return/:sessionKey" element={<PaveReturnPage />} />
             <Route path="/pave/:id" element={<PaveDetailPage />} />
             <Route path="/pave/gmail/:id" element={<PaveGmailReportDetailPage />} />
-            <Route path="/analytics" element={<PagePermissionRoute permission="page_analytics"><AnalyticsPage /></PagePermissionRoute>} />
-            <Route path="/gift-cards" element={<PagePermissionRoute permission="page_gift_cards"><GiftCardsPage /></PagePermissionRoute>} />
+            <Route path="/analytics" element={withPermission('page_analytics', <AnalyticsPage />)} />
+            <Route path="/gift-cards" element={withPermission('page_gift_cards', <GiftCardsPage />)} />
             <Route path="/car-planning" element={<CarPlanningPage />} />
-            <Route path="/fines" element={<PagePermissionRoute permission="page_fines"><FinesPage /></PagePermissionRoute>} />
-            <Route path="/damages" element={<PagePermissionRoute permission="page_damages"><DamagesPage /></PagePermissionRoute>} />
-            <Route path="/schadenmeldung-review" element={<PagePermissionRoute permission="page_damages"><DamageReportReviewPage /></PagePermissionRoute>} />
-            <Route path="/insurance" element={<PagePermissionRoute permission="page_insurance"><InsurancePage /></PagePermissionRoute>} />
-            <Route path="/insurance/vehicle/:plate" element={<PagePermissionRoute permission="page_insurance"><InsuranceVehiclePage /></PagePermissionRoute>} />
-            <Route path="/finance" element={<PagePermissionRoute permission="page_finance"><FinancePage /></PagePermissionRoute>} />
+            <Route path="/fines" element={withPermission('page_fines', <FinesPage />)} />
+            <Route path="/damages" element={withPermission('page_damages', <DamagesPage />)} />
+            <Route path="/schadenmeldung-review" element={withPermission('page_damages', <DamageReportReviewPage />)} />
+            <Route path="/insurance" element={withPermission('page_insurance', <InsurancePage />)} />
+            <Route path="/insurance/vehicle/:plate" element={withPermission('page_insurance', <InsuranceVehiclePage />)} />
+            <Route path="/finance" element={withPermission('page_finance', <FinancePage />)} />
             <Route path="/create-document" element={<CreateDocumentPage />} />
             <Route path="/settings" element={<SettingsLayout />}>
               <Route index element={<Navigate to="/settings/general" replace />} />

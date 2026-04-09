@@ -1,7 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAppSettings } from '../context/AppSettingsContext';
+import { listRooms } from '../services/chatApi.js';
+import { createChatSocket } from '../services/chatSocket.js';
 
 function prettifyRole(value) {
   const raw = String(value || '').trim();
@@ -21,6 +23,26 @@ function buildInitials(label) {
   if (words.length >= 2) return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase();
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return 'US';
+}
+
+function mergeRoomSummary(prevRooms, incomingRoom) {
+  if (!incomingRoom?.id) return prevRooms;
+  const nextRooms = Array.isArray(prevRooms) ? [...prevRooms] : [];
+  const targetId = Number(incomingRoom.id);
+  const index = nextRooms.findIndex((room) => Number(room?.id) === targetId);
+  if (index >= 0) {
+    nextRooms[index] = { ...nextRooms[index], ...incomingRoom };
+  } else {
+    nextRooms.push(incomingRoom);
+  }
+  return nextRooms;
+}
+
+function sumUnreadRooms(rooms) {
+  return (rooms || []).reduce(
+    (sum, room) => sum + Math.max(0, Number(room?.unread_count) || 0),
+    0
+  );
 }
 
 function MailIcon() {
@@ -128,6 +150,17 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
   const chatActive = location.pathname.startsWith('/chat');
   const notificationsActive = location.pathname === '/personal-fragebogen-notifications';
   const settingsActive = location.pathname.startsWith('/settings');
+  const [chatRoomsSummary, setChatRoomsSummary] = useState([]);
+  const unreadChatTotal = useMemo(() => sumUnreadRooms(chatRoomsSummary), [chatRoomsSummary]);
+
+  const refreshChatUnread = useCallback(async () => {
+    try {
+      const response = await listRooms();
+      setChatRoomsSummary(response.items || []);
+    } catch (_error) {
+      // Keep previous value if rooms cannot be loaded right now.
+    }
+  }, []);
 
   async function handleLogout() {
     await logout();
@@ -137,6 +170,67 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
   function toggleLanguage() {
     setLanguage(language === 'de' ? 'en' : 'de');
   }
+
+  useEffect(() => {
+    refreshChatUnread();
+  }, [refreshChatUnread, location.pathname]);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      refreshChatUnread();
+    }, 1500);
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        refreshChatUnread();
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(timerId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshChatUnread]);
+
+  useEffect(() => {
+    const socket = createChatSocket({
+      onStatusChange: () => {},
+      onEvent: (packet) => {
+        if (packet.event === 'chat.room.updated' && packet.payload?.room) {
+          setChatRoomsSummary((prev) => mergeRoomSummary(prev, packet.payload.room));
+        }
+        if (packet.event === 'chat.message.read' && packet.payload?.roomId) {
+          const roomId = Number(packet.payload.roomId);
+          setChatRoomsSummary((prev) =>
+            (prev || []).map((room) =>
+              Number(room?.id) === roomId ? { ...room, unread_count: 0 } : room
+            )
+          );
+        }
+        if (packet.event === 'chat.message.created') {
+          const roomId = Number(packet.payload?.roomId);
+          const senderId = Number(packet.payload?.message?.sender_id || packet.payload?.message?.sender?.id || 0);
+          const currentUserId = Number(user?.id || 0);
+          if (roomId && senderId && currentUserId && senderId !== currentUserId) {
+            setChatRoomsSummary((prev) => {
+              const exists = (prev || []).some((room) => Number(room?.id) === roomId);
+              if (!exists) return prev;
+              return (prev || []).map((room) =>
+                Number(room?.id) === roomId
+                  ? { ...room, unread_count: (Number(room?.unread_count) || 0) + 1 }
+                  : room
+              );
+            });
+            refreshChatUnread();
+          } else {
+            refreshChatUnread();
+          }
+        }
+      },
+    });
+    return () => socket.close();
+  }, [refreshChatUnread, user?.id]);
 
   return (
     <div className="topbar-user-card-shell">
@@ -156,60 +250,67 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
         </div>
 
         <div className="sidebar-user-utilities topbar-user-utilities">
-          <button
-            type="button"
-            className="sidebar-user-language-btn"
-            onClick={toggleLanguage}
-            title={`${t('appearance.language')}: ${language === 'de' ? t('appearance.german') : t('appearance.english')}`}
-          >
-            <GlobeIcon />
-            <span>{language === 'de' ? 'DE' : 'EN'}</span>
-          </button>
-          <button
-            type="button"
-            className={`sidebar-user-utility-btn ${chatActive ? 'is-active' : ''}`}
-            onClick={() => navigate('/chat')}
-            title="Chat"
-          >
-            <ChatIcon />
-          </button>
-          <button
-            type="button"
-            className={`sidebar-user-utility-btn ${notificationsActive ? 'is-active' : ''}`}
-            onClick={() => navigate('/personal-fragebogen-notifications')}
-            title="Notifications"
-          >
-            <MailIcon />
-            {unreadNotificationTotal > 0 && (
-              <span className="sidebar-user-utility-badge">
-                {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            className={`sidebar-user-utility-btn ${settingsActive ? 'is-active' : ''}`}
-            onClick={() => navigate('/settings')}
-            title={t('nav.settings')}
-          >
-            <SettingsIcon />
-          </button>
-          <button
-            type="button"
-            className="sidebar-user-utility-btn"
-            onClick={() => setTheme(isDark ? 'light' : 'dark')}
-            title={`${t('appearance.theme')}: ${isDark ? t('appearance.dark') : t('appearance.light')}`}
-          >
-            {isDark ? <MoonIcon /> : <SunIcon />}
-          </button>
-          <button
-            type="button"
-            className="sidebar-user-utility-btn"
-            onClick={handleLogout}
-            title={t('user.logout')}
-          >
-            <LogoutIcon />
-          </button>
+          <div className="sidebar-user-icons-row" role="toolbar" aria-label={t('nav.accountTools')}>
+            <button
+              type="button"
+              className="sidebar-user-language-btn"
+              onClick={toggleLanguage}
+              title={`${t('appearance.language')}: ${language === 'de' ? t('appearance.german') : t('appearance.english')}`}
+            >
+              <GlobeIcon />
+              <span>{language === 'de' ? 'DE' : 'EN'}</span>
+            </button>
+            <button
+              type="button"
+              className={`sidebar-user-utility-btn ${chatActive ? 'is-active' : ''}`}
+              onClick={() => navigate('/chat')}
+              title="Chat"
+            >
+              <ChatIcon />
+              {unreadChatTotal > 0 ? (
+                <span className="sidebar-user-utility-badge">
+                  {unreadChatTotal > 99 ? '99+' : unreadChatTotal}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              className={`sidebar-user-utility-btn ${notificationsActive ? 'is-active' : ''}`}
+              onClick={() => navigate('/personal-fragebogen-notifications')}
+              title="Notifications"
+            >
+              <MailIcon />
+              {unreadNotificationTotal > 0 && (
+                <span className="sidebar-user-utility-badge">
+                  {unreadNotificationTotal > 99 ? '99+' : unreadNotificationTotal}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className={`sidebar-user-utility-btn ${settingsActive ? 'is-active' : ''}`}
+              onClick={() => navigate('/settings')}
+              title={t('nav.settings')}
+            >
+              <SettingsIcon />
+            </button>
+            <button
+              type="button"
+              className="sidebar-user-utility-btn"
+              onClick={() => setTheme(isDark ? 'light' : 'dark')}
+              title={`${t('appearance.theme')}: ${isDark ? t('appearance.dark') : t('appearance.light')}`}
+            >
+              {isDark ? <MoonIcon /> : <SunIcon />}
+            </button>
+            <button
+              type="button"
+              className="sidebar-user-utility-btn"
+              onClick={handleLogout}
+              title={t('user.logout')}
+            >
+              <LogoutIcon />
+            </button>
+          </div>
         </div>
       </div>
     </div>

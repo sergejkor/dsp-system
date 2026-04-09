@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+
+<defs>
+  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+    <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+    <feMerge>
+      <feMergeNode in="coloredBlur"/>
+      <feMergeNode in="SourceGraphic"/>
+    </feMerge>
+  </filter>
+</defs>
+
+<rect width="100%" height="100%" fill="none"/>
+<g stroke="#FFFFFF" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+  <path d="M338 1202 Q300 1168 300 1108 L314 896 Q320 806 388 748 Q450 696 540 696 Q630 696 692 748 Q760 806 766 896 L780 1108 Q780 1168 742 1202 Q704 1232 644 1234 L436 1234 Q376 1232 338 1202 Z" stroke-width="8"/>
+<path d="M404 790 Q460 744 540 744 Q620 744 676 790 L658 902 L422 902 Z" stroke-width="5" opacity="0.75"/>
+<path d="M408 932 L672 932 Q694 936 694 958 L694 1080 Q694 1108 666 1112 L414 1112 Q386 1108 386 1080 L386 958 Q386 936 408 932 Z" stroke-width="5" opacity="0.55"/>
+<circle cx="432" cy="980" r="42" stroke-width="8"/><circle cx="648" cy="980" r="42" stroke-width="8"/><path d="M500 980 L580 980" stroke-width="7" opacity="0.7"/>
+<circle cx="408" cy="1234" r="36" stroke-width="7" opacity="0.95"/><circle cx="408" cy="1234" r="19.8" stroke-width="4" opacity="0.55"/>
+<circle cx="672" cy="1234" r="36" stroke-width="7" opacity="0.95"/><circle cx="672" cy="1234" r="19.8" stroke-width="4" opacity="0.55"/>
+<path d="M286 1272 L794 1272" stroke-width="4" opacity="0.25"/>
+</g>
+<g fill="#FFFFFF" opacity="0.20" font-family="Arial, Helvetica, sans-serif" font-size="30">
+  <text x="540" y="1760" text-anchor="middle">rivian · front</text>
+</g>
+</svg>

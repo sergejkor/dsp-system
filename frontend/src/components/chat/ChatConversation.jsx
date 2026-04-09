@@ -49,11 +49,43 @@ function formatAttachmentSize(sizeBytes) {
   return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+function buildInitials(label) {
+  const parts = String(label || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+  return String(label || 'U').slice(0, 2).toUpperCase();
+}
+
+function resolveMessageSender(message, room, currentUserId, copy) {
+  const participants = Array.isArray(room?.participants) ? room.participants : [];
+  const fallbackParticipant =
+    participants.find((participant) => Number(participant.id) === Number(message?.sender_id)) || null;
+  const sender = message?.sender || fallbackParticipant || null;
+  const isOwn = Number(message?.sender_id) === Number(currentUserId);
+  const name = sender?.name || (isOwn ? copy.you : 'User');
+  const avatarUrl = String(sender?.avatar_url || '').trim();
+  return {
+    isOwn,
+    name,
+    avatarUrl,
+    initials: buildInitials(name),
+  };
+}
+
 function roomSubtitle(room, currentUserId, copy) {
   if (!room) return '';
   if (room.type === 'global') return copy.generalHint;
   const peer = (room.participants || []).find((participant) => Number(participant.id) !== Number(currentUserId)) || (room.participants || [])[0];
   return peer?.email || copy.directParticipants;
+}
+
+function isOutgoingMessageRead(room, message, currentUserId) {
+  if (!room || room.type !== 'direct') return false;
+  if (Number(message?.sender_id) !== Number(currentUserId)) return false;
+  const lastReadByOther = Number(room?.last_read_message_id_by_others || 0);
+  return lastReadByOther > 0 && Number(message?.id) <= lastReadByOther;
 }
 
 export default function ChatConversation({
@@ -72,6 +104,7 @@ export default function ChatConversation({
 }) {
   const [draft, setDraft] = React.useState('');
   const [selectedFile, setSelectedFile] = React.useState(null);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   const fileInputRef = React.useRef(null);
   const messagesViewportRef = React.useRef(null);
   const messagesEndRef = React.useRef(null);
@@ -81,12 +114,26 @@ export default function ChatConversation({
   }, [room?.id, messages.length]);
 
   async function handleSubmit(event) {
-    event.preventDefault();
+    event?.preventDefault?.();
+    if (isSubmitting || sending) return;
     const body = String(draft || '').trim();
     if (!body && !selectedFile) return;
-    await onSendMessage?.({ body, file: selectedFile });
-    setDraft('');
-    setSelectedFile(null);
+    setIsSubmitting(true);
+    try {
+      await onSendMessage?.({ body, file: selectedFile });
+      setDraft('');
+      setSelectedFile(null);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleComposerKeyDown(event) {
+    if (event.key !== 'Enter') return;
+    if (event.ctrlKey) return;
+    event.preventDefault();
+    if (isSubmitting || sending) return;
+    handleSubmit();
   }
 
   if (!room) {
@@ -126,13 +173,20 @@ export default function ChatConversation({
 
         {!loading
           ? messages.map((message) => {
-              const isOwn = Number(message.sender_id) === Number(currentUserId);
+              const senderMeta = resolveMessageSender(message, room, currentUserId, copy);
               return (
-                <article key={message.id} className={`chat-message ${isOwn ? 'is-own' : ''}`}>
+                <article key={message.id} className={`chat-message ${senderMeta.isOwn ? 'is-own' : ''}`}>
                   <div className="chat-message-bubble">
-                    {!isOwn && room.type === 'global' && message.sender?.name ? (
-                      <div className="chat-message-author">{message.sender.name}</div>
-                    ) : null}
+                    <div className="chat-message-author-row">
+                      <span className="chat-message-avatar" aria-hidden="true">
+                        {senderMeta.avatarUrl ? (
+                          <img src={senderMeta.avatarUrl} alt={senderMeta.name} className="chat-message-avatar-image" />
+                        ) : (
+                          <span className="chat-message-avatar-fallback">{senderMeta.initials}</span>
+                        )}
+                      </span>
+                      <span className="chat-message-author">{senderMeta.name}</span>
+                    </div>
 
                     {message.body ? <div className="chat-message-text">{message.body}</div> : null}
 
@@ -153,7 +207,12 @@ export default function ChatConversation({
                         ))
                       : null}
 
-                    <div className="chat-message-time">{formatTimestamp(message.created_at)}</div>
+                    <div className="chat-message-meta">
+                      <div className="chat-message-time">{formatTimestamp(message.created_at)}</div>
+                      {isOutgoingMessageRead(room, message, currentUserId) ? (
+                        <div className="chat-message-read-status">{copy.read}</div>
+                      ) : null}
+                    </div>
                   </div>
                 </article>
               );
@@ -182,6 +241,7 @@ export default function ChatConversation({
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={handleComposerKeyDown}
           placeholder={room.type === 'global' ? copy.composerGeneralPlaceholder : copy.composerPlaceholder}
           rows={1}
         />
@@ -189,7 +249,7 @@ export default function ChatConversation({
         <button
           type="submit"
           className="chat-composer-send-btn"
-          disabled={sending || (!String(draft || '').trim() && !selectedFile)}
+          disabled={sending || isSubmitting || (!String(draft || '').trim() && !selectedFile)}
         >
           <SendIcon />
           <span>{copy.send}</span>

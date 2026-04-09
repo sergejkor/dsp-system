@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
   getCarsKpis,
@@ -75,7 +76,7 @@ export default function CarsPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [qrVin, setQrVin] = useState('');
-  const [sortKey, setSortKey] = useState('vehicle_id');
+  const [sortKey, setSortKey] = useState('license_plate');
   const [sortDir, setSortDir] = useState('asc');
 
   const filters = useMemo(() => ({
@@ -297,7 +298,6 @@ export default function CarsPage() {
           <table className="cars-table">
             <thead>
               <tr>
-                <th>{renderSortHeader('Vehicle ID', 'vehicle_id')}</th>
                 <th>{renderSortHeader('License Plate', 'license_plate')}</th>
                 <th>{renderSortHeader('VIN', 'vin')}</th>
                 <th>{renderSortHeader('Vehicle Model', 'model')}</th>
@@ -316,7 +316,7 @@ export default function CarsPage() {
             </thead>
             <tbody>
               {cars.length === 0 ? (
-                <tr><td colSpan={16} className="cars-empty">No cars found.</td></tr>
+                <tr><td colSpan={14} className="cars-empty">No cars found.</td></tr>
               ) : (
                 sortedCars.map((c) => (
                   <tr
@@ -329,18 +329,17 @@ export default function CarsPage() {
                   >
                     <td>
                       {c.status === 'Defleeting finalized' ? (
-                        <span className="cars-link cars-link--disabled">{c.vehicle_id}</span>
+                        <span className="cars-link cars-link--disabled">{c.license_plate || '—'}</span>
                       ) : (
                         <button
                           type="button"
                           className="cars-link"
                           onClick={() => openDetails(c.id)}
                         >
-                          {c.vehicle_id}
+                          {c.license_plate || '—'}
                         </button>
                       )}
                     </td>
-                    <td>{c.license_plate || '—'}</td>
                     <td>
                       <div className="cars-vin-cell">
                         <span>{c.vin || '—'}</span>
@@ -418,6 +417,8 @@ export default function CarsPage() {
                           type="button"
                           className="cars-action-menu-trigger"
                           onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
                             const nextId = actionsOpenId === c.id ? null : c.id;
                             if (!nextId) {
                               setActionsOpenId(null);
@@ -426,22 +427,33 @@ export default function CarsPage() {
                               return;
                             }
                             const rect = e.currentTarget.getBoundingClientRect();
+                            const menuWidth = 188;
+                            const menuHeight = 240;
+                            const viewportPadding = 8;
+                            const openUpTop = Math.round(rect.top - menuHeight - 10);
+                            const openDownTop = Math.round(rect.bottom + 8);
+                            const nextTop =
+                              openUpTop >= viewportPadding
+                                ? openUpTop
+                                : Math.min(
+                                    Math.max(viewportPadding, openDownTop),
+                                    Math.max(viewportPadding, window.innerHeight - menuHeight - 12),
+                                  );
+                            const nextLeft = Math.min(
+                              Math.max(viewportPadding, Math.round(rect.left - menuWidth + rect.width)),
+                              Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding),
+                            );
                             setActionsOpenId(nextId);
                             actionsMenuCarRef.current = c;
-                            // Fixed-position menu, aligned to trigger bottom-right.
+                            // Prefer opening upward and keep menu inside viewport.
                             setActionsMenuPos({
-                              top: Math.round(rect.bottom + 4),
-                              left: Math.round(rect.right),
+                              top: nextTop,
+                              left: nextLeft,
                             });
                           }}
                           title="Actions"
-                          style={{
-                            border: 'none',
-                            backgroundColor: 'rgba(15,23,42,0.1)',
-                            borderRadius: '999px',
-                            padding: '0.15rem 0.4rem',
-                            cursor: 'pointer',
-                          }}
+                          aria-haspopup="menu"
+                          aria-expanded={actionsOpenId === c.id}
                         >
                           ⋮
                         </button>
@@ -557,17 +569,17 @@ export default function CarsPage() {
         <VinQrModal vin={qrVin} onClose={() => setQrVin('')} />
       )}
 
-      {actionsOpenId && actionsMenuPos && actionsMenuCarRef.current && (
+      {actionsOpenId && actionsMenuPos && actionsMenuCarRef.current && createPortal(
         <div
           onMouseDown={(e) => {
-            // close if click outside menu
+            // Close if click outside menu.
             if (e.target === e.currentTarget) {
               setActionsOpenId(null);
               setActionsMenuPos(null);
               actionsMenuCarRef.current = null;
             }
           }}
-          style={{ position: 'fixed', inset: 0, zIndex: 1500 }}
+          style={{ position: 'fixed', inset: 0, zIndex: 5000 }}
         >
           <div
             className="cars-actions-menu"
@@ -575,13 +587,12 @@ export default function CarsPage() {
               position: 'fixed',
               top: actionsMenuPos.top,
               left: actionsMenuPos.left,
-              transform: 'translateX(-100%)',
-              background: '#fff',
-              border: '1px solid #ddd',
-              borderRadius: '6px',
-              boxShadow: '0 4px 10px rgba(0,0,0,0.15)',
-              minWidth: '140px',
-              zIndex: 1501,
+              background: 'var(--bg-card-strong)',
+              border: '1px solid var(--border)',
+              borderRadius: '10px',
+              boxShadow: '0 12px 36px rgba(5,13,29,0.34)',
+              minWidth: '180px',
+              zIndex: 5001,
               display: 'flex',
               flexDirection: 'column',
             }}
@@ -648,7 +659,8 @@ export default function CarsPage() {
               Delete
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <style>{`
@@ -705,23 +717,65 @@ export default function CarsPage() {
         .cars-link { background: none; border: none; color: #1976d2; cursor: pointer; padding: 0; text-decoration: underline; }
         .cars-link--disabled { cursor: default; text-decoration: none; color: #555; }
         .cars-actions-cell { white-space: nowrap; }
+        .cars-action-menu-trigger {
+          border: 1px solid var(--border);
+          background: rgba(255,255,255,0.78);
+          color: var(--text);
+          border-radius: 999px;
+          width: 30px;
+          height: 30px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+          box-shadow: 0 2px 8px rgba(15,23,42,0.08);
+        }
+        .cars-action-menu-trigger:hover {
+          background: rgba(59,130,246,0.14);
+          border-color: rgba(59,130,246,0.4);
+          transform: translateY(-1px);
+        }
+        .cars-action-menu-trigger:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+        }
+        .cars-action-menu-trigger-icon {
+          font-size: 1rem;
+          line-height: 1;
+          font-weight: 700;
+        }
         .cars-action { margin-right: 0.35rem; padding: 0.2rem 0.4rem; font-size: 0.8rem; cursor: pointer; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; }
         .cars-action--danger { color: #c62828; }
         .cars-action:disabled { opacity: 0.5; cursor: not-allowed; }
-        .cars-action-menu-item { padding: 0.4rem 0.6rem; font-size: 0.85rem; text-align: left; background: #fff; border: none; cursor: pointer; }
-        .cars-action-menu-item:hover { background: #f5f5f5; }
+        .cars-action-menu-item { padding: 0.4rem 0.6rem; font-size: 0.85rem; text-align: left; background: transparent; border: none; cursor: pointer; color: var(--text); }
+        .cars-action-menu-item:hover { background: rgba(59,130,246,0.12); }
         .cars-action-menu-item--danger { color: #c62828; }
         .cars-action-menu-item[disabled] { opacity: 0.5; cursor: not-allowed; }
         .cars-warning-icon { margin-left: 0.25rem; color: #f9a825; }
         .cars-selected-bar { margin-top: 0.75rem; padding: 0.5rem 0.75rem; background: #e3f2fd; border-radius: 6px; font-size: 0.9rem; }
+        body.dark .cars-action-menu-trigger {
+          background: rgba(111,166,255,0.2);
+          border-color: rgba(129,176,255,0.48);
+          color: #eaf3ff;
+          box-shadow: 0 4px 12px rgba(2,8,24,0.5);
+        }
+        body.dark .cars-action-menu-trigger:hover {
+          background: rgba(111,166,255,0.34);
+          border-color: rgba(162,200,255,0.64);
+        }
       `}</style>
     </section>
   );
 }
 
 function VinQrModal({ vin, onClose }) {
-  const value = String(vin || '').trim();
-  if (!value) return null;
+  const rawVin = String(vin || '').trim();
+  if (!rawVin) return null;
+  const value =
+    typeof window !== 'undefined'
+      ? new URL(`/fleet-check?vin=${encodeURIComponent(rawVin)}`, window.location.origin).toString()
+      : rawVin;
   const [copyStatus, setCopyStatus] = useState('');
   return (
     <div
@@ -731,10 +785,10 @@ function VinQrModal({ vin, onClose }) {
         inset: 0,
         background: 'rgba(0,0,0,0.45)',
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'center',
         zIndex: 2000,
-        padding: '1rem',
+        padding: '8vh 1rem 1rem',
       }}
     >
       <div
@@ -746,7 +800,8 @@ function VinQrModal({ vin, onClose }) {
           borderRadius: 10,
           border: '1px solid #e5e7eb',
           boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
-          overflow: 'hidden',
+          overflow: 'auto',
+          maxHeight: '82vh',
         }}
       >
         <div
@@ -758,7 +813,7 @@ function VinQrModal({ vin, onClose }) {
             borderBottom: '1px solid #eee',
           }}
         >
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>VIN QR code</h3>
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>Fleet inspection QR code</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             {copyStatus && (
               <span className="muted" style={{ fontSize: '0.85rem' }}>{copyStatus}</span>
@@ -815,7 +870,10 @@ function VinQrModal({ vin, onClose }) {
         </div>
         <div style={{ padding: '1rem', display: 'grid', placeItems: 'center', gap: '0.75rem' }}>
           <QRCodeCanvas id="vin-qr-canvas" value={value} size={220} includeMargin />
-          <code style={{ wordBreak: 'break-all' }}>{value}</code>
+          <div style={{ display: 'grid', gap: '0.3rem', width: '100%' }}>
+            <code style={{ wordBreak: 'break-all' }}>{value}</code>
+            <span className="muted" style={{ fontSize: '0.85rem' }}>VIN: {rawVin}</span>
+          </div>
         </div>
       </div>
     </div>

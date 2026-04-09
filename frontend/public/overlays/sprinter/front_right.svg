@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+
+<defs>
+  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+    <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+    <feMerge>
+      <feMergeNode in="coloredBlur"/>
+      <feMergeNode in="SourceGraphic"/>
+    </feMerge>
+  </filter>
+</defs>
+
+<rect width="100%" height="100%" fill="none"/>
+<g stroke="#FFFFFF" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+  <g transform="translate(1080,0) scale(-1,1)">
+  
+<path d="M232 1132 L278 950 Q302 842 386 786 L728 786 Q806 792 858 856 L904 910 L926 1018 Q936 1088 912 1148 Q888 1212 824 1220 L332 1220 Q270 1218 242 1188 Q214 1156 232 1132 Z" stroke-width="8"/>
+<path d="M390 794 L390 1134" stroke-width="5" opacity="0.55"/>
+<path d="M614 794 L614 1124" stroke-width="4" opacity="0.35"/>
+<path d="M736 804 L736 1098" stroke-width="4" opacity="0.35"/>
+<path d="M270 952 Q282 860 364 820 L390 820 L390 952 Z" stroke-width="5" opacity="0.7"/>
+<path d="M772 910 L905 938 Q944 950 950 984 L950 1056 Q936 1098 892 1100 L772 1098 Z" stroke-width="6" opacity="0.75"/>
+<path d="M792 970 L920 986" stroke-width="4" opacity="0.45"/>
+
+<circle cx="348" cy="1220" r="44" stroke-width="7" opacity="0.95"/><circle cx="348" cy="1220" r="24.200000000000003" stroke-width="4" opacity="0.55"/>
+<circle cx="790" cy="1215" r="54" stroke-width="7" opacity="0.95"/><circle cx="790" cy="1215" r="29.700000000000003" stroke-width="4" opacity="0.55"/>
+<path d="M198 1270 L980 1270" stroke-width="4" opacity="0.25"/>
+</g>
+</g>
+<g fill="#FFFFFF" opacity="0.20" font-family="Arial, Helvetica, sans-serif" font-size="30">
+  <text x="540" y="1760" text-anchor="middle">sprinter · front_right</text>
+</g>
+</svg>

@@ -1,0 +1,18 @@
+{
+  "vehicleType": "rivian",
+  "version": 1,
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "shots": {
+    "front_left": "rivian/front_left.svg",
+    "left_side": "rivian/left_side.svg",
+    "rear_left": "rivian/rear_left.svg",
+    "rear": "rivian/rear.svg",
+    "rear_right": "rivian/rear_right.svg",
+    "right_side": "rivian/right_side.svg",
+    "front_right": "rivian/front_right.svg",
+    "front": "rivian/front.svg"
+  }
+}

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+
+<defs>
+  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+    <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+    <feMerge>
+      <feMergeNode in="coloredBlur"/>
+      <feMergeNode in="SourceGraphic"/>
+    </feMerge>
+  </filter>
+</defs>
+
+<rect width="100%" height="100%" fill="none"/>
+<g stroke="#FFFFFF" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+  <path d="M355 1182 Q316 1152 314 1096 L322 916 Q326 824 390 772 Q450 725 540 725 Q631 725 692 772 Q756 824 760 916 L768 1096 Q766 1152 727 1182 Q694 1208 640 1210 L440 1210 Q388 1208 355 1182 Z" stroke-width="8"/>
+<path d="M404 830 Q450 788 540 788 Q628 788 676 830 L658 920 L422 920 Z" stroke-width="5" opacity="0.75"/>
+<path d="M414 930 L666 930 Q686 932 688 952 L688 1038 Q686 1058 666 1060 L414 1060 Q394 1058 392 1038 L392 952 Q394 932 414 930 Z" stroke-width="6" opacity="0.75"/><path d="M392 972 L688 972" stroke-width="4" opacity="0.55"/><path d="M392 1015 L688 1015" stroke-width="4" opacity="0.55"/>
+<path d="M334 960 Q378 930 424 944"/><path d="M746 960 Q702 930 656 944"/><path d="M332 1048 L378 1038"/><path d="M748 1048 L702 1038" stroke-width="5"/>
+<circle cx="414" cy="1210" r="36" stroke-width="7" opacity="0.95"/><circle cx="414" cy="1210" r="19.8" stroke-width="4" opacity="0.55"/>
+<circle cx="666" cy="1210" r="36" stroke-width="7" opacity="0.95"/><circle cx="666" cy="1210" r="19.8" stroke-width="4" opacity="0.55"/>
+<path d="M300 1248 L780 1248" stroke-width="4" opacity="0.25"/>
+</g>
+<g fill="#FFFFFF" opacity="0.20" font-family="Arial, Helvetica, sans-serif" font-size="30">
+  <text x="540" y="1760" text-anchor="middle">sprinter · front</text>
+</g>
+</svg>

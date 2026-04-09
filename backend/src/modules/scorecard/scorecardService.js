@@ -3,19 +3,6 @@ import { parseScorecardPdf } from './scorecardPdfParser.js';
 import { computeCDF, computeTotalScore } from './scorecardFormulas.js';
 import settingsService from '../settings/settingsService.js';
 
-function getISOWeekRange(year, week) {
-  const jan4 = new Date(Date.UTC(year, 0, 4, 12, 0, 0));
-  const jan4Day = jan4.getUTCDay() || 7;
-  const monday = new Date(jan4);
-  monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (week - 1) * 7);
-  const sunday = new Date(monday);
-  sunday.setUTCDate(monday.getUTCDate() + 6);
-  return {
-    start: monday.toISOString().slice(0, 10),
-    end: sunday.toISOString().slice(0, 10),
-  };
-}
-
 /**
  * Get all weeks (1–53) for a year with upload status.
  * Returns [{ week, has_upload }].
@@ -38,51 +25,20 @@ async function getWeeksWithUploads(year) {
 
 /**
  * Get scorecard_employees for a given year and week (without id, year, week, created_at).
- * Resolves employee names by transporter_id from kenjo_employees first and falls back to local employees.
+ * Joins kenjo_employees to get first_name, last_name by transporter_id.
  */
 async function getEmployeesForWeek(year, week) {
   const y = Number(year);
   const w = Number(week);
   if (!Number.isFinite(y) || !Number.isFinite(w) || w < 1 || w > 53) return [];
-  const weekRange = getISOWeekRange(y, w);
   const res = await query(
-    `SELECT s.id, s.transporter_id, s.delivered, s.dcr, s.dsc_dpmo, s.lor_dpmo, s.pod, s.cc, s.ce, s.cdf_dpmo, s.cdf, s.total_score,
-            COALESCE(k.first_name, e.first_name) AS first_name,
-            COALESCE(k.last_name, e.last_name) AS last_name,
-            COALESCE(
-              NULLIF(TRIM(CONCAT_WS(' ', k.first_name, k.last_name)), ''),
-              NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''),
-              NULLIF(TRIM(e.display_name), ''),
-              NULLIF(TRIM(d.driver_name), '')
-            ) AS display_name
+    `SELECT DISTINCT ON (s.id) s.id, s.transporter_id, s.delivered, s.dcr, s.dsc_dpmo, s.lor_dpmo, s.pod, s.cc, s.ce, s.cdf_dpmo, s.cdf, s.total_score,
+            k.first_name, k.last_name
      FROM scorecard_employees s
-     LEFT JOIN LATERAL (
-       SELECT first_name, last_name
-       FROM kenjo_employees
-       WHERE LOWER(TRIM(COALESCE(transporter_id, ''))) = LOWER(TRIM(COALESCE(s.transporter_id, '')))
-       ORDER BY updated_at DESC NULLS LAST, kenjo_user_id ASC
-       LIMIT 1
-     ) k ON true
-     LEFT JOIN LATERAL (
-       SELECT first_name, last_name, display_name
-       FROM employees
-       WHERE LOWER(TRIM(COALESCE(transporter_id, ''))) = LOWER(TRIM(COALESCE(s.transporter_id, '')))
-       ORDER BY is_active DESC, id DESC
-       LIMIT 1
-     ) e ON true
-     LEFT JOIN LATERAL (
-       SELECT driver_name
-       FROM daily_upload_rows
-       WHERE day_key >= $3
-         AND day_key <= $4
-         AND LOWER(TRIM(COALESCE(transporter_id, ''))) = LOWER(TRIM(COALESCE(s.transporter_id, '')))
-         AND NULLIF(TRIM(COALESCE(driver_name, '')), '') IS NOT NULL
-       ORDER BY day_key DESC, row_index DESC
-       LIMIT 1
-     ) d ON true
+     LEFT JOIN kenjo_employees k ON k.transporter_id = s.transporter_id
      WHERE s.year = $1 AND s.week = $2
-     ORDER BY s.total_score DESC NULLS LAST, s.transporter_id ASC, s.id ASC`,
-    [y, w, weekRange.start, weekRange.end]
+     ORDER BY s.id, k.updated_at DESC NULLS LAST`,
+    [y, w]
   );
   return (res.rows || []).map(({ id, ...row }) => row);
 }

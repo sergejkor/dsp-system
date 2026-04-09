@@ -1,0 +1,21 @@
+---
+description: After frontend edits, run production build for server deploy (dist/)
+globs: frontend/**/*
+alwaysApply: false
+---
+
+# Frontend build after changes
+
+When you **finish** edits to any file under `frontend/` (source, config, assets used by Vite):
+
+1. **Run a production build** from the **repository root**:
+   - `npm run build --prefix frontend`
+   - (Equivalent: `cd frontend` then `npm run build`.)
+
+2. **If the build fails**, fix the reported errors and rebuild until it succeeds.
+
+3. **Deploy artifact**: static output is under `frontend/dist/`. The user uploads that folder to the server.
+
+**Skip** only when the user explicitly asks not to build, or the change is clearly non-build-affecting (e.g. a comment-only tweak they asked to exclude)—default is **always build** after substantive frontend work.
+
+**Do not** add new npm scripts or change this workflow unless the user requests it.

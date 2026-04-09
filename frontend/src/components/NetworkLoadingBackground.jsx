@@ -63,12 +63,28 @@ export function NetworkLoadingBackground({
           position: 'absolute',
           inset: 0,
           zIndex: 0,
-          backgroundImage: `url(${imageSrc})`,
-          backgroundPosition: backgroundPresentation.backgroundPosition,
-          backgroundRepeat: 'no-repeat',
-          backgroundSize: backgroundPresentation.backgroundSize,
           backgroundColor: backgroundPresentation.backgroundColor,
+        }}
+      />
+
+      <img
+        src={imageSrc}
+        alt=""
+        aria-hidden="true"
+        loading="eager"
+        fetchPriority="high"
+        decoding="sync"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: backgroundPresentation.backgroundSize === 'cover' ? 'cover' : 'contain',
+          objectPosition: backgroundPresentation.backgroundPosition,
           transform: backgroundPresentation.transform,
+          pointerEvents: 'none',
+          userSelect: 'none',
         }}
       />
 

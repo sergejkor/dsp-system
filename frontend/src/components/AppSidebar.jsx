@@ -93,6 +93,18 @@ function PanelToggleIcon({ collapsed, ...props }) {
   );
 }
 
+function AnalyticsIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M4 19.25h16" />
+      <path d="M7 16V10.5" />
+      <path d="M12 16V6.5" />
+      <path d="M17 16v-3.5" />
+      <path d="M5.5 8.5 9 7l3.5-3 4 1.5" />
+    </svg>
+  );
+}
+
 const iconMap = {
   users: UsersIcon,
   fleet: FleetIcon,
@@ -100,6 +112,7 @@ const iconMap = {
   calendar: CalendarIcon,
   files: FilesIcon,
   phone: PhoneIcon,
+  analytics: AnalyticsIcon,
 };
 
 function matchesPattern(pathname, pattern) {
@@ -190,9 +203,8 @@ export default function AppSidebar({ canAccess, onPresentationChange }) {
   React.useEffect(() => {
     onPresentationChange?.({
       isCollapsed,
-      isHoverExpanded,
     });
-  }, [isCollapsed, isHoverExpanded, onPresentationChange]);
+  }, [isCollapsed, onPresentationChange]);
 
   function handleGroupToggle(groupId) {
     setOpenGroup((current) => (current === groupId ? null : groupId));
@@ -227,6 +239,7 @@ export default function AppSidebar({ canAccess, onPresentationChange }) {
 
   const brandSrc = isExpanded ? sidebarLogo : COLLAPSED_BRAND_MARK;
   const brandAlt = t('appTitle');
+  const collapseLabel = isCollapsed && !isHoverExpanded ? t('nav.expandMenu') : t('nav.hideMenu');
 
   return (
     <aside
@@ -238,16 +251,6 @@ export default function AppSidebar({ canAccess, onPresentationChange }) {
         <Link to="/dashboard" className="app-sidebar__brand" aria-label={brandAlt} title={brandAlt}>
           <img src={brandSrc} alt={brandAlt} className={`app-sidebar__brand-logo${isExpanded ? '' : ' is-mark-only'}`} />
         </Link>
-
-        <button
-          type="button"
-          className="app-sidebar__collapse-btn"
-          onClick={handleCollapseToggle}
-          aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <PanelToggleIcon collapsed={isCollapsed && !isHoverExpanded} className="app-sidebar__collapse-icon" />
-        </button>
       </div>
 
       <nav className="app-sidebar__nav" aria-label="Primary navigation">
@@ -321,6 +324,23 @@ export default function AppSidebar({ canAccess, onPresentationChange }) {
           );
         })}
       </nav>
+
+      <div className="app-sidebar__footer">
+        <button
+          type="button"
+          className="app-sidebar__collapse-row"
+          onClick={handleCollapseToggle}
+          aria-label={collapseLabel}
+          title={!isExpanded ? collapseLabel : undefined}
+        >
+          <span className="app-sidebar__item-main">
+            <span className="app-sidebar__icon-wrap">
+              <PanelToggleIcon collapsed={isCollapsed && !isHoverExpanded} className="app-sidebar__collapse-icon" />
+            </span>
+            <span className="app-sidebar__label">{collapseLabel}</span>
+          </span>
+        </button>
+      </div>
     </aside>
   );
 }

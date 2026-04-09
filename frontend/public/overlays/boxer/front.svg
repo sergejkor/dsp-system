@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+
+<defs>
+  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+    <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+    <feMerge>
+      <feMergeNode in="coloredBlur"/>
+      <feMergeNode in="SourceGraphic"/>
+    </feMerge>
+  </filter>
+</defs>
+
+<rect width="100%" height="100%" fill="none"/>
+<g stroke="#FFFFFF" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+  <path d="M350 1188 Q314 1156 314 1100 L326 934 Q332 838 394 790 Q456 744 540 744 Q624 744 686 790 Q748 838 754 934 L766 1100 Q766 1156 730 1188 Q696 1214 642 1214 L438 1214 Q384 1214 350 1188 Z" stroke-width="8"/>
+<path d="M414 844 Q462 808 540 808 Q618 808 666 844 L648 930 L432 930 Z" stroke-width="5" opacity="0.75"/>
+<path d="M410 934 L670 934 Q692 938 694 960 L690 1050 Q688 1072 666 1076 L414 1076 Q392 1072 390 1050 L386 960 Q388 938 410 934 Z" stroke-width="6" opacity="0.75"/>
+<path d="M424 970 Q540 1000 656 970" stroke-width="5" opacity="0.55"/><path d="M430 1020 L650 1020" stroke-width="4" opacity="0.55"/>
+<path d="M336 966 Q380 928 428 942"/><path d="M744 966 Q700 928 652 942" stroke-width="5"/>
+<circle cx="410" cy="1214" r="36" stroke-width="7" opacity="0.95"/><circle cx="410" cy="1214" r="19.8" stroke-width="4" opacity="0.55"/>
+<circle cx="670" cy="1214" r="36" stroke-width="7" opacity="0.95"/><circle cx="670" cy="1214" r="19.8" stroke-width="4" opacity="0.55"/>
+<path d="M300 1252 L780 1252" stroke-width="4" opacity="0.25"/>
+</g>
+<g fill="#FFFFFF" opacity="0.20" font-family="Arial, Helvetica, sans-serif" font-size="30">
+  <text x="540" y="1760" text-anchor="middle">boxer · front</text>
+</g>
+</svg>

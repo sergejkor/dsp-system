@@ -28,15 +28,42 @@ function sortRooms(items) {
   });
 }
 
-function mergeRooms(prevRooms, nextRoom, currentUserId) {
+function normalizeRoomItems(items, currentUserId, activeRoomId = null) {
+  const normalizedActiveRoomId = Number(activeRoomId) || 0;
+  return sortRooms(
+    (items || []).map((room) => {
+      const normalizedRoom = { ...room, current_user_id: currentUserId };
+      if (normalizedActiveRoomId && Number(normalizedRoom.id) === normalizedActiveRoomId) {
+        normalizedRoom.unread_count = 0;
+      }
+      return normalizedRoom;
+    })
+  );
+}
+
+function mergeRooms(prevRooms, nextRoom, currentUserId, activeRoomId = null) {
   const enrichedRoom = nextRoom ? { ...nextRoom, current_user_id: currentUserId } : null;
   const next = [...prevRooms];
   const index = next.findIndex((room) => Number(room.id) === Number(enrichedRoom?.id));
+  const normalizedActiveRoomId = Number(activeRoomId) || 0;
+  const normalizedIncomingRoomId = Number(enrichedRoom?.id) || 0;
   if (enrichedRoom) {
+    if (normalizedActiveRoomId && normalizedIncomingRoomId === normalizedActiveRoomId) {
+      // Active room is considered read locally; avoid stale unread overwrite from out-of-order ws packets.
+      enrichedRoom.unread_count = 0;
+    }
     if (index >= 0) next[index] = { ...next[index], ...enrichedRoom };
     else next.push(enrichedRoom);
   }
   return sortRooms(next);
+}
+
+function markRoomAsReadInList(prevRooms, roomId) {
+  const numericRoomId = Number(roomId);
+  if (!numericRoomId) return prevRooms;
+  return prevRooms.map((room) =>
+    Number(room.id) === numericRoomId ? { ...room, unread_count: 0 } : room
+  );
 }
 
 function mergeMessageList(prevMessages, incomingMessage) {
@@ -96,6 +123,23 @@ export default function ChatPage() {
   const [creatingDirect, setCreatingDirect] = React.useState(false);
   const [sendError, setSendError] = React.useState('');
 
+  const unreadTotal = React.useMemo(
+    () => (rooms || []).reduce((sum, room) => sum + Math.max(0, Number(room?.unread_count) || 0), 0),
+    [rooms]
+  );
+
+  const markRoomAsReadOptimistic = React.useCallback((roomId) => {
+    setRooms((prev) => markRoomAsReadInList(prev, roomId));
+  }, []);
+
+  React.useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('chat-unread-total-changed', {
+        detail: { total: unreadTotal, activeRoomId: selectedRoomId },
+      })
+    );
+  }, [unreadTotal, selectedRoomId]);
+
   const buildRoomsError = React.useCallback(
     (error) => {
       if (error?.status === 401) {
@@ -120,15 +164,26 @@ export default function ChatPage() {
     setRoomsError('');
     try {
       const response = await listRooms();
-      const items = (response.items || []).map((room) => ({ ...room, current_user_id: currentUserId }));
-      setRooms(sortRooms(items));
+      const items = normalizeRoomItems(response.items || [], currentUserId, selectedRoomId);
+      setRooms(items);
       setSelectedRoomId((prev) => prev || items[0]?.id || null);
     } catch (error) {
       setRoomsError(normalizeUiError(error, buildRoomsError(error)));
     } finally {
       setRoomsLoading(false);
     }
-  }, [buildRoomsError, currentUserId]);
+  }, [buildRoomsError, currentUserId, selectedRoomId]);
+
+  const refreshRoomsQuietly = React.useCallback(async () => {
+    try {
+      const response = await listRooms();
+      const items = normalizeRoomItems(response.items || [], currentUserId, selectedRoomId);
+      setRooms(items);
+      setSelectedRoomId((prev) => prev || items[0]?.id || null);
+    } catch (_error) {
+      // Ignore background refresh failures and keep the last known snapshot.
+    }
+  }, [currentUserId, selectedRoomId]);
 
   const loadRoomMessages = React.useCallback(
     async (roomId, { cursor = null, appendOlder = false } = {}) => {
@@ -165,6 +220,7 @@ export default function ChatPage() {
           };
         });
         await markRoomRead(roomId);
+        markRoomAsReadOptimistic(roomId);
       } catch (error) {
         setMessagesByRoom((prev) => ({
           ...prev,
@@ -178,7 +234,7 @@ export default function ChatPage() {
         }));
       }
     },
-    [copy.messagesUnavailable]
+    [copy.messagesUnavailable, markRoomAsReadOptimistic]
   );
 
   const loadChatUsers = React.useCallback(async () => {
@@ -219,20 +275,91 @@ export default function ChatPage() {
     }
   }, [copy.usersUnavailable, currentUserId]);
 
+  const refreshSelectedRoomMessagesQuietly = React.useCallback(
+    async (roomIdValue = selectedRoomId) => {
+      const roomId = Number(roomIdValue);
+      if (!roomId) return;
+
+      try {
+        const response = await listMessages(roomId, { limit: 30 });
+        setMessagesByRoom((prev) => {
+          const existing = prev[roomId] || { items: [], nextCursor: null, loaded: true };
+          const incomingItems = Array.isArray(response.items) ? response.items : [];
+          const mergedItems = incomingItems.reduce(
+            (items, message) => mergeMessageList(items, message),
+            existing.items || []
+          );
+
+          return {
+            ...prev,
+            [roomId]: {
+              ...existing,
+              items: mergedItems,
+              nextCursor: existing.nextCursor ?? response.next_cursor,
+              loading: false,
+              loadingMore: false,
+              loaded: true,
+              error: '',
+            },
+          };
+        });
+
+        await markRoomRead(roomId);
+        markRoomAsReadOptimistic(roomId);
+      } catch (_error) {
+        // Keep the current message snapshot if the silent refresh fails.
+      }
+    },
+    [selectedRoomId, markRoomAsReadOptimistic]
+  );
+
   React.useEffect(() => {
     loadRooms();
   }, [loadRooms]);
+
+  React.useEffect(() => {
+    const roomsTimerId = window.setInterval(() => {
+      refreshRoomsQuietly();
+    }, 5000);
+
+    const messagesTimerId = selectedRoomId
+      ? window.setInterval(() => {
+          refreshSelectedRoomMessagesQuietly(selectedRoomId);
+        }, 2500)
+      : null;
+
+    function handleVisibilityChange() {
+      if (document.visibilityState !== 'visible') return;
+      refreshRoomsQuietly();
+      if (selectedRoomId) refreshSelectedRoomMessagesQuietly(selectedRoomId);
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(roomsTimerId);
+      if (messagesTimerId) window.clearInterval(messagesTimerId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshRoomsQuietly, refreshSelectedRoomMessagesQuietly, selectedRoomId]);
+
+  React.useEffect(() => {
+    if (!selectedRoomId) return;
+    markRoomAsReadOptimistic(selectedRoomId);
+  }, [selectedRoomId, markRoomAsReadOptimistic]);
 
   React.useEffect(() => {
     if (!selectedRoomId) return;
     const roomState = messagesByRoom[selectedRoomId];
     if (roomState?.loading || roomState?.loadingMore) return;
     if (roomState?.loaded) {
-      markRoomRead(selectedRoomId).catch(() => {});
+      markRoomRead(selectedRoomId)
+        .then(() => markRoomAsReadOptimistic(selectedRoomId))
+        .catch(() => {});
       return;
     }
     loadRoomMessages(selectedRoomId);
-  }, [selectedRoomId, messagesByRoom, loadRoomMessages]);
+  }, [selectedRoomId, messagesByRoom, loadRoomMessages, markRoomAsReadOptimistic]);
 
   React.useEffect(() => {
     const socket = createChatSocket({
@@ -240,6 +367,7 @@ export default function ChatPage() {
       onEvent: (packet) => {
         if (packet.event === 'chat.message.created' && packet.payload?.message) {
           const roomId = Number(packet.payload.roomId);
+          const senderId = Number(packet.payload?.message?.sender_id || packet.payload?.message?.sender?.id || 0);
           setMessagesByRoom((prev) => {
             const existing = prev[roomId] || { items: [], nextCursor: null, loading: false, loadingMore: false, loaded: true };
             return {
@@ -251,19 +379,63 @@ export default function ChatPage() {
               },
             };
           });
+          setRooms((prev) => {
+            const next = (prev || []).map((room) => {
+              if (Number(room.id) !== roomId) return room;
+              if (roomId === Number(selectedRoomId)) {
+                return { ...room, unread_count: 0, last_message_at: packet.payload?.message?.created_at || room.last_message_at };
+              }
+              if (senderId && senderId === Number(currentUserId)) {
+                return { ...room, last_message_at: packet.payload?.message?.created_at || room.last_message_at };
+              }
+              return {
+                ...room,
+                unread_count: (Number(room.unread_count) || 0) + 1,
+                last_message_at: packet.payload?.message?.created_at || room.last_message_at,
+              };
+            });
+            return sortRooms(next);
+          });
           if (roomId === Number(selectedRoomId)) {
-            markRoomRead(roomId).catch(() => {});
+            markRoomRead(roomId)
+              .then(() => markRoomAsReadOptimistic(roomId))
+              .catch(() => {});
           }
         }
 
         if (packet.event === 'chat.room.updated' && packet.payload?.room) {
-          setRooms((prev) => mergeRooms(prev, packet.payload.room, currentUserId));
+          setRooms((prev) => mergeRooms(prev, packet.payload.room, currentUserId, selectedRoomId));
+        }
+
+        if (packet.event === 'chat.message.read' && Number(packet.payload?.userId) === Number(currentUserId)) {
+          const roomId = Number(packet.payload?.roomId);
+          if (roomId) markRoomAsReadOptimistic(roomId);
+        }
+
+        if (packet.event === 'chat.message.read' && Number(packet.payload?.userId) !== Number(currentUserId)) {
+          const roomId = Number(packet.payload?.roomId);
+          const lastReadMessageId = Number(packet.payload?.lastReadMessageId || 0);
+          if (roomId && lastReadMessageId) {
+            setRooms((prev) =>
+              (prev || []).map((room) =>
+                Number(room.id) === roomId
+                  ? {
+                      ...room,
+                      last_read_message_id_by_others: Math.max(
+                        Number(room.last_read_message_id_by_others || 0),
+                        lastReadMessageId
+                      ),
+                    }
+                  : room
+              )
+            );
+          }
         }
       },
     });
 
     return () => socket.close();
-  }, [currentUserId, selectedRoomId]);
+  }, [currentUserId, selectedRoomId, markRoomAsReadOptimistic]);
 
   async function handleSendMessage({ body, file }) {
     if (!selectedRoomId) return;
@@ -297,6 +469,7 @@ export default function ChatPage() {
       });
 
       await markRoomRead(selectedRoomId);
+      markRoomAsReadOptimistic(selectedRoomId);
       await loadRooms();
     } catch (error) {
       setSendError(normalizeUiError(error, copy.sendUnavailable));
@@ -336,6 +509,14 @@ export default function ChatPage() {
     }
   }
 
+  const handleSelectRoom = React.useCallback(
+    (roomId) => {
+      setSelectedRoomId(roomId);
+      markRoomAsReadOptimistic(roomId);
+    },
+    [markRoomAsReadOptimistic]
+  );
+
   return (
     <section className="chat-page">
       <header className="chat-page-header">
@@ -357,10 +538,11 @@ export default function ChatPage() {
       <div className="chat-layout">
         <ChatRoomList
           rooms={rooms}
+          currentUserId={currentUserId}
           selectedRoomId={selectedRoomId}
           loading={roomsLoading}
           error={roomsError}
-          onSelectRoom={setSelectedRoomId}
+          onSelectRoom={handleSelectRoom}
           onStartDirectChat={handleOpenDirectDialog}
           copy={copy}
         />

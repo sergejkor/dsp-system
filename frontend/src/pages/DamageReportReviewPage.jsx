@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import DamageReportForm, { createEmptyDamageReport } from '../components/DamageReportForm.jsx';
 import {
+  addDamageReportToDamages,
   downloadDamageReportFile,
   getDamageReport,
   listDamageReports,
@@ -20,6 +21,31 @@ function normalizePayload(payload) {
     normalized.description = normalized.descriptionDe;
   }
   return normalized;
+}
+
+async function translateDescriptionToGerman(text) {
+  const source = String(text || '').trim();
+  if (!source) return '';
+  try {
+    const params = new URLSearchParams({
+      client: 'gtx',
+      sl: 'auto',
+      tl: 'de',
+      dt: 't',
+      q: source,
+    });
+    const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params.toString()}`);
+    if (!response.ok) return source;
+    const data = await response.json().catch(() => null);
+    const parts = Array.isArray(data?.[0]) ? data[0] : [];
+    const translated = parts
+      .map((part) => (Array.isArray(part) ? String(part[0] || '') : ''))
+      .join('')
+      .trim();
+    return translated || source;
+  } catch {
+    return source;
+  }
 }
 
 const REVIEW_COPY_DE = {
@@ -83,8 +109,10 @@ export default function DamageReportReviewPage() {
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const [markingUnread, setMarkingUnread] = useState(false);
+  const [addingToDamages, setAddingToDamages] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [translatedForId, setTranslatedForId] = useState(null);
 
   async function loadList(nextStatus = statusFilter) {
     setLoading(true);
@@ -109,8 +137,23 @@ export default function DamageReportReviewPage() {
     try {
       const data = await getDamageReport(id);
       setDetail(data);
-      setForm(normalizePayload(data?.payload));
+      const normalized = normalizePayload(data?.payload);
+      setForm(normalized);
       setStatus(data?.status || 'reviewing');
+      const source = String(data?.payload?.description || '').trim();
+      const german = String(data?.payload?.descriptionDe || '').trim();
+      const needsUiFallbackTranslation =
+        source &&
+        (!german || german === source) &&
+        Number(id) !== Number(translatedForId);
+      if (needsUiFallbackTranslation) {
+        const translated = await translateDescriptionToGerman(source);
+        setForm((prev) => ({
+          ...(prev || normalized),
+          description: translated || source,
+        }));
+        setTranslatedForId(Number(id));
+      }
     } catch (err) {
       setError(err?.message || 'Failed to load damage report');
     }
@@ -188,6 +231,35 @@ export default function DamageReportReviewPage() {
       setError(err?.message || 'Failed to mark damage report as unread');
     } finally {
       setMarkingUnread(false);
+    }
+  }
+
+  async function handleAddToDamages() {
+    if (!selectedId) return;
+    setAddingToDamages(true);
+    setError('');
+    setMessage('');
+    try {
+      const updated = await updateDamageReport(selectedId, form, status);
+      setDetail((prev) => ({ ...(prev || {}), ...updated, payload: normalizePayload(updated?.payload || form) }));
+      setRows((prev) => prev.map((row) => (row.id === selectedId ? { ...row, ...updated } : row)));
+
+      const result = await addDamageReportToDamages(selectedId);
+      const copiedFiles = Number(result?.copiedFiles || 0);
+      const damageId = result?.damage?.id;
+      if (result?.created) {
+        setMessage(
+          `Added to damages${damageId ? ` as case #${damageId}` : ''}${copiedFiles ? ` and copied ${copiedFiles} attachment(s)` : ''}.`
+        );
+      } else {
+        setMessage(
+          `This damage report is already in damages${damageId ? ` as case #${damageId}` : ''}.`
+        );
+      }
+    } catch (err) {
+      setError(err?.message || 'Failed to add damage report to damages');
+    } finally {
+      setAddingToDamages(false);
     }
   }
 
@@ -276,10 +348,18 @@ export default function DamageReportReviewPage() {
                         <option value="resolved">Resolved</option>
                       </select>
                     </label>
-                    <button type="button" className="btn-primary" disabled={saving || markingUnread} onClick={handleSave}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={saving || markingUnread || addingToDamages || uploading}
+                      onClick={handleAddToDamages}
+                    >
+                      {addingToDamages ? 'Adding...' : 'Add to damages'}
+                    </button>
+                    <button type="button" className="btn-primary" disabled={saving || markingUnread || addingToDamages} onClick={handleSave}>
                       {saving ? 'Saving...' : 'Save'}
                     </button>
-                    <button type="button" className="btn-secondary" disabled={saving || markingUnread || uploading} onClick={handleUnread}>
+                    <button type="button" className="btn-secondary" disabled={saving || markingUnread || addingToDamages || uploading} onClick={handleUnread}>
                       {markingUnread ? 'Working...' : 'Unread'}
                     </button>
                   </div>

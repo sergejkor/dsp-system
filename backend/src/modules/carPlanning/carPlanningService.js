@@ -8,6 +8,7 @@ async function ensureCarPlanningWorkshopColumns() {
   await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_to DATE`);
   await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_name TEXT`);
   await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_comment TEXT`);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS service_type TEXT`);
   carPlanningWorkshopColumnsReady = true;
 }
 
@@ -46,6 +47,7 @@ async function getCarsForPlanning() {
   await ensureCarPlanningWorkshopColumns();
   const res = await query(
     `SELECT c.id, c.vehicle_id, c.license_plate, c.status,
+            c.service_type,
             c.planned_workshop_from::text AS planned_workshop_from,
             c.planned_workshop_to::text AS planned_workshop_to,
             c.planned_workshop_name,
@@ -240,16 +242,18 @@ async function getReport(date) {
   }));
 }
 
-async function addCarWithWindow(numberPlate, vin, sourceType, activeFrom, activeTo) {
+async function addCarWithWindow(numberPlate, vin, sourceType, serviceType, activeFrom, activeTo) {
+  await ensureCarPlanningWorkshopColumns();
   const plate = (numberPlate || '').toString().trim();
   if (!plate) throw new Error('number_plate is required');
   const vinStr = (vin || '').toString().trim() || null;
   const src = (sourceType || '').toString().trim() || null;
+  const svc = (serviceType || '').toString().trim() || null;
   const carRes = await query(
-    `INSERT INTO cars (vehicle_id, license_plate, vin, status, fleet_provider, created_at, updated_at)
-     VALUES ($1, $2, $3, 'Active', $4, NOW(), NOW())
-     RETURNING id, vehicle_id, license_plate`,
-    [plate, plate, vinStr, src]
+    `INSERT INTO cars (vehicle_id, license_plate, vin, status, fleet_provider, service_type, created_at, updated_at)
+     VALUES ($1, $2, $3, 'Active', $4, $5, NOW(), NOW())
+     RETURNING id, vehicle_id, license_plate, service_type`,
+    [plate, plate, vinStr, src, svc]
   );
   const car = carRes.rows[0];
   await query(

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { getO2List, createO2Entry, updateO2Entry, deleteO2Entry } from '../services/o2TelefonicaApi';
 import { getKenjoUsers } from '../services/kenjoApi';
+import { useAppSettings } from '../context/AppSettingsContext';
 
 const OTHER_VALUE = '__OTHER__';
 
@@ -17,6 +18,7 @@ const defaultAddForm = () => ({
 });
 
 export default function O2TelefonicaPage() {
+  const { isDark } = useAppSettings();
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -32,6 +34,64 @@ export default function O2TelefonicaPage() {
   const [deleteRow, setDeleteRow] = useState(null);
   const [editRow, setEditRow] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  const modalBackdropStyle = {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(2, 6, 23, 0.46)',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    padding: '7vh 1rem 1rem',
+    zIndex: 1000,
+  };
+  const editModalBackdropStyle = {
+    ...modalBackdropStyle,
+    padding: '3vh 1rem 1rem',
+  };
+  const modalCardStyle = {
+    background: isDark ? '#0f172a' : '#fff',
+    color: isDark ? '#e2e8f0' : '#111827',
+    borderRadius: 12,
+    boxShadow: '0 20px 40px rgba(2, 6, 23, 0.32)',
+    border: isDark ? '1px solid rgba(148, 163, 184, 0.26)' : '1px solid rgba(15, 23, 42, 0.08)',
+  };
+  const editModalCardStyle = {
+    ...modalCardStyle,
+    maxHeight: '92vh',
+    overflowY: 'auto',
+  };
+  const modalMutedTextStyle = {
+    margin: 0,
+    color: isDark ? '#94a3b8' : '#64748b',
+    fontSize: '0.9rem',
+  };
+  const modalValueStyle = {
+    margin: 0,
+    padding: '0.48rem 0.72rem',
+    borderRadius: 10,
+    background: isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(248, 250, 252, 0.95)',
+    border: isDark ? '1px solid rgba(71, 85, 105, 0.9)' : '1px solid rgba(226, 232, 240, 0.95)',
+    color: isDark ? '#f8fafc' : '#0f172a',
+    boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.04)' : 'inset 0 1px 0 rgba(255,255,255,0.75)',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  };
+  const deleteSummaryStyle = {
+    margin: '0 0 1rem',
+    padding: '0.85rem 1rem',
+    borderRadius: 12,
+    background: isDark ? 'rgba(30, 41, 59, 0.75)' : 'rgba(248, 250, 252, 0.95)',
+    border: isDark ? '1px solid rgba(148, 163, 184, 0.18)' : '1px solid rgba(226, 232, 240, 0.95)',
+    color: isDark ? '#e2e8f0' : '#334155',
+  };
+  const modalInputStyle = {
+    width: '100%',
+    padding: '0.5rem',
+    boxSizing: 'border-box',
+    borderRadius: 8,
+    border: isDark ? '1px solid #334155' : '1px solid #d1d5db',
+    background: isDark ? '#111827' : '#fff',
+    color: isDark ? '#e5e7eb' : '#111827',
+  };
 
   const filteredList = useMemo(() => {
     const q = (searchQuery || '').trim().toLowerCase();
@@ -144,8 +204,8 @@ export default function O2TelefonicaPage() {
             style={{ padding: '0.4rem 0.6rem', minWidth: 200, maxWidth: 320 }}
           />
         </label>
-        <button type="button" className="primary" onClick={() => setAddOpen(true)}>
-          Add entry
+        <button type="button" className="btn-primary" onClick={() => setAddOpen(true)}>
+          Add Entry
         </button>
       </div>
 
@@ -295,40 +355,32 @@ export default function O2TelefonicaPage() {
       {/* PIN/PUK dialog */}
       {pinPukDialog && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-          }}
+          style={modalBackdropStyle}
           onClick={() => setPinPukDialog(null)}
         >
           <div
             style={{
-              background: '#fff',
+              ...modalCardStyle,
               padding: '1.5rem',
               borderRadius: 12,
               minWidth: 320,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+              width: 'min(420px, calc(100vw - 2rem))',
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>PIN and PUK — {pinPukDialog.name || '—'}</h3>
             <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.5rem 1.5rem' }}>
               <dt style={{ fontWeight: 600 }}>PIN1</dt>
-              <dd style={{ margin: 0 }}>{pinPukDialog.pin1 ?? '—'}</dd>
+              <dd style={modalValueStyle}>{pinPukDialog.pin1 ?? '—'}</dd>
               <dt style={{ fontWeight: 600 }}>PIN2</dt>
-              <dd style={{ margin: 0 }}>{pinPukDialog.pin2 ?? '—'}</dd>
+              <dd style={modalValueStyle}>{pinPukDialog.pin2 ?? '—'}</dd>
               <dt style={{ fontWeight: 600 }}>PUK1</dt>
-              <dd style={{ margin: 0 }}>{pinPukDialog.puk1 ?? '—'}</dd>
+              <dd style={modalValueStyle}>{pinPukDialog.puk1 ?? '—'}</dd>
               <dt style={{ fontWeight: 600 }}>PUK2</dt>
-              <dd style={{ margin: 0 }}>{pinPukDialog.puk2 ?? '—'}</dd>
+              <dd style={modalValueStyle}>{pinPukDialog.puk2 ?? '—'}</dd>
             </dl>
             <div style={{ marginTop: '1.5rem', textAlign: 'right' }}>
-              <button type="button" className="primary" onClick={() => setPinPukDialog(null)}>
+              <button type="button" className="btn-primary" onClick={() => setPinPukDialog(null)}>
                 Close
               </button>
             </div>
@@ -337,25 +389,11 @@ export default function O2TelefonicaPage() {
       )}
       {editRow && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-          }}
+          style={editModalBackdropStyle}
           onClick={() => !editSaving && setEditRow(null)}
         >
           <form
-            style={{
-              background: '#fff',
-              padding: '1.5rem',
-              borderRadius: 12,
-              minWidth: 360,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            }}
+            style={{ ...editModalCardStyle, padding: '1.5rem', minWidth: 360 }}
             onClick={(e) => e.stopPropagation()}
             onSubmit={async (e) => {
               e.preventDefault();
@@ -402,7 +440,7 @@ export default function O2TelefonicaPage() {
             <div style={{ marginBottom: '0.75rem' }}>
               <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Name</label>
               {employeesLoading ? (
-                <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>Loading employees…</p>
+                <p style={modalMutedTextStyle}>Loading employees…</p>
               ) : (
                 <>
                   <select
@@ -417,7 +455,7 @@ export default function O2TelefonicaPage() {
                         setEditRow((r) => ({ ...r, selectedEmployeeId: val, kenjo_user_id: val || '', name: displayName }));
                       }
                     }}
-                    style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box', marginBottom: editRow.selectedEmployeeId === OTHER_VALUE ? '0.5rem' : 0 }}
+                    style={{ ...modalInputStyle, marginBottom: editRow.selectedEmployeeId === OTHER_VALUE ? '0.5rem' : 0 }}
                   >
                     <option value="">— Select —</option>
                     {(employeesList || []).map((u) => (
@@ -433,7 +471,7 @@ export default function O2TelefonicaPage() {
                       placeholder="Enter name manually"
                       value={editRow.name || ''}
                       onChange={(e) => setEditRow((r) => ({ ...r, name: e.target.value }))}
-                      style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box', marginTop: '0.5rem' }}
+                      style={{ ...modalInputStyle, marginTop: '0.5rem' }}
                     />
                   )}
                 </>
@@ -445,7 +483,7 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={editRow.phone_number || ''}
                 onChange={(e) => setEditRow((r) => ({ ...r, phone_number: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
@@ -454,7 +492,7 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={editRow.sim_card_number || ''}
                 onChange={(e) => setEditRow((r) => ({ ...r, sim_card_number: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ marginBottom: '0.75rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -464,7 +502,7 @@ export default function O2TelefonicaPage() {
                   type="text"
                   value={editRow.pin1 || ''}
                   onChange={(e) => setEditRow((r) => ({ ...r, pin1: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                  style={modalInputStyle}
                 />
               </div>
               <div>
@@ -473,7 +511,7 @@ export default function O2TelefonicaPage() {
                   type="text"
                   value={editRow.pin2 || ''}
                   onChange={(e) => setEditRow((r) => ({ ...r, pin2: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                  style={modalInputStyle}
                 />
               </div>
             </div>
@@ -484,7 +522,7 @@ export default function O2TelefonicaPage() {
                   type="text"
                   value={editRow.puk1 || ''}
                   onChange={(e) => setEditRow((r) => ({ ...r, puk1: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                  style={modalInputStyle}
                 />
               </div>
               <div>
@@ -493,7 +531,7 @@ export default function O2TelefonicaPage() {
                   type="text"
                   value={editRow.puk2 || ''}
                   onChange={(e) => setEditRow((r) => ({ ...r, puk2: e.target.value }))}
-                  style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                  style={modalInputStyle}
                 />
               </div>
             </div>
@@ -519,30 +557,15 @@ export default function O2TelefonicaPage() {
       )}
       {deleteRow && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-          }}
+          style={modalBackdropStyle}
           onClick={() => setDeleteRow(null)}
         >
           <div
-            style={{
-              background: '#fff',
-              borderRadius: 12,
-              maxWidth: 420,
-              width: '90%',
-              padding: '1.25rem',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            }}
+            style={{ ...modalCardStyle, maxWidth: 420, width: '90%', padding: '1.25rem' }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ margin: '0 0 0.75rem' }}>Delete number</h3>
-            <p style={{ margin: '0 0 1rem' }}>
+            <p style={deleteSummaryStyle}>
               Are you sure to delete this Number{' '}
               <strong>{deleteRow.phone_number || deleteRow.sim_card_number || deleteRow.name}</strong>?
             </p>
@@ -574,15 +597,7 @@ export default function O2TelefonicaPage() {
       {/* Add entry dialog */}
       {addOpen && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-          }}
+          style={modalBackdropStyle}
           onClick={() => {
             if (!addSaving) {
               setAddOpen(false);
@@ -591,13 +606,7 @@ export default function O2TelefonicaPage() {
           }}
         >
           <form
-            style={{
-              background: '#fff',
-              padding: '1.5rem',
-              borderRadius: 12,
-              minWidth: 360,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-            }}
+            style={{ ...modalCardStyle, padding: '1.5rem', minWidth: 360 }}
             onClick={(e) => e.stopPropagation()}
             onSubmit={handleAddSubmit}
           >
@@ -605,7 +614,7 @@ export default function O2TelefonicaPage() {
             <div style={{ marginBottom: '0.75rem' }}>
               <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>Name *</label>
               {employeesLoading ? (
-                <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>Loading employees…</p>
+                <p style={modalMutedTextStyle}>Loading employees…</p>
               ) : (
                 <>
                   <select
@@ -620,7 +629,7 @@ export default function O2TelefonicaPage() {
                         setAddForm((f) => ({ ...f, selectedEmployeeId: val, name: displayName, kenjo_user_id: val || '' }));
                       }
                     }}
-                    style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box', marginBottom: addForm.selectedEmployeeId === OTHER_VALUE ? '0.5rem' : 0 }}
+                    style={{ ...modalInputStyle, marginBottom: addForm.selectedEmployeeId === OTHER_VALUE ? '0.5rem' : 0 }}
                   >
                     <option value="">— Select —</option>
                     {(employeesList || []).map((u) => (
@@ -636,7 +645,7 @@ export default function O2TelefonicaPage() {
                       placeholder="Enter name manually"
                       value={addForm.name}
                       onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
-                      style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box', marginTop: '0.5rem' }}
+                      style={{ ...modalInputStyle, marginTop: '0.5rem' }}
                     />
                   )}
                 </>
@@ -648,7 +657,7 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={addForm.phone_number}
                 onChange={(e) => setAddForm((f) => ({ ...f, phone_number: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
@@ -657,7 +666,7 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={addForm.sim_card_number}
                 onChange={(e) => setAddForm((f) => ({ ...f, sim_card_number: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
@@ -666,7 +675,7 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={addForm.pin1}
                 onChange={(e) => setAddForm((f) => ({ ...f, pin1: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
@@ -675,7 +684,7 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={addForm.pin2}
                 onChange={(e) => setAddForm((f) => ({ ...f, pin2: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
@@ -684,7 +693,7 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={addForm.puk1}
                 onChange={(e) => setAddForm((f) => ({ ...f, puk1: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ marginBottom: '1rem' }}>
@@ -693,12 +702,13 @@ export default function O2TelefonicaPage() {
                 type="text"
                 value={addForm.puk2}
                 onChange={(e) => setAddForm((f) => ({ ...f, puk2: e.target.value }))}
-                style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+                style={modalInputStyle}
               />
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
               <button
                 type="button"
+                className="btn-secondary"
                 onClick={() => {
                   if (!addSaving) {
                     setAddOpen(false);
@@ -709,7 +719,7 @@ export default function O2TelefonicaPage() {
               >
                 Cancel
               </button>
-              <button type="submit" className="primary" disabled={addSaving}>
+              <button type="submit" className="btn-primary" disabled={addSaving}>
                 {addSaving ? 'Saving…' : 'Save'}
               </button>
             </div>

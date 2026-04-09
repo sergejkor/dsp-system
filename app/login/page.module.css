@@ -1,0 +1,46 @@
+.page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(1.5rem, 4vw, 3rem);
+}
+
+.shell {
+  width: min(100%, 1440px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.column {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: 52px;
+}
+
+@media (max-height: 900px) {
+  .page {
+    padding: 1.25rem;
+  }
+}
+
+@media (max-height: 760px) {
+  .page {
+    align-items: flex-start;
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    align-items: center;
+    padding: 0.9rem;
+  }
+
+  .column {
+    padding-top: 32px;
+  }
+}

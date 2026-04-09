@@ -3,16 +3,8 @@ import multer from 'multer';
 import employeeService from './employeeService.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-
-function runSingleUpload(req, res, fieldName) {
-  return new Promise((resolve, reject) => {
-    upload.single(fieldName)(req, res, (error) => {
-      if (!error) return resolve();
-      return reject(error);
-    });
-  });
-}
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const ALLOWED_DOC_TYPES = new Set(['Dokumente', 'Lohnabrechnung', 'Vertrag', 'Abmahnung', 'AMZL', 'Zertifikat']);
 
 router.get('/health', (_req, res) => res.json({ ok: true, module: 'employees' }));
 
@@ -143,32 +135,33 @@ router.get('/:id/documents', async (req, res) => {
   }
 });
 
-router.post('/:id/documents', async (req, res) => {
+router.post('/:id/documents', upload.single('file'), async (req, res) => {
   try {
-    await runSingleUpload(req, res, 'file');
     const employeeRef = String(req.params.id || '').trim();
     const documentType = String(req.body?.document_type || '').trim();
-    const requestedFileName = String(req.body?.file_name || '').trim();
+    // #region agent log
+    fetch('http://127.0.0.1:7400/ingest/9746dfd7-4235-4773-8200-b09630016922',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'54b2a9'},body:JSON.stringify({sessionId:'54b2a9',runId:'pre-fix',hypothesisId:'H4',location:'backend/src/modules/employees/employeeRoutes.js:postDocuments:entry',message:'employee_upload_route_entry',data:{employeeRef,documentType,allowedType:ALLOWED_DOC_TYPES.has(documentType),hasFile:!!req.file,fileName:req.file?.originalname||null,size:req.file?.size||0},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (!employeeRef) return res.status(400).json({ error: 'Employee id is required' });
-    if (!documentType || documentType.length > 64) {
+    if (!documentType || !ALLOWED_DOC_TYPES.has(documentType)) {
       return res.status(400).json({ error: 'Invalid document type' });
     }
     if (!req.file?.buffer) return res.status(400).json({ error: 'File is required' });
     const row = await employeeService.addEmployeeDocument(employeeRef, {
       documentType,
-      fileName: requestedFileName || req.file.originalname || 'document.bin',
+      fileName: req.file.originalname || 'document.bin',
       mimeType: req.file.mimetype || 'application/octet-stream',
       fileContent: req.file.buffer,
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7400/ingest/9746dfd7-4235-4773-8200-b09630016922',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'54b2a9'},body:JSON.stringify({sessionId:'54b2a9',runId:'pre-fix',hypothesisId:'H4',location:'backend/src/modules/employees/employeeRoutes.js:postDocuments:success',message:'employee_upload_route_success',data:{employeeRef,docId:row?.id||null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     res.status(201).json(row);
   } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7400/ingest/9746dfd7-4235-4773-8200-b09630016922',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'54b2a9'},body:JSON.stringify({sessionId:'54b2a9',runId:'pre-fix',hypothesisId:'H4',location:'backend/src/modules/employees/employeeRoutes.js:postDocuments:error',message:'employee_upload_route_error',data:{error:error?.message||'unknown_error'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     console.error('POST /api/employees/:id/documents error', error);
-    if (error instanceof multer.MulterError) {
-      if (error.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'Document file is too large. Maximum upload size is 50 MB.' });
-      }
-      return res.status(400).json({ error: error.message || 'Upload failed' });
-    }
     res.status(500).json({ error: 'Failed to upload employee document' });
   }
 });
@@ -195,7 +188,12 @@ router.delete('/:id/documents/:docId/import-source', async (req, res) => {
     if (out?.noImportSource) {
       return res.status(400).json({ error: 'This document is not linked to an import source yet' });
     }
-    res.json({ ok: true, deleted: out.deleted || 0, import_source_key: out.importSourceKey || null, import_source_name: out.importSourceName || null });
+    res.json({
+      ok: true,
+      deleted: out.deleted || 0,
+      import_source_key: out.importSourceKey || null,
+      import_source_name: out.importSourceName || null,
+    });
   } catch (error) {
     console.error('DELETE /api/employees/:id/documents/:docId/import-source error', error);
     res.status(500).json({ error: 'Failed to delete imported source documents' });

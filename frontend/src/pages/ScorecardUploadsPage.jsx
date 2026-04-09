@@ -201,7 +201,7 @@ export default function ScorecardUploadsPage() {
                 {has_upload && (
                   <button
                     type="button"
-                    className="scorecard-report-btn"
+                    className="btn-primary scorecard-report-btn"
                     onClick={() => handleCreateWeeklyReport(week)}
                   >
                     {t('scorecardUploads.createWeeklyReport')}

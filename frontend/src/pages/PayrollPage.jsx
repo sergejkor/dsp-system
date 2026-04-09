@@ -19,6 +19,9 @@ import { useAppSettings } from '../context/AppSettingsContext';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+/** Hourly rate for payroll summary: (payroll h + overtime h) × rate + Verpfl. mehr + Fahrt. Geld */
+const PAYROLL_SUMMARY_HOUR_RATE_EUR = 16.7;
+const PAYROLL_FROZEN_CACHE_KEY = 'dsp.payroll.frozen.lastResult.v1';
 
 function formatDateDDMMYYYY(iso) {
   if (!iso) return '—';
@@ -38,6 +41,12 @@ function formatWholeDays(num) {
   const n = Number(num);
   if (!Number.isFinite(n)) return '0';
   return String(Math.round(n));
+}
+
+function formatHours(num) {
+  const n = Number(num);
+  if (!Number.isFinite(n)) return '0.00 h';
+  return `${n.toFixed(2)} h`;
 }
 
 /** Prefer name matches at the top of the payslip import employee dropdown. */
@@ -91,12 +100,14 @@ function formatKpiValue(num) {
   return n.toFixed(2);
 }
 
-function buildPayrollSummaryCards(rows, selectedMonth) {
+function buildPayrollSummaryCards(rows, selectedMonth, t) {
   const list = Array.isArray(rows) ? rows : [];
   const month = String(selectedMonth || '').slice(0, 7);
   const sums = list.reduce(
     (acc, row) => {
       const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
+      acc.payrollHours += Number(row.expected_hours) || 0;
+      acc.overtimeHours += Number(row.overtime_hours) || 0;
       acc.totalBonus += Number(row.total_bonus) || 0;
       acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
       acc.verpflMehr += Math.max(0, Number(row.verpfl_mehr) || 0);
@@ -110,6 +121,8 @@ function buildPayrollSummaryCards(rows, selectedMonth) {
       return acc;
     },
     {
+      payrollHours: 0,
+      overtimeHours: 0,
       totalBonus: 0,
       totalAbzug: 0,
       verpflMehr: 0,
@@ -120,15 +133,29 @@ function buildPayrollSummaryCards(rows, selectedMonth) {
       maAustrit: 0,
     },
   );
+  const payrollOvertimeHours =
+    (Number(sums.payrollHours) || 0) + (Number(sums.overtimeHours) || 0);
+  const hoursAtRateEur = payrollOvertimeHours * PAYROLL_SUMMARY_HOUR_RATE_EUR;
+  const hoursPlusAllowancesEur =
+    hoursAtRateEur + (Number(sums.verpflMehr) || 0) + (Number(sums.fahrtGeld) || 0);
+  const hoursPlusAllowancesRounded = Math.round(hoursPlusAllowancesEur * 100) / 100;
   return [
-    { key: 'total-bonus', label: 'Total Bonus', value: formatCurrency(sums.totalBonus), accent: '#0f766e' },
-    { key: 'total-abzug', label: 'Total Abzug', value: formatCurrency(sums.totalAbzug), accent: '#b91c1c' },
-    { key: 'verpfl-mehr', label: 'Verpfl. mehr', value: formatCurrency(sums.verpflMehr), accent: '#1d4ed8' },
-    { key: 'fahrt-geld', label: 'Fahrtengeld', value: formatCurrency(sums.fahrtGeld), accent: '#7c3aed' },
-    { key: 'bonus', label: 'Bonus', value: formatCurrency(sums.bonus), accent: '#d97706' },
-    { key: 'kranktage', label: 'Kranktage', value: String(sums.kranktage), accent: '#475569' },
-    { key: 'urlaubstage', label: 'Urlaubstage', value: String(sums.urlaubstage), accent: '#059669' },
-    { key: 'ma-austrit', label: 'MA Austrit', value: String(sums.maAustrit), accent: '#be185d' },
+    {
+      key: 'hours-plus-allowances',
+      label: t('payroll.summary.hoursPlusAllowances'),
+      value: formatCurrency(hoursPlusAllowancesRounded),
+      accent: '#0369a1',
+    },
+    { key: 'payroll-hours', label: t('payroll.summary.payrollHours'), value: formatHours(sums.payrollHours), accent: '#0f766e' },
+    { key: 'overtime-hours', label: t('payroll.summary.overtimeHours'), value: formatHours(sums.overtimeHours), accent: '#d97706' },
+    { key: 'total-bonus', label: t('payroll.summary.totalBonus'), value: formatCurrency(sums.totalBonus), accent: '#0f766e' },
+    { key: 'total-abzug', label: t('payroll.summary.totalAbzug'), value: formatCurrency(sums.totalAbzug), accent: '#b91c1c' },
+    { key: 'verpfl-mehr', label: t('payroll.summary.verpflMehr'), value: formatCurrency(sums.verpflMehr), accent: '#1d4ed8' },
+    { key: 'fahrt-geld', label: t('payroll.summary.fahrtGeld'), value: formatCurrency(sums.fahrtGeld), accent: '#7c3aed' },
+    { key: 'bonus', label: t('payroll.summary.bonus'), value: formatCurrency(sums.bonus), accent: '#d97706' },
+    { key: 'kranktage', label: t('payroll.summary.kranktage'), value: String(sums.kranktage), accent: '#475569' },
+    { key: 'urlaubstage', label: t('payroll.summary.urlaubstage'), value: String(sums.urlaubstage), accent: '#059669' },
+    { key: 'ma-austrit', label: t('payroll.summary.maAustrit'), value: String(sums.maAustrit), accent: '#be185d' },
   ];
 }
 
@@ -211,6 +238,23 @@ export default function PayrollPage() {
   const [payslipNotice, setPayslipNotice] = useState('');
   const [showBonusBreakdown, setShowBonusBreakdown] = useState(false);
   const [bonusBreakdownRow, setBonusBreakdownRow] = useState(null);
+  const [selectedPayrollRowKey, setSelectedPayrollRowKey] = useState('');
+
+  useEffect(() => {
+    if (!result?.month || !Array.isArray(result?.rows) || !result.rows.length) return;
+    try {
+      const payload = {
+        month: String(result.month || '').slice(0, 7),
+        from: String(result.from || '').slice(0, 10),
+        to: String(result.to || '').slice(0, 10),
+        rows: result.rows,
+        savedAt: Date.now(),
+      };
+      window.localStorage.setItem(PAYROLL_FROZEN_CACHE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage errors (private mode / quota)
+    }
+  }, [result?.month, result?.from, result?.to, result?.rows]);
 
   useEffect(() => {
     const [y, m] = month.split('-').map(Number);
@@ -926,10 +970,12 @@ export default function PayrollPage() {
     { key: 'name', label: t('payroll.columns.name') },
     { key: 'pn', label: t('payroll.columns.pn') },
     { key: 'working_days', label: t('payroll.columns.working_days') },
+    { key: 'expected_hours', label: t('payroll.columns.expected_hours') },
+    { key: 'overtime_hours', label: t('payroll.columns.overtime_hours') },
     { key: 'krank_days', label: t('payroll.columns.krank_days') },
     { key: 'urlaub_days', label: t('payroll.columns.urlaub_days') },
-    { key: 'carryover_days', label: 'Carryover days' },
-    { key: 'rest_urlaub', label: 'Rest Urlaub' },
+    { key: 'carryover_days', label: t('payroll.columns.carryover_days') },
+    { key: 'rest_urlaub', label: t('payroll.columns.rest_urlaub') },
     { key: 'total_bonus', label: t('payroll.columns.total_bonus') },
     { key: 'abzug', label: t('payroll.columns.abzug') },
     { key: 'verpfl_mehr', label: t('payroll.columns.verpfl_mehr') },
@@ -977,9 +1023,16 @@ export default function PayrollPage() {
   const addRecordMaxVerpfl = (Number(addRecordForm.working_days) || 0) * 14;
   const addRecordVerpflMehr = Math.round((addRecordAfterAbzug <= addRecordMaxVerpfl ? addRecordAfterAbzug : addRecordMaxVerpfl) * 100) / 100;
   const addRecordFahrtGeld = Math.round((addRecordAfterAbzug > addRecordMaxVerpfl ? addRecordAfterAbzug - addRecordMaxVerpfl : 0) * 100) / 100;
+  const getPayrollRowKey = (row, idx) => {
+    const id = String(row?.kenjo_employee_id || '').trim();
+    if (id) return id;
+    const pn = String(row?.pn || '').trim();
+    const name = String(row?.name || '').trim();
+    return `${pn}-${name}-${idx}`;
+  };
   const payrollSummaryCards = useMemo(() => {
-    return buildPayrollSummaryCards(result?.rows, result?.month || month);
-  }, [result?.month, result?.rows, month]);
+    return buildPayrollSummaryCards(result?.rows, result?.month || month, t);
+  }, [result?.month, result?.rows, month, t]);
 
   const visibleTerminationWindow = useMemo(() => {
     const monthValue = String(result?.month || month || '').trim();
@@ -1045,8 +1098,8 @@ export default function PayrollPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
-        <div>
+      <div className="payroll-toolbar-period-row">
+        <div className="payroll-toolbar-period-sidebar">
           <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>{t('payroll.calculationMonth')}</label>
           <select
             value={month}
@@ -1080,7 +1133,9 @@ export default function PayrollPage() {
         </div>
         <div className="payroll-period-calendar-wrap">
           <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>{t('payroll.periodKpi')}</label>
-          <div className="payroll-period-side">
+          <div
+            className={`payroll-period-side${result?.rows?.length > 0 ? ' payroll-period-side--with-summary' : ''}`}
+          >
             <div className="payroll-range-calendar">
             <div className="payroll-range-calendar-header">
               <button
@@ -1162,35 +1217,32 @@ export default function PayrollPage() {
             </p>
             </div>
             {result?.rows?.length > 0 && (
-              <div className="payroll-summary-grid">
-                {payrollSummaryCards.map((card) => (
-                  <div
-                    key={card.key}
-                    role={card.key === 'total-bonus' ? 'button' : undefined}
-                    tabIndex={card.key === 'total-bonus' ? 0 : undefined}
-                    className={`payroll-summary-card ${card.key === 'total-bonus' ? 'payroll-summary-card--interactive' : ''}`}
-                    style={{ borderTopColor: card.accent }}
-                    onClick={card.key === 'total-bonus' ? () => setShowBonusBreakdown(true) : undefined}
-                    onKeyDown={
-                      card.key === 'total-bonus'
-                        ? (e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setShowBonusBreakdown(true);
+              <div className="payroll-summary-aside" aria-label="Period summary">
+                <div className="payroll-summary-grid">
+                  {payrollSummaryCards.map((card) => (
+                    <div
+                      key={card.key}
+                      role={card.key === 'total-bonus' ? 'button' : undefined}
+                      tabIndex={card.key === 'total-bonus' ? 0 : undefined}
+                      className={`payroll-summary-card ${card.key === 'total-bonus' ? 'payroll-summary-card--interactive' : ''}`}
+                      style={{ borderTopColor: card.accent }}
+                      onClick={card.key === 'total-bonus' ? () => setShowBonusBreakdown(true) : undefined}
+                      onKeyDown={
+                        card.key === 'total-bonus'
+                          ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setShowBonusBreakdown(true);
+                              }
                             }
-                          }
-                        : undefined
-                    }
-                  >
-                    {manualEditTarget ? (
-                      <option value={addRecordForm.employeeId}>
-                        {manualEditTarget.name || addRecordForm.employeeName || addRecordForm.employeeId}
-                      </option>
-                    ) : null}
-                    <div className="payroll-summary-label">{card.label}</div>
-                    <div className="payroll-summary-value">{card.value}</div>
-                  </div>
-                ))}
+                          : undefined
+                      }
+                    >
+                      <div className="payroll-summary-label">{card.label}</div>
+                      <div className="payroll-summary-value">{card.value}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1198,12 +1250,65 @@ export default function PayrollPage() {
       </div>
 
       <style>{`
-        .payroll-period-calendar-wrap { margin-bottom: 0.5rem; }
-        .payroll-period-side {
+        .payroll-toolbar-period-row {
           display: flex;
           flex-wrap: wrap;
-          gap: 0.85rem;
+          gap: 1.5rem;
           align-items: flex-start;
+          margin-bottom: 1rem;
+        }
+        .payroll-toolbar-period-sidebar {
+          flex: 0 0 auto;
+        }
+        .payroll-period-calendar-wrap {
+          margin-bottom: 0.5rem;
+          flex: 1 1 360px;
+          min-width: 0;
+        }
+        .payroll-period-side {
+          display: block;
+          width: 100%;
+        }
+        /* Grid keeps calendar + KPI block on one row (flex was wrapping to column in some widths). */
+        section.card .payroll-period-side.payroll-period-side--with-summary {
+          display: grid;
+          grid-template-columns: max-content minmax(0, 1fr);
+          gap: 1.5rem;
+          align-items: start;
+          width: 100%;
+        }
+        section.card .payroll-period-side--with-summary > .payroll-range-calendar {
+          grid-column: 1;
+        }
+        section.card .payroll-period-side--with-summary > .payroll-summary-aside {
+          grid-column: 2;
+          min-width: 0;
+        }
+        .payroll-summary-aside {
+          border-left: 1px solid var(--border);
+          padding: 0.75rem 0.75rem 0.75rem 1.25rem;
+          background: var(--bg-muted, rgba(0, 0, 0, 0.03));
+          border-radius: 0 10px 10px 0;
+        }
+        @media (prefers-color-scheme: dark) {
+          .payroll-summary-aside {
+            background: var(--bg-muted, rgba(255, 255, 255, 0.04));
+          }
+        }
+        @media (max-width: 520px) {
+          section.card .payroll-period-side.payroll-period-side--with-summary {
+            grid-template-columns: 1fr;
+          }
+          section.card .payroll-period-side--with-summary > .payroll-range-calendar {
+            grid-column: 1;
+          }
+          section.card .payroll-period-side--with-summary > .payroll-summary-aside {
+            grid-column: 1;
+            border-left: none;
+            border-top: 1px solid var(--border);
+            padding: 1rem 0.5rem 0.75rem 0.5rem;
+            border-radius: 10px;
+          }
         }
         .payroll-range-calendar {
           border: 1px solid var(--border);
@@ -1268,10 +1373,10 @@ export default function PayrollPage() {
         .payroll-range-calendar-hint { margin: 0.5rem 0 0 0; font-size: 0.8rem; color: var(--text-muted); }
         .payroll-summary-grid {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 0.55rem;
-          width: 320px;
-          min-width: 320px;
+          width: 100%;
+          min-width: 0;
         }
         .payroll-summary-card {
           border: 1px solid var(--border);
@@ -1305,6 +1410,24 @@ export default function PayrollPage() {
           font-weight: 700;
           color: var(--text);
           line-height: 1.2;
+        }
+        .payroll-main-row {
+          cursor: pointer;
+          transition: background-color 0.14s ease;
+        }
+        .payroll-main-row:hover td {
+          background: rgba(37, 99, 235, 0.06);
+        }
+        .payroll-main-row--selected td {
+          background: rgba(37, 99, 235, 0.14);
+          box-shadow: inset 0 1px 0 rgba(37, 99, 235, 0.25), inset 0 -1px 0 rgba(37, 99, 235, 0.25);
+        }
+        body.dark .payroll-main-row:hover td {
+          background: rgba(96, 165, 250, 0.12);
+        }
+        body.dark .payroll-main-row--selected td {
+          background: rgba(37, 99, 235, 0.32);
+          box-shadow: inset 0 1px 0 rgba(147, 197, 253, 0.22), inset 0 -1px 0 rgba(147, 197, 253, 0.22);
         }
       `}</style>
 
@@ -1453,11 +1576,13 @@ export default function PayrollPage() {
 
       {result && result.rows && (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
+          <table style={{ width: '100%', minWidth: '96rem', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: '10.5rem' }} />
               <col style={{ width: '4.1rem' }} />
               <col style={{ width: '4rem' }} />
+              <col style={{ width: '6rem' }} />
+              <col style={{ width: '5.8rem' }} />
               <col style={{ width: '3.6rem', minWidth: '3.6rem' }} />
               <col style={{ width: '3.6rem', minWidth: '3.6rem' }} />
               <col style={{ width: '4.4rem' }} />
@@ -1477,7 +1602,7 @@ export default function PayrollPage() {
                   <th
                     key={col.key}
                     style={{
-                      textAlign: ['pn', 'working_days', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub'].includes(col.key) ? 'right' : 'left',
+                      textAlign: ['pn', 'working_days', 'expected_hours', 'overtime_hours', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub'].includes(col.key) ? 'right' : 'left',
                       padding: '0.32rem 0.34rem',
                       whiteSpace: 'nowrap',
                       cursor: 'pointer',
@@ -1499,7 +1624,12 @@ export default function PayrollPage() {
             </thead>
             <tbody>
               {sortedRows.map((row, idx) => (
-                <tr key={`${row.kenjo_employee_id}-${idx}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                <tr
+                  key={`${row.kenjo_employee_id}-${idx}`}
+                  className={`payroll-main-row ${selectedPayrollRowKey === getPayrollRowKey(row, idx) ? 'payroll-main-row--selected' : ''}`}
+                  style={{ borderBottom: '1px solid #f3f4f6' }}
+                  onClick={() => setSelectedPayrollRowKey(getPayrollRowKey(row, idx))}
+                >
                   {columns.map((col) => {
                     if (col.key === 'abzug') {
                       const abzugSum = (row.abzug_lines || []).reduce((s, l) => s + (Number(l?.amount) || 0), 0);
@@ -1538,14 +1668,13 @@ export default function PayrollPage() {
                         <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <button
                             type="button"
+                            className="payroll-table-link"
                             onClick={() => setBonusBreakdownRow(row)}
                             style={{
                               background: 'none',
                               border: 'none',
                               cursor: 'pointer',
                               padding: 0,
-                              color: '#1976d2',
-                              textDecoration: 'underline',
                               font: 'inherit',
                             }}
                             title="Open weekly bonus breakdown"
@@ -1561,17 +1690,31 @@ export default function PayrollPage() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
                             <button
                               type="button"
-                              onClick={() => navigate('/employee', { state: { kenjoEmployeeId: row.kenjo_employee_id } })}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#1976d2', textDecoration: 'underline', font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              className="payroll-table-link"
+                              onClick={() =>
+                                navigate('/employee', {
+                                  state: {
+                                    kenjoEmployeeId: row.kenjo_employee_id,
+                                    payrollContext: {
+                                      month: result?.month || month,
+                                      from: result?.from || fromDate,
+                                      to: result?.to || toDate,
+                                    },
+                                    payrollRow: row,
+                                  },
+                                })
+                              }
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                               title={row.name ?? 'Open employee profile'}
                             >
                               {row.name ?? '-'}
                             </button>
                             <button
                               type="button"
+                              className="payroll-table-link"
                               onClick={() => openEditManualRecord(row)}
                               title="Edit manual row"
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: 0, lineHeight: 1, color: '#1976d2', textDecoration: 'underline' }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: 0, lineHeight: 1 }}
                             >
                               Edit
                             </button>
@@ -1592,8 +1735,21 @@ export default function PayrollPage() {
                         <td key={col.key} style={{ padding: '0.32rem 0.34rem', maxWidth: '10.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <button
                             type="button"
-                            onClick={() => navigate('/employee', { state: { kenjoEmployeeId: row.kenjo_employee_id } })}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#1976d2', textDecoration: 'underline', font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            className="payroll-table-link"
+                            onClick={() =>
+                              navigate('/employee', {
+                                state: {
+                                  kenjoEmployeeId: row.kenjo_employee_id,
+                                  payrollContext: {
+                                    month: result?.month || month,
+                                    from: result?.from || fromDate,
+                                    to: result?.to || toDate,
+                                  },
+                                  payrollRow: row,
+                                },
+                              })
+                            }
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                             title={row.name ?? 'Open employee profile'}
                           >
                             {row.name ?? '—'}
@@ -1604,13 +1760,16 @@ export default function PayrollPage() {
                     const val = (col.key === 'krank_days' || col.key === 'urlaub_days')
                       ? (row[col.key] ?? 0)
                       : row[col.key];
+                    const isHoursCol = ['expected_hours', 'overtime_hours'].includes(col.key);
                     const isCurrency = ['total_bonus', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
-                    const isNumericCol = ['pn', 'working_days', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
+                    const isNumericCol = ['pn', 'working_days', 'expected_hours', 'overtime_hours', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
                     const display =
                       col.key === 'eintrittsdatum' || col.key === 'austrittsdatum'
                         ? formatDateDDMMYYYY(val)
                         : isCurrency
                           ? formatCurrency(val)
+                          : isHoursCol
+                            ? formatHours(val)
                           : (col.key === 'krank_days' || col.key === 'urlaub_days')
                             ? Number(val)
                             : (col.key === 'carryover_days' || col.key === 'rest_urlaub')
@@ -2112,7 +2271,7 @@ export default function PayrollPage() {
 
             <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'nowrap', minWidth: 'max-content' }}>
-                {buildPayrollSummaryCards(payrollHistoryModal?.payload?.rows, payrollHistoryModal?.payload?.month || payrollHistoryModal?.period_id).map((card) => (
+                {buildPayrollSummaryCards(payrollHistoryModal?.payload?.rows, payrollHistoryModal?.payload?.month || payrollHistoryModal?.period_id, t).map((card) => (
                   <div key={card.key} className="payroll-summary-card" style={{ borderTopColor: card.accent, minWidth: 138 }}>
                     <div className="payroll-summary-label">{card.label}</div>
                     <div className="payroll-summary-value">{card.value}</div>
@@ -2122,11 +2281,13 @@ export default function PayrollPage() {
             </div>
 
             <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
+                <table style={{ width: '100%', minWidth: '96rem', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
                 <colgroup>
                   <col style={{ width: '10.5rem' }} />
                   <col style={{ width: '4.1rem' }} />
                   <col style={{ width: '4rem' }} />
+                  <col style={{ width: '6rem' }} />
+                  <col style={{ width: '5.8rem' }} />
                   <col style={{ width: '3.6rem' }} />
                   <col style={{ width: '3.6rem' }} />
                   <col style={{ width: '4.4rem' }} />
@@ -2153,6 +2314,8 @@ export default function PayrollPage() {
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.name || '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.pn || '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.working_days ?? '—'}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.expected_hours)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.overtime_hours)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.krank_days ?? 0}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.urlaub_days ?? 0}</td>
                       <td style={{ padding: '0.35rem 0.28rem', whiteSpace: 'nowrap' }}>{formatWholeDays(row.carryover_days)}</td>

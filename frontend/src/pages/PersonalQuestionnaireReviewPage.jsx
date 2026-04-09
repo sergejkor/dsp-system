@@ -51,7 +51,7 @@ function buildDocumentTemplateOptions(form) {
 
 function normalizePayload(payload) {
   const blank = createEmptyPersonalQuestionnaire();
-  return {
+  const normalized = {
     ...blank,
     ...(payload || {}),
     account: { ...blank.account, ...(payload?.account || {}) },
@@ -63,6 +63,38 @@ function normalizePayload(payload) {
     dspLocal: { ...blank.dspLocal, ...(payload?.dspLocal || {}) },
     uniform: { ...blank.uniform, ...(payload?.uniform || {}) },
   };
+  const workEmail = String(normalized?.account?.email || '').trim().toLowerCase();
+  const privateEmail = String(normalized?.home?.privateEmail || '').trim().toLowerCase();
+  if (workEmail && privateEmail && workEmail === privateEmail) {
+    normalized.account.email = '';
+  }
+  return normalized;
+}
+
+function buildManagerOptions(employees) {
+  const unique = [];
+  const seen = new Set();
+  (Array.isArray(employees) ? employees : []).forEach((row) => {
+    const label =
+      [row?.first_name, row?.last_name].filter(Boolean).join(' ').trim() ||
+      row?.display_name ||
+      row?.employee_id ||
+      row?.email ||
+      '';
+    const managerKenjoId = String(
+      row?.kenjo_user_id ||
+      row?.kenjoUserId ||
+      row?.employee_ref ||
+      row?.employee_id ||
+      row?.id ||
+      ''
+    ).trim();
+    if (!label || !managerKenjoId) return;
+    if (seen.has(managerKenjoId)) return;
+    seen.add(managerKenjoId);
+    unique.push({ value: managerKenjoId, label });
+  });
+  return unique;
 }
 
 function parseWarningList(value) {
@@ -747,6 +779,7 @@ export default function PersonalQuestionnaireReviewPage() {
     try {
       const list = await listPersonalQuestionnaires(nextStatus);
       setRows(Array.isArray(list) ? list : []);
+      window.dispatchEvent(new CustomEvent('intake-summary-refresh'));
       const requestedId = searchParams.get('id');
       if (requestedId && list.some((row) => Number(row.id) === Number(requestedId))) {
         setSelectedId(requestedId);
@@ -767,6 +800,7 @@ export default function PersonalQuestionnaireReviewPage() {
       setDetail(data);
       setForm(normalizePayload(data?.payload));
       setWarnings(parseWarningList(data?.last_error));
+      window.dispatchEvent(new CustomEvent('intake-summary-refresh'));
     } catch (err) {
       setError(err?.message || 'Failed to load submission details');
     }
@@ -801,20 +835,10 @@ export default function PersonalQuestionnaireReviewPage() {
         if (!cancelled) setO2PhoneOptions([]);
       });
 
-    listEmployees({ onlyActive: true })
+    listEmployees({ onlyActive: false })
       .then((list) => {
         if (cancelled) return;
-        const options = Array.isArray(list)
-          ? list
-              .map((row) => {
-                const label = [row?.first_name, row?.last_name].filter(Boolean).join(' ').trim() || row?.display_name || row?.employee_id;
-                const managerKenjoId = String(row?.kenjo_user_id || '').trim();
-                if (!label || !managerKenjoId) return null;
-                return { value: managerKenjoId, label };
-              })
-              .filter(Boolean)
-          : [];
-        setManagerOptions(options);
+        setManagerOptions(buildManagerOptions(list));
       })
       .catch(() => {
         if (!cancelled) setManagerOptions([]);
@@ -842,6 +866,47 @@ export default function PersonalQuestionnaireReviewPage() {
   useEffect(() => {
     loadDetail(selectedId);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!managerOptions.length) return;
+    setForm((prev) => {
+      const currentId = String(prev?.work?.managerKenjoId || '').trim();
+      const currentName = String(prev?.work?.managerName || '').trim();
+
+      if (currentId) {
+        const matchedById = managerOptions.find((option) => option.value === currentId);
+        if (matchedById && matchedById.label !== currentName) {
+          return {
+            ...prev,
+            work: {
+              ...(prev.work || {}),
+              managerName: matchedById.label,
+            },
+          };
+        }
+        return prev;
+      }
+
+      if (currentName) {
+        const loweredName = currentName.toLowerCase();
+        const matchedByName = managerOptions.find(
+          (option) => option.label.toLowerCase() === loweredName
+        );
+        if (matchedByName) {
+          return {
+            ...prev,
+            work: {
+              ...(prev.work || {}),
+              managerKenjoId: matchedByName.value,
+              managerName: matchedByName.label,
+            },
+          };
+        }
+      }
+
+      return prev;
+    });
+  }, [managerOptions]);
 
   useEffect(() => {
     const requestedId = searchParams.get('id');
@@ -892,6 +957,7 @@ export default function PersonalQuestionnaireReviewPage() {
       const result = await saveAndSendPersonalQuestionnaire(selectedId);
       await loadList(statusFilter);
       await loadDetail(selectedId);
+      window.dispatchEvent(new CustomEvent('intake-summary-refresh'));
       setWarnings(parseWarningList(result?.warnings));
       setMessage(
         result?.employee_ref
@@ -919,6 +985,7 @@ export default function PersonalQuestionnaireReviewPage() {
       await deletePersonalQuestionnaire(deletedId);
       const nextRows = await listPersonalQuestionnaires(statusFilter);
       setRows(Array.isArray(nextRows) ? nextRows : []);
+      window.dispatchEvent(new CustomEvent('intake-summary-refresh'));
 
       const currentIndex = rows.findIndex((row) => Number(row.id) === deletedId);
       const fallbackRow =
@@ -955,6 +1022,7 @@ export default function PersonalQuestionnaireReviewPage() {
       await markPersonalQuestionnaireUnread(unreadId);
       const nextRows = await listPersonalQuestionnaires(statusFilter);
       setRows(Array.isArray(nextRows) ? nextRows : []);
+      window.dispatchEvent(new CustomEvent('intake-summary-refresh'));
       setSelectedId(null);
       setDetail(null);
       setForm(createEmptyPersonalQuestionnaire());
@@ -1057,9 +1125,9 @@ export default function PersonalQuestionnaireReviewPage() {
       {error && <div className="analytics-error">{error}</div>}
       {message && <div className="cars-message cars-message--success">{message}</div>}
       {warnings.length > 0 && (
-        <div className="card" style={{ marginBottom: '1rem', border: '1px solid #fbbf24', background: '#fffbeb' }}>
-          <h3 style={{ marginTop: 0, marginBottom: '0.75rem', color: '#92400e' }}>Warnings</h3>
-          <ul style={{ margin: 0, paddingLeft: '1.2rem', color: '#78350f' }}>
+        <div className="card intake-warning-card" style={{ marginBottom: '1rem' }}>
+          <h3 className="intake-warning-title" style={{ marginTop: 0, marginBottom: '0.75rem' }}>Warnings</h3>
+          <ul className="intake-warning-list" style={{ margin: 0, paddingLeft: '1.2rem' }}>
             {warnings.map((warning, index) => (
               <li key={`${index}-${warning}`}>{warning}</li>
             ))}
@@ -1129,10 +1197,9 @@ export default function PersonalQuestionnaireReviewPage() {
                     </button>
                     <button
                       type="button"
-                      className="btn-secondary"
+                      className="btn-secondary intake-danger-btn"
                       disabled={saving || deleting || markingUnread}
                       onClick={handleDelete}
-                      style={{ background: '#dc2626' }}
                     >
                       {deleting ? 'Deleting...' : 'Delete'}
                     </button>

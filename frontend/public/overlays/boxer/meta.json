@@ -1,0 +1,18 @@
+{
+  "vehicleType": "boxer",
+  "version": 1,
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "shots": {
+    "front_left": "boxer/front_left.svg",
+    "left_side": "boxer/left_side.svg",
+    "rear_left": "boxer/rear_left.svg",
+    "rear": "boxer/rear.svg",
+    "rear_right": "boxer/rear_right.svg",
+    "right_side": "boxer/right_side.svg",
+    "front_right": "boxer/front_right.svg",
+    "front": "boxer/front.svg"
+  }
+}

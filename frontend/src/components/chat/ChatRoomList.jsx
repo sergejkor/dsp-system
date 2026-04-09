@@ -52,8 +52,28 @@ function formatRoomTime(value) {
   }).format(date);
 }
 
+function buildInitials(label) {
+  const parts = String(label || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+  return String(label || 'U').slice(0, 2).toUpperCase();
+}
+
+function getDirectPeer(room, currentUserId) {
+  if (!room || room.type !== 'direct') return null;
+  const participants = Array.isArray(room.participants) ? room.participants : [];
+  return (
+    participants.find((participant) => Number(participant.id) !== Number(currentUserId)) ||
+    participants[0] ||
+    null
+  );
+}
+
 export default function ChatRoomList({
   rooms,
+  currentUserId,
   selectedRoomId,
   loading,
   error,
@@ -68,7 +88,7 @@ export default function ChatRoomList({
           <h2>{copy.roomsTitle}</h2>
           <p>{copy.roomsSubtitle}</p>
         </div>
-        <button type="button" className="chat-room-list-action" onClick={onStartDirectChat}>
+        <button type="button" className="chat-room-list-action btn-primary" onClick={onStartDirectChat}>
           <PlusIcon />
           <span>{copy.newChat}</span>
         </button>
@@ -82,6 +102,9 @@ export default function ChatRoomList({
           ? rooms.map((room) => {
               const isActive = Number(selectedRoomId) === Number(room.id);
               const isGeneral = room.type === 'global';
+              const directPeer = getDirectPeer(room, currentUserId);
+              const avatarUrl = directPeer?.avatar_url || '';
+              const avatarLabel = directPeer?.name || room.name || 'Chat';
 
               return (
                 <button
@@ -91,7 +114,13 @@ export default function ChatRoomList({
                   onClick={() => onSelectRoom(room.id)}
                 >
                   <span className="chat-room-list-avatar" aria-hidden="true">
-                    {isGeneral ? <GeneralIcon /> : <DirectIcon />}
+                    {!isGeneral && avatarUrl ? (
+                      <img src={avatarUrl} alt={avatarLabel} className="chat-room-list-avatar-image" />
+                    ) : isGeneral ? (
+                      <GeneralIcon />
+                    ) : (
+                      <span className="chat-room-list-avatar-fallback">{buildInitials(avatarLabel)}</span>
+                    )}
                   </span>
                   <span className="chat-room-list-body">
                     <span className="chat-room-list-row">

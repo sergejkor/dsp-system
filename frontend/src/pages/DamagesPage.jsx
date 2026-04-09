@@ -138,7 +138,7 @@ export default function DamagesPage() {
         />
         <button
           type="button"
-          className="cars-btn cars-btn--primary"
+          className="btn-primary damages-add-btn"
           onClick={() => setAddOpen(true)}
         >
           + Add Damage
@@ -317,7 +317,16 @@ export default function DamagesPage() {
         /* Page-only typography: slightly more compact (20–25%) */
         .damages-page h2 { font-size: 1.35rem; line-height: 1.25; }
         .damages-page .muted { font-size: 0.85rem; line-height: 1.35; }
-        .damages-page .cars-btn { font-size: 0.82rem; padding: 0.42rem 0.65rem; }
+        .damages-page .damages-add-btn {
+          font-size: 0.82rem;
+          padding: 0.46rem 0.78rem;
+          border-radius: 10px;
+          min-height: 34px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          white-space: nowrap;
+        }
         .damages-page .cars-table { font-size: 0.82rem; }
         .damages-page .cars-table th { font-size: 0.78rem; }
         .damages-page .cars-table th,

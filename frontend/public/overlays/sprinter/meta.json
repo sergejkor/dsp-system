@@ -1,0 +1,18 @@
+{
+  "vehicleType": "sprinter",
+  "version": 1,
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "shots": {
+    "front_left": "sprinter/front_left.svg",
+    "left_side": "sprinter/left_side.svg",
+    "rear_left": "sprinter/rear_left.svg",
+    "rear": "sprinter/rear.svg",
+    "rear_right": "sprinter/rear_right.svg",
+    "right_side": "sprinter/right_side.svg",
+    "front_right": "sprinter/front_right.svg",
+    "front": "sprinter/front.svg"
+  }
+}

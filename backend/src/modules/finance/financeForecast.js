@@ -1,4 +1,5 @@
 import { spawnSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -80,6 +81,14 @@ function resolvePythonBin() {
   if (process.env.FINANCE_PYTHON) return process.env.FINANCE_PYTHON;
   if (process.platform === 'win32') {
     return 'py';
+  }
+  // Prefer local venv if present (server-friendly).
+  // pm2 runs with cwd at backend/, so ".venv-finance" resolves correctly there.
+  try {
+    const venvPy = path.resolve(process.cwd(), '.venv-finance', 'bin', 'python3');
+    if (fs.existsSync(venvPy)) return venvPy;
+  } catch {
+    // ignore fs/path errors; fall back to system python3
   }
   return 'python3';
 }

@@ -16,7 +16,12 @@ import {
   deleteEmployeeDocument,
 } from '../services/employeesApi';
 import { saveAdvances } from '../services/advancesApi';
-import { getEmployeeKpi, saveEmployeeKpiComment } from '../services/payrollApi';
+import {
+  calculatePayroll,
+  getEmployeeKpi,
+  getPayrollHistorySnapshot,
+  saveEmployeeKpiComment,
+} from '../services/payrollApi';
 import { getPaveSessions } from '../services/paveApi';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getSettingsByGroup } from '../services/settingsApi';
@@ -84,12 +89,239 @@ function buildEmployeeContractTemplateOptions({ firstName, lastName, startDate, 
   ];
 }
 
+const EMPLOYEE_HOURLY_RATE_EUR = 16.7;
+const EMPLOYEE_DAILY_PAYOUT_HOURS = 7;
+const PAYROLL_FROZEN_CACHE_KEY = 'dsp.payroll.frozen.lastResult.v1';
+
+function formatHours(value) {
+  const num = Number(value) || 0;
+  return `${num.toFixed(2)} h`;
+}
+
+function formatCurrency(value) {
+  const num = Number(value) || 0;
+  return `${num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+}
+
+function getLastMonthRange() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const from = new Date(y, m - 1, 1);
+  const to = new Date(y, m, 0);
+  const fromDate = from.toISOString().slice(0, 10);
+  const toDate = to.toISOString().slice(0, 10);
+  const month = fromDate.slice(0, 7);
+  return { month, fromDate, toDate };
+}
+
+function getMonthRange(monthValue) {
+  const normalized = String(monthValue || '').slice(0, 7);
+  const match = normalized.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return getLastMonthRange();
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const from = new Date(year, monthIndex, 1);
+  const to = new Date(year, monthIndex + 1, 0);
+  return {
+    month: normalized,
+    fromDate: from.toISOString().slice(0, 10),
+    toDate: to.toISOString().slice(0, 10),
+  };
+}
+
+function normalizeIdentifier(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizePersonalNumber(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const digits = raw.replace(/\D/g, '');
+  return digits ? String(Number(digits)) : raw.toLowerCase();
+}
+
+function normalizePersonalNumberRaw(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function personalNumberMatches(left, right) {
+  const leftRaw = normalizePersonalNumberRaw(left);
+  const rightRaw = normalizePersonalNumberRaw(right);
+  if (leftRaw && rightRaw && leftRaw === rightRaw) return true;
+  const leftDigits = normalizePersonalNumber(left);
+  const rightDigits = normalizePersonalNumber(right);
+  return !!leftDigits && !!rightDigits && leftDigits === rightDigits;
+}
+
+function normalizeNameForMatch(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function getFrozenPayrollCache() {
+  try {
+    const raw = window.localStorage.getItem(PAYROLL_FROZEN_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function getRowHoursValue(row) {
+  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
+    ? row.manual_entry
+    : null;
+  return Number(
+    manualEntry?.payroll_hours ??
+    row.payroll_hours ??
+    row.expected_hours ??
+    row.worked_hours ??
+    row.contract_expected_hours ??
+    0
+  ) || 0;
+}
+
+function getRowVerpflValue(row) {
+  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
+    ? row.manual_entry
+    : null;
+  return Number(
+    manualEntry?.verpfl_mehr ??
+    row.verpfl_mehr_display ??
+    row.verpfl_mehr ??
+    row.verpflegung_mehr ??
+    0
+  ) || 0;
+}
+
+function pickBestPayrollRow(candidates, employeeName) {
+  const list = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+  const normalizedTargetName = normalizeNameForMatch(employeeName);
+  const scored = list.map((row) => {
+    let score = 0;
+    if (
+      normalizedTargetName &&
+      normalizeNameForMatch(row?.name) === normalizedTargetName
+    ) {
+      score += 1000;
+    }
+    const hours = getRowHoursValue(row);
+    if (Number.isFinite(hours) && hours > 0) score += 100;
+    if (Object.prototype.hasOwnProperty.call(row || {}, 'expected_hours')) score += 40;
+    if (Object.prototype.hasOwnProperty.call(row || {}, 'payroll_hours')) score += 35;
+    const verpfl = getRowVerpflValue(row);
+    if (verpfl >= 0) score += 10;
+    return { row, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.row || list[0];
+}
+
+function getFrozenPayrollRowFromCache({ month, kenjoEmployeeId, pnCandidates = [], employeeName }) {
+  try {
+    const cached = getFrozenPayrollCache();
+    if (!cached) return null;
+    if (String(cached?.month || '').slice(0, 7) !== String(month || '').slice(0, 7)) return null;
+    const rows = Array.isArray(cached?.rows) ? cached.rows : [];
+    if (!rows.length) return null;
+
+    const rowsByKenjoId = rows.filter(
+      (item) => normalizeIdentifier(item?.kenjo_employee_id) === normalizeIdentifier(kenjoEmployeeId)
+    );
+    if (rowsByKenjoId.length) return pickBestPayrollRow(rowsByKenjoId, employeeName);
+
+    const matchedByPn = rows.filter((item) =>
+      pnCandidates.some((pn) => personalNumberMatches(item?.pn, pn))
+    );
+    if (matchedByPn.length) return pickBestPayrollRow(matchedByPn, employeeName);
+    if (!matchedByPn.length && employeeName) {
+      const byName = rows.filter(
+        (item) => normalizeNameForMatch(item?.name) === normalizeNameForMatch(employeeName)
+      );
+      if (byName.length) return pickBestPayrollRow(byName, employeeName);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function buildEmployeePayrollCardsFromRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
+    ? row.manual_entry
+    : null;
+  const payrollHours = getRowHoursValue(row);
+  const overtimeHours = Number(
+    manualEntry?.overtime_hours ??
+    row.overtime_hours ??
+    row.overtime ??
+    0
+  ) || 0;
+  const verpflMehr = getRowVerpflValue(row);
+  const fahrtGeld = Number(
+    manualEntry?.fahrt_geld ??
+    row.fahrt_geld_display ??
+    row.fahrt_geld ??
+    row.fahrtgeld ??
+    0
+  ) || 0;
+  const krankDays = Number(
+    manualEntry?.krank_days ??
+    row.krank_days ??
+    row.sick_days ??
+    row.kranktage ??
+    0
+  ) || 0;
+  const urlaubDays = Number(
+    manualEntry?.urlaub_days ??
+    row.urlaub_days ??
+    row.vacation_days ??
+    row.urlaubstage ??
+    0
+  ) || 0;
+  const workedHoursPay = payrollHours * EMPLOYEE_HOURLY_RATE_EUR;
+  const overtimePay = overtimeHours * EMPLOYEE_HOURLY_RATE_EUR;
+  const krankgeld = krankDays * EMPLOYEE_DAILY_PAYOUT_HOURS * EMPLOYEE_HOURLY_RATE_EUR;
+  const urlaubgeld = urlaubDays * EMPLOYEE_DAILY_PAYOUT_HOURS * EMPLOYEE_HOURLY_RATE_EUR;
+  const bruttoLohn =
+    workedHoursPay +
+    overtimePay +
+    verpflMehr +
+    fahrtGeld +
+    krankgeld +
+    urlaubgeld;
+  return {
+    workedHours: payrollHours,
+    overtimeHours,
+    verpflMehr,
+    fahrtGeld,
+    krankDays,
+    urlaubDays,
+    krankgeld,
+    urlaubgeld,
+    workedHoursPay,
+    overtimePay,
+    bruttoLohn,
+  };
+}
+
 export default function EmployeeProfilePage() {
-  const { language } = useAppSettings();
+  const { language, isDark } = useAppSettings();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const kenjoEmployeeId = location.state?.kenjoEmployeeId ?? searchParams.get('kenjo_employee_id');
   const localEmployeeId = location.state?.employeeId;
+  const payrollRowFromState = location.state?.payrollRow ?? null;
+  const payrollContextMonthFromState = String(location.state?.payrollContext?.month || '').slice(0, 7);
   const [employee, setEmployee] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(null);
@@ -146,7 +378,9 @@ export default function EmployeeProfilePage() {
   const [vacationDaysOverrideDraft, setVacationDaysOverrideDraft] = useState('');
   const [vacationDaysOverrideSaving, setVacationDaysOverrideSaving] = useState(false);
   const [vacationDaysOverrideError, setVacationDaysOverrideError] = useState('');
+  const [lastMonthPayrollCards, setLastMonthPayrollCards] = useState(null);
   const contractFileInputRef = useRef(null);
+  const employeeDocFileInputRef = useRef(null);
 
   useEffect(() => {
     if (!kenjoEmployeeId && !localEmployeeId) return;
@@ -223,6 +457,143 @@ export default function EmployeeProfilePage() {
       .catch((e) => setKpiError(String(e?.message || e)))
       .finally(() => setKpiLoading(false));
   }, [showDaPerformance, kenjoEmployeeId, employee]);
+
+  useEffect(() => {
+    if (!kenjoEmployeeId) {
+      setLastMonthPayrollCards(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const lastMonth = getLastMonthRange();
+        const frozenCache = getFrozenPayrollCache();
+        const selectedMonth =
+          String(payrollContextMonthFromState || '').slice(0, 7) ||
+          String(frozenCache?.month || '').slice(0, 7) ||
+          lastMonth.month;
+        const monthRange = getMonthRange(selectedMonth);
+        const month = monthRange.month;
+        const fromDate =
+          String(frozenCache?.month || '').slice(0, 7) === month
+            ? String(frozenCache?.from || monthRange.fromDate).slice(0, 10)
+            : monthRange.fromDate;
+        const toDate =
+          String(frozenCache?.month || '').slice(0, 7) === month
+            ? String(frozenCache?.to || monthRange.toDate).slice(0, 10)
+            : monthRange.toDate;
+        const rowFromStateMatches =
+          payrollRowFromState &&
+          normalizeIdentifier(payrollRowFromState?.kenjo_employee_id) === normalizeIdentifier(kenjoEmployeeId) &&
+          payrollContextMonthFromState === month
+            ? payrollRowFromState
+            : null;
+        if (rowFromStateMatches) {
+          const cards = buildEmployeePayrollCardsFromRow(rowFromStateMatches);
+          if (!cancelled) setLastMonthPayrollCards(cards);
+          return;
+        }
+        const employeeName = normalizeNameForMatch(
+          employee?.displayName ||
+          [employee?.firstName, employee?.lastName].filter(Boolean).join(' ')
+        );
+        const employeePn = String(
+          employee?.work?.employeeNumber ||
+          employee?.account?.employeeNumber ||
+          ''
+        ).trim();
+        const cachedRow = getFrozenPayrollRowFromCache({
+          month,
+          kenjoEmployeeId,
+          pnCandidates: [employeePn].filter(Boolean),
+          employeeName,
+        });
+        if (cachedRow) {
+          const cards = buildEmployeePayrollCardsFromRow(cachedRow);
+          if (!cancelled) setLastMonthPayrollCards(cards);
+          return;
+        }
+        if (!employee) {
+          if (!cancelled) setLastMonthPayrollCards(null);
+          return;
+        }
+        let rows = [];
+        try {
+          const snapshot = await getPayrollHistorySnapshot(month);
+          const snapshotRows =
+            (Array.isArray(snapshot?.payload?.rows) && snapshot.payload.rows) ||
+            (Array.isArray(snapshot?.rows) && snapshot.rows) ||
+            (Array.isArray(snapshot?.payload?.data?.rows) && snapshot.payload.data.rows) ||
+            [];
+          if (snapshotRows.length > 0) {
+            rows = snapshotRows;
+          }
+        } catch {
+          rows = [];
+        }
+        if (!rows.length) {
+          const result = await calculatePayroll(month, fromDate, toDate);
+          rows = Array.isArray(result?.rows) ? result.rows : [];
+        }
+        const employeeNameLive = normalizeNameForMatch(
+          employee?.displayName ||
+          [employee?.firstName, employee?.lastName].filter(Boolean).join(' ')
+        );
+        const kenjoIdCandidates = [
+          kenjoEmployeeId,
+          employee?._id,
+          employee?.id,
+        ]
+          .map((value) => normalizeIdentifier(value))
+          .filter(Boolean);
+        const rowsByKenjoId = rows.filter((item) => {
+          const rowIds = [
+            item?.kenjo_employee_id,
+            item?.kenjo_user_id,
+            item?.employee_id,
+            item?.id,
+          ]
+            .map((value) => normalizeIdentifier(value))
+            .filter(Boolean);
+          return kenjoIdCandidates.some((candidate) => rowIds.includes(candidate));
+        });
+        const pnCandidates = [...new Set([employeePn].filter(Boolean))];
+
+        const findByPn = (pnValue) =>
+          rows.filter((item) => personalNumberMatches(item?.pn, pnValue));
+
+        let row = pickBestPayrollRow(rowsByKenjoId, employeeNameLive);
+        if (!row) {
+          for (const pn of pnCandidates) {
+            const matches = findByPn(pn);
+            if (!matches.length) continue;
+            row = pickBestPayrollRow(matches, employeeNameLive);
+            if (row) break;
+          }
+        }
+        if (!row && employeeNameLive) {
+          row = rows.find((item) => normalizeNameForMatch(item?.name) === employeeNameLive) || null;
+        }
+        if (!row && pnCandidates.length > 0) {
+          row = rows.find((item) => personalNumberMatches(item?.pn, pnCandidates[0])) || null;
+        }
+        if (!row || cancelled) {
+          if (!cancelled) setLastMonthPayrollCards(null);
+          return;
+        }
+        const cards = buildEmployeePayrollCardsFromRow(row);
+        if (!cancelled) {
+          setLastMonthPayrollCards(cards);
+        }
+      } catch (_) {
+        if (!cancelled) setLastMonthPayrollCards(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [kenjoEmployeeId, employee, payrollRowFromState]);
 
   const openKpiCommentFromMain = async () => {
     if (!kenjoEmployeeId || !employee) return;
@@ -415,6 +786,49 @@ export default function EmployeeProfilePage() {
       return rescueMonth === currentMonth || rescueMonth === previousMonth;
     });
   })();
+
+  const employeeSectionStyle = {
+    marginBottom: '1rem',
+    padding: '0.75rem',
+    borderRadius: 8,
+    background: isDark ? 'rgba(10, 20, 37, 0.9)' : '#f5f5f5',
+    border: isDark ? '1px solid rgba(132, 162, 214, 0.32)' : '1px solid #e5e7eb',
+    color: isDark ? '#eaf2ff' : '#111827',
+  };
+
+  const employeeMutedTextStyle = {
+    color: isDark ? '#9bb0d1' : '#666',
+  };
+
+  const modalOverlayStyle = {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.46)',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    padding: '8vh 1rem 1rem',
+    zIndex: 1000,
+  };
+
+  const modalCardStyle = {
+    background: isDark ? 'rgba(10, 20, 37, 0.96)' : '#ffffff',
+    color: isDark ? '#eaf2ff' : '#111827',
+    border: isDark ? '1px solid rgba(132, 162, 214, 0.32)' : '1px solid #e5e7eb',
+    borderRadius: 12,
+    boxShadow: isDark ? '0 14px 36px rgba(1, 8, 22, 0.5)' : '0 4px 20px rgba(0,0,0,0.15)',
+    width: 'calc(100% - 2rem)',
+    maxHeight: '84vh',
+    overflow: 'auto',
+  };
+
+  const modalInputStyle = {
+    background: isDark ? 'rgba(9, 19, 34, 0.92)' : '#fff',
+    color: isDark ? '#eaf2ff' : '#111827',
+    border: isDark ? '1px solid rgba(132, 162, 214, 0.35)' : '1px solid #d1d5db',
+    borderRadius: 8,
+    padding: '0.5rem',
+  };
 
   if (!kenjoEmployeeId && !localEmployeeId) {
     return (
@@ -807,34 +1221,34 @@ export default function EmployeeProfilePage() {
                 Edit
               </button>
               {kenjoEmployeeId && (
-                <button type="button" className="btn-secondary" onClick={openAdvanceDialog}>
-                  Add Advance
-                </button>
-              )}
+                  <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openAdvanceDialog}>
+                    Add Advance
+                  </button>
+                )}
               {kenjoEmployeeId && (
-                <button type="button" className="btn-secondary" onClick={openDaPerformance}>
-                  DA Performance
-                </button>
-              )}
+                  <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openDaPerformance}>
+                    DA Performance
+                  </button>
+                )}
               {kenjoEmployeeId && (
-                <button type="button" className="btn-secondary" onClick={openRescueModal} disabled={rescueSaving}>
-                  Add Rescue
-                </button>
-              )}
+                  <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openRescueModal} disabled={rescueSaving}>
+                    Add Rescue
+                  </button>
+                )}
               {kenjoEmployeeId && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={openKpiCommentFromMain}
-                  disabled={kpiLoading}
-                >
-                  Add comment
-                </button>
-              )}
+                  <button
+                    type="button"
+                    className="btn-secondary employee-profile-toolbar-btn"
+                    onClick={openKpiCommentFromMain}
+                    disabled={kpiLoading}
+                  >
+                    Add comment
+                  </button>
+                )}
               {kenjoEmployeeId && (
                 <>
-                  <Link to={`/pave/new?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary">Create PAVE Session</Link>
-                  <Link to={`/pave?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary">View PAVE History</Link>
+                  <Link to={`/pave/new?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary employee-profile-toolbar-btn">Create PAVE Session</Link>
+                  <Link to={`/pave?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary employee-profile-toolbar-btn">View PAVE History</Link>
                 </>
               )}
               {kenjoEmployeeId && isActive && (
@@ -846,6 +1260,47 @@ export default function EmployeeProfilePage() {
           )}
         </div>
       </div>
+
+      {kenjoEmployeeId && (
+        <div
+          style={{
+            marginTop: '1rem',
+            marginBottom: '1rem',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+            gap: '0.55rem',
+          }}
+        >
+          <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+            <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Worked Hours (Last Month)</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatHours(lastMonthPayrollCards?.workedHours ?? 0)}</div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+            <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Overtime (Last Month)</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatHours(lastMonthPayrollCards?.overtimeHours ?? 0)}</div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+            <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Verpfl. mehr. (Last Month)</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.verpflMehr ?? 0)}</div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+            <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Fahrt. Geld (Last Month)</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.fahrtGeld ?? 0)}</div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+            <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Krankgeld (Last Month)</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.krankgeld ?? 0)}</div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+            <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Urlaubgeld (Last Month)</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.urlaubgeld ?? 0)}</div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+            <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Brutto Lohn (Letzte Monat)</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.bruttoLohn ?? 0)}</div>
+          </div>
+        </div>
+      )}
 
       {showDeactivateConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
@@ -874,15 +1329,15 @@ export default function EmployeeProfilePage() {
       )}
 
       {showAdvanceDialog && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 520, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalCardStyle, maxWidth: 520, padding: '1.5rem' }}>
             <h3 style={{ margin: '0 0 1rem' }}>Add Advance</h3>
             {advanceError && <p className="error-text" style={{ margin: '0 0 0.5rem' }}>{advanceError}</p>}
             <p style={{ marginBottom: '0.25rem' }}><strong>Month</strong></p>
             <select
               value={advanceMonth}
               onChange={(e) => setAdvanceMonth(e.target.value)}
-              style={{ width: '100%', marginBottom: '1rem', padding: '0.5rem' }}
+              style={{ ...modalInputStyle, width: '100%', marginBottom: '1rem' }}
             >
               {monthOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -901,14 +1356,14 @@ export default function EmployeeProfilePage() {
                   placeholder="Amount"
                   value={advanceLines[i]?.amount ?? ''}
                   onChange={(e) => setAdvanceLine(i, 'amount', e.target.value)}
-                  style={{ padding: '0.5rem' }}
+                  style={modalInputStyle}
                 />
                 <input
                   type="text"
                   placeholder="Comment"
                   value={advanceLines[i]?.code_comment ?? ''}
                   onChange={(e) => setAdvanceLine(i, 'code_comment', e.target.value)}
-                  style={{ padding: '0.5rem' }}
+                  style={modalInputStyle}
                 />
               </div>
             ))}
@@ -923,8 +1378,8 @@ export default function EmployeeProfilePage() {
       )}
 
       {showDaPerformance && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 560, maxHeight: '85vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalCardStyle, maxWidth: 560, padding: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0 }}>DA Performance — KPI by week</h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -958,15 +1413,15 @@ export default function EmployeeProfilePage() {
                   if (!nums.length) return null;
                   const avg = nums.reduce((sum, v) => sum + v, 0) / nums.length;
                   return (
-                    <p style={{ margin: '0 0 0.5rem', fontSize: '0.9rem', color: '#111827' }}>
+                    <p style={{ margin: '0 0 0.5rem', fontSize: '0.9rem', color: isDark ? '#eaf2ff' : '#111827' }}>
                       <strong>Average KPI:</strong> {avg.toFixed(2)} ({getKpiRatingLabel(avg)})
                     </p>
                   );
                 })()}
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', color: isDark ? '#eaf2ff' : '#111827' }}>
                   <thead>
-                    <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                    <tr style={{ borderBottom: isDark ? '2px solid rgba(132, 162, 214, 0.32)' : '2px solid #e5e7eb' }}>
                       <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Year</th>
                       <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Week</th>
                       <th style={{ textAlign: 'right', padding: '0.5rem 0.75rem' }}>KPI</th>
@@ -983,7 +1438,7 @@ export default function EmployeeProfilePage() {
                       </tr>
                     ) : (
                       kpiRows.map((row, idx) => (
-                        <tr key={`${row.year}-${row.week}-${idx}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <tr key={`${row.year}-${row.week}-${idx}`} style={{ borderBottom: isDark ? '1px solid rgba(132, 162, 214, 0.22)' : '1px solid #f3f4f6' }}>
                           <td style={{ padding: '0.5rem 0.75rem' }}>{row.year}</td>
                           <td style={{ padding: '0.5rem 0.75rem' }}>{row.week}</td>
                           <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>{row.kpi != null ? Number(row.kpi) : '—'}</td>
@@ -1004,13 +1459,14 @@ export default function EmployeeProfilePage() {
         </div>
       )}
       {showKpiCommentDialog && kpiRows.length > 0 && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001 }} onClick={() => !kpiCommentSaving && setShowKpiCommentDialog(false)}>
-          <div style={{ background: 'white', padding: '1.25rem', borderRadius: 12, width: '90%', maxWidth: 480, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ ...modalOverlayStyle, zIndex: 1001 }} onClick={() => !kpiCommentSaving && setShowKpiCommentDialog(false)}>
+          <div style={{ ...modalCardStyle, padding: '1.25rem', width: '90%', maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 0.75rem' }}>Add KPI comment</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.9rem' }}>
                 <span>Calendar week</span>
                 <select
+                  style={modalInputStyle}
                   value={kpiCommentWeekKey}
                   onChange={(e) => {
                     const key = e.target.value;
@@ -1033,14 +1489,14 @@ export default function EmployeeProfilePage() {
                   rows={3}
                   value={kpiCommentText}
                   onChange={(e) => setKpiCommentText(e.target.value)}
-                  style={{ resize: 'vertical', padding: '0.5rem' }}
+                  style={{ ...modalInputStyle, resize: 'vertical' }}
                 />
               </label>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>
               <button
                 type="button"
-                className="btn-secondary"
+                className="btn-primary"
                 onClick={() => setShowKpiCommentDialog(false)}
                 disabled={kpiCommentSaving}
               >
@@ -1097,18 +1553,25 @@ export default function EmployeeProfilePage() {
         const yMax = 100;
         const yScale = (v) => pad.top + plotH - (Number(v) - yMin) / (yMax - yMin) * plotH;
         const xScale = (i) => pad.left + (i / Math.max(1, points.length - 1)) * plotW;
+        const axisStroke = isDark ? 'rgba(147, 197, 253, 0.42)' : '#e5e7eb';
+        const gridStroke = isDark ? 'rgba(96, 165, 250, 0.14)' : '#f3f4f6';
+        const axisLabelColor = isDark ? '#9bb0d1' : '#6b7280';
+        const lineStroke = isDark ? '#8cc4ff' : '#0f172a';
+        const pointFill = isDark ? '#dbeafe' : '#0f172a';
+        const chartBackground = isDark ? 'rgba(7, 18, 35, 0.96)' : '#ffffff';
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001 }}>
-            <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, width: '92vw', maxWidth: 960, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+          <div style={{ ...modalOverlayStyle, zIndex: 1001, justifyContent: 'center', alignItems: 'center', paddingTop: '2rem', paddingBottom: '2rem' }}>
+            <div style={{ ...modalCardStyle, padding: '1.5rem', width: '92vw', maxWidth: 960, maxHeight: '90vh' }}>
               <h3 style={{ margin: '0 0 1rem' }}>KPI by week — Graph</h3>
-              <div style={{ overflowX: 'auto', overflowY: 'auto' }}>
+              <div style={{ overflowX: 'auto', overflowY: 'auto', background: isDark ? 'linear-gradient(180deg, rgba(5, 14, 30, 0.96), rgba(8, 22, 42, 0.9))' : '#ffffff', border: isDark ? '1px solid rgba(120, 150, 206, 0.22)' : '1px solid #e5e7eb', borderRadius: 16, padding: '0.75rem', boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.04)' : 'inset 0 1px 0 rgba(255,255,255,0.7)' }}>
                 <svg width={chartW} height={chartH} style={{ display: 'block', minWidth: chartW }} viewBox={`0 0 ${chartW} ${chartH}`}>
-                  <line x1={pad.left} y1={pad.top} x2={pad.left} y2={chartH - pad.bottom} stroke="#e5e7eb" strokeWidth="1" />
-                  <line x1={pad.left} y1={chartH - pad.bottom} x2={chartW - pad.right} y2={chartH - pad.bottom} stroke="#e5e7eb" strokeWidth="1" />
+                  <rect x="0" y="0" width={chartW} height={chartH} rx="18" fill={chartBackground} />
+                  <line x1={pad.left} y1={pad.top} x2={pad.left} y2={chartH - pad.bottom} stroke={axisStroke} strokeWidth="1" />
+                  <line x1={pad.left} y1={chartH - pad.bottom} x2={chartW - pad.right} y2={chartH - pad.bottom} stroke={axisStroke} strokeWidth="1" />
                   {[0, 25, 50, 75, 100].map((v) => (
                     <g key={v}>
-                      <line x1={pad.left} y1={yScale(v)} x2={chartW - pad.right} y2={yScale(v)} stroke="#f3f4f6" strokeWidth="1" strokeDasharray="2,2" />
-                      <text x={pad.left - 8} y={yScale(v) + 5} textAnchor="end" fontSize="12" fill="#6b7280">{v}</text>
+                      <line x1={pad.left} y1={yScale(v)} x2={chartW - pad.right} y2={yScale(v)} stroke={gridStroke} strokeWidth="1" strokeDasharray="2,2" />
+                      <text x={pad.left - 8} y={yScale(v) + 5} textAnchor="end" fontSize="12" fill={axisLabelColor}>{v}</text>
                     </g>
                   ))}
                   {KPI_THRESHOLDS.map(({ value, label, color }) => (
@@ -1121,12 +1584,12 @@ export default function EmployeeProfilePage() {
                     <g>
                       <polyline
                         fill="none"
-                        stroke="#0f172a"
+                        stroke={lineStroke}
                         strokeWidth="2.5"
                         points={points.map((p, i) => `${xScale(i)},${yScale(p.kpiNum)}`).join(' ')}
                       />
                       {points.map((p, i) => (
-                        <circle key={`${p.year}-${p.week}`} cx={xScale(i)} cy={yScale(p.kpiNum)} r="5" fill="#0f172a" />
+                        <circle key={`${p.year}-${p.week}`} cx={xScale(i)} cy={yScale(p.kpiNum)} r="5" fill={pointFill} stroke={lineStroke} strokeWidth="1.5" />
                       ))}
                     </g>
                   )}
@@ -1134,7 +1597,7 @@ export default function EmployeeProfilePage() {
                     const x = xScale(i);
                     const y = chartH - 22;
                     return (
-                      <text key={`x-${i}`} x={x} y={y} textAnchor="middle" fontSize="10" fill="#6b7280" transform={`rotate(-90, ${x}, ${y})`}>
+                      <text key={`x-${i}`} x={x} y={y} textAnchor="middle" fontSize="10" fill={axisLabelColor} transform={`rotate(-90, ${x}, ${y})`}>
                         {p.year} W{p.week}
                       </text>
                     );
@@ -1186,8 +1649,8 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
-      {kenjoEmployeeId && paveSessions.length >= 0 && (
-        <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f5f5f5', borderRadius: 8 }}>
+      {false && kenjoEmployeeId && paveSessions.length >= 0 && (
+        <div style={employeeSectionStyle}>
           <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>PAVE Inspections</h3>
           <p style={{ margin: 0, fontSize: '0.9rem' }}>
             Last: {paveSessions[0] ? (
@@ -1203,7 +1666,7 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
-      <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f5f5f5', borderRadius: 8 }}>
+      <div style={employeeSectionStyle}>
         <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Employee documents</h3>
         {employeeDocError && <p className="error-text" style={{ margin: '0 0 0.5rem' }}>{employeeDocError}</p>}
         <form
@@ -1248,6 +1711,9 @@ export default function EmployeeProfilePage() {
               const refreshed = await getEmployeeDocuments(employeeDocRef);
               setEmployeeDocs(Array.isArray(refreshed) ? refreshed : []);
               setEmployeeDocFiles([]);
+              if (employeeDocFileInputRef.current) {
+                employeeDocFileInputRef.current.value = '';
+              }
               setEmployeeDocType(employeeDocTypeOptions[0] || '');
               setEmployeeDocumentTemplate('');
               setEmployeeContractTemplateDate('');
@@ -1295,11 +1761,29 @@ export default function EmployeeProfilePage() {
           ) : <div />}
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <span>Files</span>
-            <input
-              type="file"
-              multiple={!(selectedEmployeeDocTypeConfig?.exactNameEnabled && employeeDocumentTemplateOptions.length)}
-              onChange={(e) => setEmployeeDocFiles(Array.from(e.target.files || []))}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <input
+                ref={employeeDocFileInputRef}
+                type="file"
+                style={{ display: 'none' }}
+                multiple={!(selectedEmployeeDocTypeConfig?.exactNameEnabled && employeeDocumentTemplateOptions.length)}
+                onChange={(e) => setEmployeeDocFiles(Array.from(e.target.files || []))}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => employeeDocFileInputRef.current?.click()}
+                disabled={employeeDocUploading}
+                style={{ minWidth: 132 }}
+              >
+                Choose files
+              </button>
+              <span style={{ ...employeeMutedTextStyle, fontSize: '0.85rem' }}>
+                {employeeDocFiles.length
+                  ? `${employeeDocFiles.length} file(s) selected`
+                  : 'No file selected'}
+              </span>
+            </div>
           </label>
           <button type="submit" className="btn-primary" disabled={employeeDocUploading}>
             {employeeDocUploading ? 'Uploading…' : 'Upload files'}
@@ -1333,9 +1817,9 @@ export default function EmployeeProfilePage() {
             <p style={{ margin: 0, color: '#666' }}>No documents uploaded for selected type.</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', color: isDark ? '#eaf2ff' : '#111827' }}>
                 <thead>
-                  <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                  <tr style={{ borderBottom: isDark ? '2px solid rgba(132, 162, 214, 0.32)' : '2px solid #e5e7eb' }}>
                     <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Type</th>
                     <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>File name</th>
                     <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Uploaded</th>
@@ -1344,7 +1828,7 @@ export default function EmployeeProfilePage() {
                 </thead>
                 <tbody>
                   {filteredEmployeeDocs.map((doc) => (
-                    <tr key={doc.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <tr key={doc.id} style={{ borderBottom: isDark ? '1px solid rgba(132, 162, 214, 0.22)' : '1px solid #f3f4f6' }}>
                       <td style={{ padding: '0.5rem 0.75rem' }}>{doc.document_type || '—'}</td>
                       <td style={{ padding: '0.5rem 0.75rem' }}>{doc.file_name || '—'}</td>
                       <td style={{ padding: '0.5rem 0.75rem' }}>{doc.created_at ? new Date(doc.created_at).toLocaleString() : '—'}</td>
@@ -1438,7 +1922,7 @@ export default function EmployeeProfilePage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '-0.35rem', marginBottom: contractExtensions.length || showContractExtensionForm || contractExtensionError ? '0.5rem' : 0 }}>
               <button
                 type="button"
-                className="btn-secondary"
+                className="btn-primary"
                 onClick={openContractExtensionForm}
                 disabled={contractExtensions.length >= 2 || contractExtensionSaving}
               >
@@ -1553,7 +2037,7 @@ export default function EmployeeProfilePage() {
               />
               <button
                 type="button"
-                className="btn-secondary"
+                className="btn-primary"
                 onClick={saveVacationDaysOverride}
                 disabled={vacationDaysOverrideSaving}
               >
@@ -1729,15 +2213,15 @@ export default function EmployeeProfilePage() {
       </div>
 
       {showRescueModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 420, width: 'calc(100% - 2rem)', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
-            <h3 style={{ margin: '0 0 1rem' }}>Add Rescue</h3>
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 420, width: 'calc(100% - 2rem)' }}>
+            <h3 style={{ margin: '0 0 1rem', color: isDark ? '#f8fbff' : '#111827' }}>Add Rescue</h3>
             {rescueError ? <p className="error-text" style={{ margin: '0 0 0.75rem' }}>{rescueError}</p> : null}
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', color: isDark ? '#d7e5ff' : '#111827' }}>
               <span>Date</span>
-              <input type="date" value={rescueDate} onChange={(e) => setRescueDate(e.target.value)} />
+              <input type="date" value={rescueDate} onChange={(e) => setRescueDate(e.target.value)} style={modalInputStyle} />
             </label>
-            <p style={{ margin: '0.85rem 0 0', color: '#666', fontSize: '0.9rem' }}>
+            <p style={{ margin: '0.85rem 0 0', color: isDark ? '#9bb0d1' : '#666', fontSize: '0.9rem' }}>
               Each saved rescue adds the configured Rescue bonus from Payroll Settings to Total Bonus.
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem' }}>

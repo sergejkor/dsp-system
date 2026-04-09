@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { getCreateDocumentTemplates } from '../services/settingsApi.js';
 import { getEmployee, listEmployees } from '../services/employeesApi.js';
 import { getKenjoEmployeeProfile } from '../services/kenjoApi.js';
+import { useAppSettings } from '../context/AppSettingsContext.jsx';
 
 function formatDateNormal(value) {
   if (!value) return '—';
@@ -38,6 +39,7 @@ function buildAddressLine(employeeDetails) {
 }
 
 export default function CreateDocumentPage() {
+  const { isDark } = useAppSettings();
   const [employees, setEmployees] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -105,10 +107,50 @@ export default function CreateDocumentPage() {
     return buildAddressLine(employeeDetails);
   }, [employeeDetails]);
 
+  const pageStyle = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '1rem',
+    background: isDark ? 'linear-gradient(180deg, rgba(7, 18, 35, 0.96), rgba(10, 24, 45, 0.92))' : '#ffffff',
+    border: isDark ? '1px solid rgba(132, 162, 214, 0.26)' : undefined,
+    boxShadow: isDark ? '0 20px 40px rgba(1, 8, 22, 0.32)' : undefined,
+    color: isDark ? '#eaf2ff' : '#111827',
+  };
+  const panelStyle = {
+    border: isDark ? '1px solid rgba(132, 162, 214, 0.24)' : '1px solid var(--border)',
+    borderRadius: 14,
+    padding: '1rem 1.1rem',
+    background: isDark ? 'rgba(9, 21, 39, 0.88)' : '#fff',
+    color: isDark ? '#eaf2ff' : '#111827',
+    boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.04)' : 'none',
+  };
+  const altPanelStyle = {
+    ...panelStyle,
+    background: isDark ? 'rgba(12, 27, 49, 0.82)' : '#f8fafc',
+  };
+  const statCardStyle = {
+    marginTop: '1rem',
+    padding: '0.85rem 0.95rem',
+    borderRadius: 12,
+    background: isDark ? 'rgba(16, 34, 58, 0.92)' : '#f8fafc',
+    border: isDark ? '1px solid rgba(132, 162, 214, 0.22)' : '1px solid #dbe2ea',
+  };
+  const dividerStyle = {
+    marginTop: '1rem',
+    borderTop: isDark ? '1px solid rgba(132, 162, 214, 0.2)' : '1px solid #dbe2ea',
+    paddingTop: '1rem',
+  };
+  const headingStyle = {
+    color: isDark ? '#f8fbff' : '#111827',
+  };
+  const helperTextStyle = {
+    color: isDark ? '#9bb0d1' : '#6b7280',
+  };
+
   return (
-    <section className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+    <section className="card" style={pageStyle}>
       <div>
-        <h2 style={{ marginBottom: '0.35rem' }}>Create Document</h2>
+        <h2 style={{ marginBottom: '0.35rem', ...headingStyle }}>Create Document</h2>
         <p className="muted" style={{ margin: 0, maxWidth: '60rem' }}>
           Choose an employee and then choose one of the document templates uploaded in{' '}
           <Link to="/settings/create-documents">Settings → Create Document</Link>. This page now reads those uploaded
@@ -130,14 +172,7 @@ export default function CreateDocumentPage() {
           alignItems: 'start',
         }}
       >
-        <div
-          style={{
-            border: '1px solid var(--border)',
-            borderRadius: 14,
-            padding: '1rem 1.1rem',
-            background: '#fff',
-          }}
-        >
+        <div style={panelStyle}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             <strong>Employee</strong>
             <select
@@ -172,29 +207,14 @@ export default function CreateDocumentPage() {
             </select>
           </label>
 
-          <div
-            style={{
-              marginTop: '1rem',
-              padding: '0.85rem 0.95rem',
-              borderRadius: 12,
-              background: '#f8fafc',
-              border: '1px solid #dbe2ea',
-            }}
-          >
+          <div style={statCardStyle}>
             <div className="muted small">Uploaded templates available</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{templates.length}</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 700, ...headingStyle }}>{templates.length}</div>
           </div>
         </div>
 
-        <div
-          style={{
-            border: '1px solid var(--border)',
-            borderRadius: 14,
-            padding: '1rem 1.1rem',
-            background: '#f8fafc',
-          }}
-        >
-          <h3 style={{ marginTop: 0 }}>Current selection</h3>
+        <div style={altPanelStyle}>
+          <h3 style={{ marginTop: 0, ...headingStyle }}>Current selection</h3>
 
           {detailsLoading ? (
             <p className="muted">Loading employee details…</p>
@@ -231,15 +251,9 @@ export default function CreateDocumentPage() {
             </p>
           )}
 
-          <div
-            style={{
-              marginTop: '1rem',
-              borderTop: '1px solid #dbe2ea',
-              paddingTop: '1rem',
-            }}
-          >
+          <div style={dividerStyle}>
             <strong>Next step</strong>
-            <p style={{ margin: '0.45rem 0 0' }}>
+            <p style={{ margin: '0.45rem 0 0', ...helperTextStyle }}>
               The page is now connected to the uploaded document templates. The remaining step is the generator itself:
               contract dates, placeholder replacement and automatic file download after pressing <em>Create Document</em>.
             </p>

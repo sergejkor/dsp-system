@@ -17,6 +17,7 @@ export const APP_ACCESSIBLE_PAGES = [
   { path: '/analytics', labelKey: 'nav.analytics', permissionCode: 'page_analytics' },
   { path: '/gift-cards', labelKey: 'nav.giftCards', permissionCode: 'page_gift_cards' },
   { path: '/car-planning', labelKey: 'nav.carPlanning', permissionCode: 'page_car_planning' },
+  { path: '/fleet-inspections', labelKey: 'nav.internalInspections' },
   { path: '/fines', labelKey: 'nav.fines', permissionCode: 'page_fines' },
   { path: '/damages', labelKey: 'nav.damages', permissionCode: 'page_damages' },
   { path: '/insurance', labelKey: 'nav.insurance', permissionCode: 'page_insurance' },

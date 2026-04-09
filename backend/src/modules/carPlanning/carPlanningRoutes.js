@@ -67,8 +67,15 @@ router.get('/report', async (req, res) => {
 
 router.post('/add-car', async (req, res) => {
   try {
-    const { number_plate, vin, source_type, active_from, active_to } = req.body || {};
-    const car = await carPlanningService.addCarWithWindow(number_plate, vin, source_type, active_from || null, active_to || null);
+    const { number_plate, vin, source_type, service_type, active_from, active_to } = req.body || {};
+    const car = await carPlanningService.addCarWithWindow(
+      number_plate,
+      vin,
+      source_type,
+      service_type || null,
+      active_from || null,
+      active_to || null
+    );
     res.json(car);
   } catch (err) {
     console.error('POST /api/car-planning/add-car', err);

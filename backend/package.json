@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "build": "node -e \"console.log('Backend does not require a build step.')\"",
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test src/modules/pave/__tests__/*.test.js",
+    "test": "node --test src/modules/pave/__tests__/*.test.js src/modules/vehicleInspections/__tests__/*.test.js",
     "transfer:sheets": "node scripts/transfer-from-sheets.js",
     "pave:backfill": "node scripts/pave-backfill.js",
     "migrate": "node scripts/run-migration.js",
@@ -28,7 +29,9 @@
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pg": "^8.13.0",
+    "pixelmatch": "^7.1.0",
     "playwright": "^1.58.2",
+    "sharp": "^0.34.5",
     "ws": "^8.20.0",
     "xlsx": "^0.18.5"
   }

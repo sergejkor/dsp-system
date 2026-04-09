@@ -552,9 +552,23 @@ body.dark .topbar-user-card .sidebar-user-icons-row {
   box-sizing: border-box;
 }
 
+.content.content--chat {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
 .content-body {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.content-body.content-body--chat {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .kenjo-sync-toolbar {
@@ -583,6 +597,9 @@ body.dark .topbar-user-card .sidebar-user-icons-row {
   align-items: center;
   gap: 1rem;
   margin-bottom: 0.85rem;
+  position: relative;
+  z-index: 40;
+  overflow: visible;
 }
 
 .topbar-search {
@@ -592,6 +609,8 @@ body.dark .topbar-user-card .sidebar-user-icons-row {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  position: relative;
+  z-index: 60;
 }
 
 .topbar-search-shell {
@@ -659,6 +678,44 @@ body.dark .topbar-user-card .sidebar-user-icons-row {
 .topbar-search-status {
   padding-left: 0.95rem;
   font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.topbar-search-results {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0.2rem;
+  right: 0.2rem;
+  z-index: 1200;
+  border-radius: 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--bg-card-strong);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.2);
+  overflow: auto;
+  max-height: min(52vh, 380px);
+}
+
+.topbar-search-result {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.58rem 0.72rem;
+}
+
+.topbar-search-result:hover {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+.topbar-search-result span {
+  font-size: 0.76rem;
   color: var(--text-muted);
 }
 
@@ -907,6 +964,31 @@ body.dark .settings-nav-link.active {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.28));
 }
 
+.employee-profile-toolbar-btn {
+  background: linear-gradient(180deg, #f1f4f9 0%, #dde4ef 100%);
+  color: #1f2937;
+  border-color: rgba(148, 163, 184, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58), 0 10px 18px rgba(15, 23, 42, 0.08);
+}
+
+.employee-profile-toolbar-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f6f8fb 0%, #e5ebf4 100%);
+  border-color: rgba(148, 163, 184, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64), 0 12px 22px rgba(15, 23, 42, 0.1);
+}
+
+body.dark .employee-profile-toolbar-btn {
+  background: linear-gradient(180deg, rgba(121, 137, 166, 0.34) 0%, rgba(69, 85, 112, 0.58) 100%);
+  color: #edf3ff;
+  border-color: rgba(125, 146, 184, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 24px rgba(2, 6, 23, 0.32);
+}
+
+body.dark .employee-profile-toolbar-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(132, 151, 182, 0.4) 0%, rgba(79, 96, 124, 0.68) 100%);
+  border-color: rgba(147, 168, 204, 0.46);
+}
+
 button:disabled {
   opacity: 0.58;
   cursor: not-allowed;
@@ -1032,7 +1114,7 @@ body.dark .scorecard-status--failed {
   font-weight: 600;
   font-size: 0.9rem;
   font-family: inherit;
-  color: #000;
+  color: var(--text);
 }
 .scorecard-grid-header--with-report {
   grid-template-columns: 100px 60px 120px 1fr;
@@ -1045,7 +1127,7 @@ body.dark .scorecard-status--failed {
   align-items: center;
   border-top: 1px solid var(--border);
   background: var(--bg-card);
-  color: #000;
+  color: var(--text);
 }
 .scorecard-row--with-report {
   grid-template-columns: 100px 60px 120px 1fr;
@@ -1059,21 +1141,17 @@ body.dark .scorecard-status--failed {
   gap: 0.35rem;
 }
 .scorecard-report-btn {
-  padding: 4px 8px;
-  font-size: 0.8rem;
-  cursor: pointer;
-  background: transparent;
-  border: 1px solid #2563eb;
-  color: #000;
-  border-radius: 4px;
+  padding: 0.48rem 0.9rem;
+  font-size: 0.82rem;
+  line-height: 1.1;
+  min-height: 36px;
 }
 .scorecard-report-btn:hover {
-  background: #2563eb;
-  color: #000;
+  color: #fff;
 }
 .scorecard-week {
   font-weight: 500;
-  color: #000;
+  color: var(--text);
 }
 .scorecard-icon {
   font-size: 1.25rem;
@@ -1093,20 +1171,20 @@ body.dark .scorecard-status--failed {
   font-weight: 500;
   cursor: pointer;
   background: var(--input-bg);
-  color: #000;
+  color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
   justify-self: start;
 }
 .scorecard-upload-btn:hover:not(:disabled) {
   background: #3b82f6;
-  color: #000;
+  color: #fff;
   border-color: #2563eb;
 }
 .scorecard-upload-btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
-  color: #000;
+  color: var(--text-muted);
 }
 .scorecard-modal-backdrop {
   position: fixed;
@@ -1207,7 +1285,7 @@ body.dark .scorecard-status--failed {
   border: 1px solid var(--border);
   padding: 0.4rem 0.6rem;
   text-align: left;
-  color: #000;
+  color: var(--text);
 }
 .scorecard-report-table th {
   background: var(--bg-card);
@@ -1215,7 +1293,7 @@ body.dark .scorecard-status--failed {
 }
 .scorecard-report-table tr:hover td {
   background: rgba(148, 163, 184, 0.12);
-  color: #000;
+  color: var(--text);
 }
 
 /* Cortex attendance calendar – theme-aware */
@@ -2534,6 +2612,11 @@ body.dark .car-planning-cell-input.car-planning-cell-green:disabled {
   background: rgba(255, 255, 255, 0.62);
 }
 
+.public-form-field--boxed.is-invalid {
+  border-color: rgba(220, 38, 38, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.2);
+}
+
 .public-form-field span {
   font-weight: 600;
   color: var(--text);
@@ -2548,6 +2631,17 @@ body.dark .car-planning-cell-input.car-planning-cell-green:disabled {
   background: var(--bg-card);
   color: var(--text);
   font: inherit;
+}
+
+.public-form-control.is-invalid {
+  border-color: rgba(220, 38, 38, 0.9);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.15);
+}
+
+.public-field-error {
+  color: #dc2626;
+  font-size: 0.78rem;
+  line-height: 1.25;
 }
 
 .public-combo {
@@ -3012,6 +3106,11 @@ body.dark .public-form-field--boxed {
   background: rgba(10, 20, 37, 0.74);
 }
 
+body.dark .public-form-field--boxed.is-invalid {
+  border-color: rgba(248, 113, 113, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.22);
+}
+
 body.dark .public-form-control,
 body.dark .public-form-control[type='date'],
 body.dark .public-form-control[type='text'],
@@ -3027,6 +3126,15 @@ body.dark .public-form-control textarea {
 body.dark .public-form-control::placeholder,
 body.dark .public-form-control option {
   color: #9bb0d1;
+}
+
+body.dark .public-form-control.is-invalid {
+  border-color: rgba(248, 113, 113, 0.95);
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.2);
+}
+
+body.dark .public-field-error {
+  color: #fda4af;
 }
 
 body.dark .public-address-suggestions {
@@ -3140,6 +3248,84 @@ body.dark .cars-page .cars-table td {
 
   .damage-attachments-actions {
     flex-direction: column;
+  }
+}
+
+.public-qr-modal-backdrop {
+  z-index: 1300;
+}
+
+.public-qr-modal {
+  width: min(540px, 100%);
+  text-align: center;
+}
+
+.public-success-modal {
+  width: min(460px, 100%);
+  text-align: center;
+}
+
+.public-company-insurance-qr--modal {
+  margin-top: 0.4rem;
+  padding: 1rem;
+}
+
+@media (max-width: 768px) {
+  .public-page-shell {
+    padding: 0.75rem 0.5rem 1.25rem;
+  }
+
+  .public-page-card {
+    border-radius: 16px;
+    padding: 0.85rem;
+  }
+
+  .public-page-header h1 {
+    font-size: 1.55rem;
+  }
+
+  .public-form-section {
+    border-radius: 14px;
+    padding: 0.75rem;
+  }
+
+  .public-form-grid {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+  }
+
+  .public-language-modal {
+    width: 100%;
+    border-radius: 16px;
+    padding: 1rem;
+  }
+
+  .public-language-modal h2 {
+    font-size: 1.2rem;
+  }
+
+  .public-qr-modal {
+    width: min(96vw, 420px);
+  }
+
+  .public-company-insurance-qr--modal canvas {
+    width: min(82vw, 320px) !important;
+    height: auto !important;
+  }
+
+  .public-page-actions {
+    position: sticky;
+    bottom: 0;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0), rgba(248, 250, 252, 0.98) 40%);
+    padding-top: 0.7rem;
+  }
+
+  body.dark .public-page-actions {
+    background: linear-gradient(180deg, rgba(7, 17, 31, 0), rgba(7, 17, 31, 0.98) 40%);
+  }
+
+  .public-page-actions .btn-primary {
+    width: 100%;
   }
 }
 

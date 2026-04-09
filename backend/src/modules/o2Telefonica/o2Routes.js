@@ -1,10 +1,7 @@
 import { Router } from 'express';
 import { query } from '../../db.js';
-import authMiddleware from '../auth/authMiddleware.js';
 
 const router = Router();
-
-router.use(authMiddleware.requirePermission('page_o2_telefonica'));
 
 /** List all O2 Telefonica entries (users with phone and SIM). */
 router.get('/', async (_req, res) => {

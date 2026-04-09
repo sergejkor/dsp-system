@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { NetworkLoadingBackground } from '../components/NetworkLoadingBackground';
@@ -10,19 +10,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [isBootLoading, setIsBootLoading] = useState(true);
   const { login } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get('return') || searchParams.get('redirect') || '/';
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setIsBootLoading(false);
-    }, 5200);
-
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -38,7 +29,6 @@ export default function LoginPage() {
 
     try {
       await login(trimmedIdentifier, password);
-      await new Promise((resolve) => window.setTimeout(resolve, 4200));
       navigate(returnTo, { replace: true });
     } catch (submitError) {
       setError(submitError.message || 'Unable to sign in.');
@@ -50,7 +40,7 @@ export default function LoginPage() {
   return (
     <NetworkLoadingBackground
       imageSrc="/images/leitcore-login-bg.jpg"
-      isLoading={isBootLoading || submitting}
+      isLoading
       variant="loginDark"
     >
       <main className={styles.page}>

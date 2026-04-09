@@ -186,6 +186,17 @@ router.post('/damage-reports/:id/unread', requireDamageAccess, async (req, res) 
   }
 });
 
+router.post('/damage-reports/:id/add-to-damages', requireDamageAccess, async (req, res) => {
+  try {
+    const result = await publicIntakeService.addDamageReportToDamages(req.params.id);
+    if (!result) return res.status(404).json({ error: 'Damage report not found' });
+    res.json(result);
+  } catch (error) {
+    console.error('POST /api/intake/damage-reports/:id/add-to-damages error', error);
+    res.status(400).json({ error: String(error?.message || error) });
+  }
+});
+
 router.post('/damage-reports/:id/files', requireDamageAccess, async (req, res) => {
   try {
     await runMultiUpload(req, res, 'files');

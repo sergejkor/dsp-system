@@ -122,18 +122,6 @@ function normalizeArrayPayload(json) {
   if (Array.isArray(json)) return json;
   if (Array.isArray(json?.data)) return json.data;
   if (Array.isArray(json?.items)) return json.items;
-  if (Array.isArray(json?.results)) return json.results;
-  if (Array.isArray(json?.rows)) return json.rows;
-  if (Array.isArray(json?.requests)) return json.requests;
-  if (Array.isArray(json?.timeOffRequests)) return json.timeOffRequests;
-  if (Array.isArray(json?.attendances)) return json.attendances;
-  if (Array.isArray(json?.userAccounts)) return json.userAccounts;
-  if (Array.isArray(json?.employees)) return json.employees;
-  if (Array.isArray(json?.records)) return json.records;
-  if (json && typeof json === 'object') {
-    const firstArrayEntry = Object.values(json).find((value) => Array.isArray(value));
-    if (Array.isArray(firstArrayEntry)) return firstArrayEntry;
-  }
   return [];
 }
 
@@ -146,12 +134,6 @@ function pickFirst(...vals) {
 
 function norm(v) {
   return String(v || '').trim().toLowerCase();
-}
-
-function addDays(dateStr, daysToAdd) {
-  const base = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`);
-  base.setDate(base.getDate() + Number(daysToAdd || 0));
-  return base.toISOString().slice(0, 10);
 }
 
 function findCandidate(items, employeeId) {
@@ -250,103 +232,22 @@ export async function getKenjoOffices() {
  * @param {string} from - YYYY-MM-DD
  * @param {string} to - YYYY-MM-DD
  */
-function getPaginationInfo(json, currentItemsLength) {
-  const totalPages = Number(
-    json?.pagination?.totalPages
-      ?? json?.pagination?.total_pages
-      ?? json?.meta?.totalPages
-      ?? json?.meta?.total_pages
-      ?? json?.totalPages
-      ?? json?.total_pages
-      ?? 1
-  );
-  const total = Number(
-    json?.pagination?.total
-      ?? json?.meta?.total
-      ?? json?.total
-      ?? 0
-  );
-  const perPage = Number(
-    json?.pagination?.perPage
-      ?? json?.pagination?.per_page
-      ?? json?.meta?.perPage
-      ?? json?.meta?.per_page
-      ?? json?.perPage
-      ?? json?.per_page
-      ?? currentItemsLength
-      ?? 0
-  );
-  return {
-    totalPages: Number.isFinite(totalPages) && totalPages > 0 ? totalPages : 1,
-    total: Number.isFinite(total) && total >= 0 ? total : 0,
-    perPage: Number.isFinite(perPage) && perPage > 0 ? perPage : currentItemsLength,
-  };
-}
-
-function dedupeTimeOffItems(items) {
-  const out = [];
-  const seen = new Set();
-  for (const item of items || []) {
-    const key = String(item?._id || item?.id || '').trim()
-      || [
-        String(item?._userId ?? item?.userId ?? item?.user_id ?? '').trim(),
-        String(item?.from ?? item?.startDate ?? item?.start ?? '').trim(),
-        String(item?.to ?? item?.endDate ?? item?.end ?? '').trim(),
-        String(item?._timeOffTypeId ?? item?.timeOffTypeId ?? item?.time_off_type_id ?? item?.type ?? '').trim(),
-      ].join('|');
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-  }
-  return out;
-}
-
 export async function getTimeOffRequests(from, to) {
   const fromStr = String(from || '').trim().slice(0, 10);
   const toStr = String(to || '').trim().slice(0, 10);
   if (!fromStr || !toStr) throw new Error('from and to (YYYY-MM-DD) are required');
-
-  async function fetchTimeOffWindow(windowFrom, windowTo) {
-    const limit = 100;
-    try {
-      const firstPage = await kenjoGet('/time-off/requests', { from: windowFrom, to: windowTo, limit, page: 1 });
-      const items = normalizeArrayPayload(firstPage);
-      const pagination = getPaginationInfo(firstPage, items.length);
-      const all = [...items];
-      const hasReliableTotalPages = Number.isFinite(pagination.totalPages) && pagination.totalPages > 1;
-      const maxPages = hasReliableTotalPages ? pagination.totalPages : 20;
-
-      for (let page = 2; page <= maxPages; page += 1) {
-        const nextPage = await kenjoGet('/time-off/requests', { from: windowFrom, to: windowTo, limit, page });
-        const nextItems = normalizeArrayPayload(nextPage);
-        if (!nextItems.length) break;
-        all.push(...nextItems);
-        if (hasReliableTotalPages) continue;
-        if (nextItems.length < limit) break;
-      }
-      return all;
-    } catch (err) {
-      // Some Kenjo tenants reject `limit`; fallback to strict minimal filters.
-      const msg = String(err?.message || err || '');
-      if (msg.includes('/time-off/requests') && msg.includes('400')) {
-        const data = await kenjoGet('/time-off/requests', { from: windowFrom, to: windowTo });
-        return normalizeArrayPayload(data);
-      }
-      throw err;
+  try {
+    const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr, limit: 100 });
+    return normalizeArrayPayload(data);
+  } catch (err) {
+    // Some Kenjo tenants reject `limit`; fallback to strict minimal filters.
+    const msg = String(err?.message || err || '');
+    if (msg.includes('/time-off/requests') && msg.includes('400')) {
+      const data = await kenjoGet('/time-off/requests', { from: fromStr, to: toStr });
+      return normalizeArrayPayload(data);
     }
+    throw err;
   }
-
-  const merged = [];
-  let windowFrom = fromStr;
-  while (windowFrom <= toStr) {
-    const windowToCandidate = addDays(windowFrom, 13);
-    const windowTo = windowToCandidate < toStr ? windowToCandidate : toStr;
-    const chunkItems = await fetchTimeOffWindow(windowFrom, windowTo);
-    if (Array.isArray(chunkItems) && chunkItems.length) merged.push(...chunkItems);
-    windowFrom = addDays(windowTo, 1);
-  }
-
-  return dedupeTimeOffItems(merged);
 }
 
 /** User-accounts plus work data (transportationId, employeeNumber) for matching Cortex rows. */
@@ -411,8 +312,6 @@ export async function getKenjoUsersList() {
       isActive: u?.isActive !== undefined ? !!u.isActive : true,
       transportationId: u?.transportationId ?? u?.transportation_id ?? work?.transportationId ?? work?.transporterId ?? work?.work?.transportationId ?? '',
       employeeNumber: u?.employeeNumber ?? u?.employee_number ?? work?.employeeNumber ?? work?.employee_number ?? '',
-      weeklyHours: work?.weeklyHours ?? work?.work?.weeklyHours ?? '',
-      weeklyDays: work?.weeklyDays ?? work?.work?.weeklyDays ?? '',
       startDate: toDateOnly(startDate),
       contractEnd: toDateOnly(contractEnd),
     };
@@ -685,53 +584,19 @@ export async function getKenjoAttendances(fromDate, toDate) {
   const from = typeof fromDate === 'string' ? fromDate.slice(0, 10) : '';
   const to = typeof toDate === 'string' ? toDate.slice(0, 10) : '';
   if (!from || !to) return [];
-
-  const chunks = [];
-  let chunkFrom = from;
-  while (chunkFrom <= to) {
-    const chunkToCandidate = addDays(chunkFrom, 30);
-    const chunkTo = chunkToCandidate < to ? chunkToCandidate : to;
-    chunks.push({ from: chunkFrom, to: chunkTo });
-    chunkFrom = addDays(chunkTo, 1);
-  }
-
-  const merged = [];
-  for (const chunk of chunks) {
-    try {
-      const data = await kenjoGet('/attendances', { from: chunk.from, to: chunk.to });
-      const list = normalizeArrayPayload(data);
-      if (Array.isArray(list) && list.length) {
-        merged.push(...list);
-      }
-    } catch (err) {
-      const msg = String(err?.message || err || '');
-      // Kenjo returns 404 with message "Could not find attendance entries." when there are simply no rows.
-      // Treat this as "no attendances" instead of an error.
-      if (
-        msg.includes('/attendances') &&
-        msg.includes('404') &&
-        msg.toLowerCase().includes('could not find attendance entries')
-      ) {
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  return merged;
-}
-
-export async function getKenjoExpectedTime(fromDate, toDate) {
-  const from = typeof fromDate === 'string' ? fromDate.slice(0, 10) : '';
-  const to = typeof toDate === 'string' ? toDate.slice(0, 10) : '';
-  if (!from || !to) return [];
   try {
-    // This tenant rejects extra query params like limit/page, so keep the request minimal.
-    const data = await kenjoGet('/attendances/expected-time', { from, to });
-    return normalizeArrayPayload(data);
+    const data = await kenjoGet('/attendances', { from, to });
+    const list = normalizeArrayPayload(data);
+    return Array.isArray(list) ? list : [];
   } catch (err) {
     const msg = String(err?.message || err || '');
-    if (msg.includes('/attendances/expected-time') && msg.includes('404')) {
+    // Kenjo returns 404 with message "Could not find attendance entries." when there are simply no rows.
+    // Treat this as "no attendances" instead of an error.
+    if (
+      msg.includes('/attendances') &&
+      msg.includes('404') &&
+      msg.toLowerCase().includes('could not find attendance entries')
+    ) {
       return [];
     }
     throw err;
@@ -805,9 +670,8 @@ const kenjoClient = {
   getKenjoOffices,
   getKenjoEmployeeByIdReadable,
   updateEmployeeAccounts,
-  getKenjoAttendances,
-  getKenjoExpectedTime,
   createKenjoEmployee,
+  getKenjoAttendances,
   updateKenjoAttendance,
   deleteKenjoAttendance,
 };

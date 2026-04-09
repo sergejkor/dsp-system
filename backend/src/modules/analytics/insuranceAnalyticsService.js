@@ -20,20 +20,16 @@ export async function getInsuranceOverviewKpis(insuranceYear) {
         COALESCE(SUM(claims_count),0)::int AS total_claims,
         COUNT(*) FILTER (WHERE vin IS NULL OR TRIM(vin) = '')::int AS missing_vin,
         COUNT(DISTINCT manufacturer)::int AS manufacturers_count,
-        COUNT(*) FILTER (
-          (
-            contract_end IS NOT NULL
+        COUNT(*) FILTER (WHERE (
+            (contract_end IS NOT NULL
             AND contract_end >= CURRENT_DATE
-            AND contract_end <= (CURRENT_DATE + INTERVAL '30 days')
-          )
+            AND contract_end <= (CURRENT_DATE + INTERVAL '30 days'))
           OR
-          (
-            liability_end IS NOT NULL
+            (liability_end IS NOT NULL
             AND liability_end >= CURRENT_DATE
-            AND liability_end <= (CURRENT_DATE + INTERVAL '30 days')
-          )
-        )::int AS expiring_30d,
-        COUNT(*) FILTER (
+            AND liability_end <= (CURRENT_DATE + INTERVAL '30 days'))
+        ))::int AS expiring_30d,
+        COUNT(*) FILTER (WHERE
           ${isNonEmptyTextSql('vin')}
           AND ${isNonEmptyTextSql('manufacturer')}
           AND ${isNonEmptyTextSql('holder')}

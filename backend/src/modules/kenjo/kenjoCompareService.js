@@ -3,6 +3,7 @@ import {
   getKenjoUsersForMatch,
   getKenjoAttendances,
   updateKenjoAttendance,
+  deleteKenjoAttendance,
 } from './kenjoClient.js';
 
 const TOLERANCE_MIN = 1;
@@ -335,6 +336,80 @@ async function ignoreConflict(conflictKey) {
 }
 
 /**
+ * Daily Cortex uploads often insert several identical rows for the same driver and day
+ * (re-uploads, multi-line exports). Kenjo compare should use one row per (Kenjo user, day).
+ */
+function dedupeCortexRowsForKenjoCompare(cortexRows, users) {
+  const byUserDay = new Map();
+  const unmatchedByKey = new Map();
+
+  for (const row of cortexRows || []) {
+    const driverName = row.driver_name || row.driverName || '';
+    const transporterId = row.transporter_id || row.transporterId || '';
+    const dayKey = toDayKeyString(row.day_key);
+    const userId = matchUser(users, driverName, transporterId);
+
+    if (!userId) {
+      const uk = `${dayKey}|${norm(driverName)}|${norm(transporterId)}`;
+      if (!unmatchedByKey.has(uk)) {
+        unmatchedByKey.set(uk, row);
+      }
+      continue;
+    }
+
+    const kKey = `${userId}_${dayKey}`;
+    if (!byUserDay.has(kKey)) {
+      byUserDay.set(kKey, { row, userId });
+    }
+  }
+
+  return {
+    uniquePairs: [...byUserDay.values()],
+    unmatchedRows: [...unmatchedByKey.values()],
+  };
+}
+
+/** Same logical conflict row (user + day + Cortex times) must appear once in UI. */
+function dedupeConflictsByLogicalRow(conflicts) {
+  const m = new Map();
+  for (const c of conflicts || []) {
+    const uid = String(c.userId || '').trim();
+    const d = toDayKeyString(c.date);
+    const es = String(c.excelStart || '').trim().toLowerCase();
+    const ee = String(c.excelEnd || '').trim().toLowerCase();
+    const k = `${uid}|${d}|${es}|${ee}`;
+    if (!m.has(k)) m.set(k, c);
+  }
+  return [...m.values()];
+}
+
+function dedupeKenjoNoMatchRows(rows) {
+  const m = new Map();
+  for (const r of rows || []) {
+    const uid = String(r.userId || '').trim();
+    const d = toDayKeyString(r.date);
+    const al = String(r.app_login || '').trim().toLowerCase();
+    const ao = String(r.app_logout || '').trim().toLowerCase();
+    const k = `${uid}|${d}|${al}|${ao}`;
+    if (!m.has(k)) m.set(k, r);
+  }
+  return [...m.values()];
+}
+
+function hhmmssToMinutes(t) {
+  const s = String(t || '').trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+function intervalsOverlapSameDay(aStart, aEnd, bStart, bEnd) {
+  if (aStart == null || aEnd == null || bStart == null || bEnd == null) return false;
+  if (aEnd <= aStart || bEnd <= bStart) return false;
+  return !(aEnd <= bStart || bEnd <= aStart);
+}
+
+/**
  * Compare Cortex and Kenjo data for date range; return { stats, conflicts }.
  * minDiffMinutes: only include conflicts with at least this many minutes difference (5, 10, 15, or 20).
  */
@@ -351,10 +426,13 @@ async function compareCortexWithKenjo(fromDate, toDate, minDiffMinutes) {
     getIgnoredConflictKeys(),
   ]);
 
+  const { uniquePairs, unmatchedRows } = dedupeCortexRowsForKenjoCompare(cortexRows, users);
+
   const kenjoByUserDay = new Map();
   for (const a of attendances) {
     const uid = String(a.userId ?? a.user_id ?? a.employeeId ?? a._id ?? '').trim();
-    const day = (a.date ? String(a.date) : (a.startTime || a.start_time || '')).slice(0, 10);
+    const dayRaw = a.date ?? a.startTime ?? a.start_time ?? '';
+    const day = toDayKeyString(dayRaw);
     if (!uid || !day || day.length < 10) continue;
     const key = `${uid}_${day}`;
     if (!kenjoByUserDay.has(key)) kenjoByUserDay.set(key, []);
@@ -366,7 +444,7 @@ async function compareCortexWithKenjo(fromDate, toDate, minDiffMinutes) {
     totalKenjoRows: attendances.length,
     totalMatched: 0,
     conflicts: 0,
-    unmatchedExcel: 0,
+    unmatchedExcel: unmatchedRows.length,
     unmatchedKenjo: 0,
   };
 
@@ -374,25 +452,25 @@ async function compareCortexWithKenjo(fromDate, toDate, minDiffMinutes) {
   const unmatchedCortex = [];
   const kenjoNoMatch = [];
 
-  for (const row of cortexRows) {
+  for (const uRow of unmatchedRows) {
+    const driverName = uRow.driver_name || uRow.driverName || '';
+    const transporterId = uRow.transporter_id || uRow.transporterId || '';
+    const dayKey = toDayKeyString(uRow.day_key);
+    unmatchedCortex.push({
+      date: dayKey,
+      name: driverName || '—',
+      transporter_id: transporterId || '—',
+      app_login: uRow.app_login ? String(uRow.app_login).trim() : '—',
+      app_logout: uRow.app_logout ? String(uRow.app_logout).trim() : '—',
+    });
+  }
+
+  for (const { row, userId } of uniquePairs) {
     const driverName = row.driver_name || row.driverName || '';
     const transporterId = row.transporter_id || row.transporterId || '';
-    const dayKey = row.day_key || '';
+    const dayKey = toDayKeyString(row.day_key);
     const cortexStart = parseTimeToMinutes(row.app_login);
     const cortexEnd = parseTimeToMinutes(row.app_logout);
-
-    const userId = matchUser(users, driverName, transporterId);
-    if (!userId) {
-      stats.unmatchedExcel++;
-      unmatchedCortex.push({
-        date: dayKey,
-        name: driverName || '—',
-        transporter_id: transporterId || '—',
-        app_login: row.app_login ? String(row.app_login).trim() : '—',
-        app_logout: row.app_logout ? String(row.app_logout).trim() : '—',
-      });
-      continue;
-    }
 
     const kKey = `${userId}_${dayKey}`;
     if (ignoredSet.has(kKey)) continue;
@@ -400,7 +478,6 @@ async function compareCortexWithKenjo(fromDate, toDate, minDiffMinutes) {
     const kenjoList = kenjoByUserDay.get(kKey) || [];
     const kenjo = kenjoList[0];
     if (!kenjo) {
-      stats.unmatchedKenjo++;
       kenjoNoMatch.push({
         date: dayKey,
         name: driverName || '—',
@@ -451,8 +528,11 @@ async function compareCortexWithKenjo(fromDate, toDate, minDiffMinutes) {
     });
   }
 
-  stats.conflicts = conflicts.length;
-  return { stats, conflicts, unmatchedCortex, kenjoNoMatch };
+  const kenjoNoMatchDeduped = dedupeKenjoNoMatchRows(kenjoNoMatch);
+  const conflictsDeduped = dedupeConflictsByLogicalRow(conflicts);
+  stats.unmatchedKenjo = kenjoNoMatchDeduped.length;
+  stats.conflicts = conflictsDeduped.length;
+  return { stats, conflicts: conflictsDeduped, unmatchedCortex, kenjoNoMatch: kenjoNoMatchDeduped };
 }
 
 /** Convert ISO or "HH:MM" to Kenjo format "HH:MM:SS". */
@@ -480,10 +560,40 @@ function toKenjoTimeFormat(value) {
  * Push Cortex times to Kenjo for one attendance.
  * Kenjo API expects startTime/endTime as "HH:MM:SS", not ISO.
  */
-async function fixConflictInKenjo(attendanceId, startTimeIso, endTimeIso) {
+async function fixConflictInKenjo(attendanceId, startTimeIso, endTimeIso, opts = {}) {
   const startTime = toKenjoTimeFormat(startTimeIso);
   const endTime = toKenjoTimeFormat(endTimeIso);
-  await updateKenjoAttendance(attendanceId, {
+  const id = String(attendanceId || '').trim();
+  if (!id || !startTime || !endTime) {
+    throw new Error('attendanceId and Cortex start/end times are required');
+  }
+
+  const userId = String(opts.userId || '').trim();
+  const day = toDayKeyString(opts.date);
+  const ns = hhmmssToMinutes(startTime);
+  const ne = hhmmssToMinutes(endTime);
+
+  if (userId && day.length >= 10 && ns != null && ne != null) {
+    const list = await getKenjoAttendances(day, day);
+    for (const a of list || []) {
+      const aid = String(a._id || a.id || '').trim();
+      const auid = String(a.userId ?? a.user_id ?? a.employeeId ?? '').trim();
+      if (!aid || auid !== userId || aid === id) continue;
+      const st = toKenjoTimeFormat(a.startTime || a.start_time);
+      const et = toKenjoTimeFormat(a.endTime || a.end_time);
+      const bs = hhmmssToMinutes(st);
+      const be = hhmmssToMinutes(et);
+      if (intervalsOverlapSameDay(ns, ne, bs, be)) {
+        try {
+          await deleteKenjoAttendance(aid);
+        } catch {
+          // e.g. already removed or API difference — continue with main update
+        }
+      }
+    }
+  }
+
+  await updateKenjoAttendance(id, {
     startTime: startTime || undefined,
     endTime: endTime || undefined,
   });

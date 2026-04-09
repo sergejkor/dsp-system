@@ -28,6 +28,11 @@ import publicIntakeAdminRoutes from './modules/publicIntake/publicIntakeAdminRou
 import chatRoutes from './modules/chat/chatRoutes.js';
 import { initChatRealtime } from './modules/chat/chatRealtime.js';
 import searchRoutes from './modules/search/searchRoutes.js';
+import vehiclesRoutes from './modules/vehicles/vehiclesRoutes.js';
+import vehicleInspectionsPublicRoutes from './modules/vehicleInspections/vehicleInspectionsPublicRoutes.js';
+import vehicleInspectionsRoutes from './modules/vehicleInspections/vehicleInspectionsRoutes.js';
+import inspectionAnalysisRoutes from './modules/vehicleInspections/inspectionAnalysisRoutes.js';
+import inspectionReviewRoutes from './modules/vehicleInspections/inspectionReviewRoutes.js';
 import { getFinanceHealthInfo } from './modules/finance/financeService.js';
 import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
 import { startKenjoSyncScheduler } from './modules/kenjo/kenjoSyncScheduler.js';
@@ -38,6 +43,10 @@ const port = Number(process.env.PORT || 3001);
 const defaultAllowedOrigins = [
   'https://dsp-system.alfamile.com',
   'https://schadensmeldung.alfamile.com',
+  'https://fleetcheck.alfamile.com',
+  'http://fleetcheck.alfamile.com',
+  'https://fleetcheck.alphamile.com',
+  'http://fleetcheck.alphamile.com',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ];
@@ -55,7 +64,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -78,11 +87,13 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRoutes);
 // Public intake routes must stay accessible without auth
 app.use('/api/public', publicIntakePublicRoutes);
+app.use('/api/public/fleet-inspections', vehicleInspectionsPublicRoutes);
 app.use('/api', authMiddleware.loadAuth);
 app.use('/api', (req, res, next) => {
   if (req.originalUrl === '/api/health') return next();
   if (req.originalUrl === '/api/auth/login' && req.method === 'POST') return next();
   if (req.originalUrl.startsWith('/api/public/')) return next();
+  if (req.method === 'GET' && req.originalUrl.startsWith('/api/vehicles/by-vin/')) return next();
   return authMiddleware.requireAuth(req, res, next);
 });
 
@@ -95,7 +106,11 @@ app.use('/api/advances', advanceRoutes);
 app.use('/api/o2-telefonica', o2Routes);
 app.use('/api/scorecard', scorecardRoutes);
 app.use('/api/cars', carsRoutes);
+app.use('/api/vehicles', vehiclesRoutes);
+app.use('/api/inspections', inspectionAnalysisRoutes);
+app.use('/api/review', inspectionReviewRoutes);
 app.use('/api/pave', paveRoutes);
+app.use('/api/fleet-inspections', vehicleInspectionsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/gift-cards', giftCardsRoutes);
