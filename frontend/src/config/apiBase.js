@@ -38,6 +38,8 @@ function readRuntimeApiBase() {
 }
 
 function resolveApiBase() {
+  const raw = import.meta.env.VITE_BACKEND_URL;
+  const envBase = normalizeApiBase(raw);
   if (typeof window !== 'undefined') {
     const host = String(window.location.hostname || '').toLowerCase();
     if (isLocalLikeHost(host)) {
@@ -47,12 +49,13 @@ function resolveApiBase() {
     if (runtimeApiBase) {
       return runtimeApiBase;
     }
+    if (envBase) {
+      return envBase;
+    }
     if (host.startsWith('fleetcheck.') || host.startsWith('fleet-check.')) {
-      return 'https://fleetcheck-api.alfamile.com';
+      return 'https://api.alfamile.com';
     }
   }
-  const raw = import.meta.env.VITE_BACKEND_URL;
-  const envBase = normalizeApiBase(raw);
   if (envBase) {
     return envBase;
   }
