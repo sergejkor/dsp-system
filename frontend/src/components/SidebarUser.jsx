@@ -146,7 +146,9 @@ export default function SidebarUser({ unreadNotificationTotal = 0 }) {
   }, [user]);
 
   const initials = useMemo(() => buildInitials(displayName), [displayName]);
-  const avatarUrl = String(user.avatar_url || '').trim();
+  const avatarUrl = String(
+    user.avatar_url || user.avatarUrl || user.photo_url || user.photoUrl || ''
+  ).trim();
   const chatActive = location.pathname.startsWith('/chat');
   const notificationsActive = location.pathname === '/personal-fragebogen-notifications';
   const settingsActive = location.pathname.startsWith('/settings');
