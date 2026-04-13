@@ -55,6 +55,7 @@ import SettingsSchadenmeldungPage from './pages/settings/SettingsSchadenmeldungP
 import SettingsCreateDocumentsPage from './pages/settings/SettingsCreateDocumentsPage';
 import SettingsDriversPage from './pages/settings/SettingsDriversPage';
 import SettingsCarsPage from './pages/settings/SettingsCarsPage';
+import SettingsInternalInspectionsPage from './pages/settings/SettingsInternalInspectionsPage';
 import SettingsRoutesPage from './pages/settings/SettingsRoutesPage';
 import SettingsLookupsPage from './pages/settings/SettingsLookupsPage';
 import SettingsIntegrationsPage from './pages/settings/SettingsIntegrationsPage';
@@ -535,6 +536,7 @@ function AppLayout() {
               <Route path="create-documents" element={<SettingsCreateDocumentsPage />} />
               <Route path="drivers" element={<SettingsDriversPage />} />
               <Route path="cars" element={<SettingsCarsPage />} />
+              <Route path="internal-inspections" element={<SettingsInternalInspectionsPage />} />
               <Route path="routes" element={<SettingsRoutesPage />} />
               <Route path="lookups" element={<SettingsLookupsPage />} />
               <Route path="integrations" element={<SettingsIntegrationsPage />} />

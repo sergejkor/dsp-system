@@ -33,6 +33,7 @@ import vehicleInspectionsPublicRoutes from './modules/vehicleInspections/vehicle
 import vehicleInspectionsRoutes from './modules/vehicleInspections/vehicleInspectionsRoutes.js';
 import inspectionAnalysisRoutes from './modules/vehicleInspections/inspectionAnalysisRoutes.js';
 import inspectionReviewRoutes from './modules/vehicleInspections/inspectionReviewRoutes.js';
+import { startInspectionReminderScheduler } from './modules/vehicleInspections/inspectionReminderScheduler.js';
 import { getFinanceHealthInfo } from './modules/finance/financeService.js';
 import { startPaveSyncScheduler } from './modules/pave/paveSyncScheduler.js';
 import { startKenjoSyncScheduler } from './modules/kenjo/kenjoSyncScheduler.js';
@@ -131,4 +132,5 @@ httpServer.listen(port, () => {
   console.log(`Backend running on http://localhost:${port}`);
   startPaveSyncScheduler();
   startKenjoSyncScheduler();
+  startInspectionReminderScheduler();
 });

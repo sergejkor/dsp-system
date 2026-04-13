@@ -10,6 +10,14 @@ async function parseJson(res) {
   return res.json().catch(() => ({}));
 }
 
+async function performPublicFetch(url, options, networkErrorMessage) {
+  try {
+    return await fetch(url, options);
+  } catch (_error) {
+    throw new Error(networkErrorMessage);
+  }
+}
+
 async function ensureOk(res, fallbackMessage) {
   if (await checkUnauthorized(res)) {
     throw new Error('Unauthorized');
@@ -31,10 +39,28 @@ async function ensurePublicOk(res, fallbackMessage) {
 
 export async function resolveVehicleByVin(vin) {
   const normalizedVin = String(vin || '').trim();
-  const res = await fetch(`${API_BASE}/api/vehicles/by-vin/${encodeURIComponent(normalizedVin)}`, {
-    headers: { ...apiBaseHeaders() },
-  });
+  const res = await performPublicFetch(
+    `${API_BASE}/api/vehicles/by-vin/${encodeURIComponent(normalizedVin)}`,
+    {
+      headers: { ...apiBaseHeaders() },
+    },
+    'Unable to reach the FleetCheck backend. Check the current API URL or ngrok tunnel.',
+  );
   return ensurePublicOk(res, 'Failed to resolve vehicle by VIN');
+}
+
+export async function searchFleetInspectionOperators(search) {
+  const term = String(search || '').trim();
+  if (term.length < 2) return [];
+  const qs = new URLSearchParams({ search: term });
+  const res = await performPublicFetch(
+    `${API_BASE}/api/public/fleet-inspections/operators?${qs.toString()}`,
+    {
+      headers: { ...apiBaseHeaders() },
+    },
+    'Unable to reach the FleetCheck backend. Check the current API URL or ngrok tunnel.',
+  );
+  return ensurePublicOk(res, 'Failed to load operator suggestions');
 }
 
 export async function submitPublicInspection({ vin, operatorName, vehicleType, notes, shots }) {
@@ -56,11 +82,15 @@ export async function submitPublicInspection({ vin, operatorName, vehicleType, n
     form.append('shotTypes', shotId);
   }
 
-  const res = await fetch(`${API_BASE}/api/public/fleet-inspections`, {
-    method: 'POST',
-    headers: { ...apiBaseHeaders() },
-    body: form,
-  });
+  const res = await performPublicFetch(
+    `${API_BASE}/api/public/fleet-inspections`,
+    {
+      method: 'POST',
+      headers: { ...apiBaseHeaders() },
+      body: form,
+    },
+    'Unable to submit to the FleetCheck backend. Check the current API URL or ngrok tunnel.',
+  );
   return ensurePublicOk(res, 'Failed to submit inspection');
 }
 
@@ -74,6 +104,19 @@ export async function listFleetInspections(filters = {}) {
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   const res = await fetch(`${API_BASE}/api/fleet-inspections${suffix}`, authOpts());
   return ensureOk(res, 'Failed to load internal inspections');
+}
+
+export async function listFleetInspectionTasks(filters = {}) {
+  const qs = new URLSearchParams();
+  if (filters.search) qs.set('search', filters.search);
+  if (filters.status) qs.set('status', filters.status);
+  if (filters.carId) qs.set('carId', filters.carId);
+  if (filters.dateFrom) qs.set('dateFrom', filters.dateFrom);
+  if (filters.dateTo) qs.set('dateTo', filters.dateTo);
+  if (filters.limit) qs.set('limit', String(filters.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const res = await fetch(`${API_BASE}/api/fleet-inspections/tasks${suffix}`, authOpts());
+  return ensureOk(res, 'Failed to load internal inspection tasks');
 }
 
 export async function getFleetInspection(id) {

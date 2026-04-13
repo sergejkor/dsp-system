@@ -17,6 +17,37 @@ function resultLabel(result) {
   return result || 'Unknown';
 }
 
+function taskTone(status) {
+  if (status === 'completed') return 'success';
+  if (status === 'failed') return 'error';
+  if (status === 'reminded') return 'info';
+  if (status === 'cancelled') return 'neutral';
+  return 'warning';
+}
+
+function taskLabel(status) {
+  if (status === 'pending') return 'Pending';
+  if (status === 'reminded') return 'Reminder sent';
+  if (status === 'completed') return 'Completed';
+  if (status === 'failed') return 'Failed';
+  if (status === 'cancelled') return 'Cancelled';
+  return status || 'Unknown';
+}
+
+function deliveryLabel(status) {
+  if (status === 'sent') return 'Sent';
+  if (status === 'missing_phone') return 'Missing phone';
+  if (status === 'send_failed') return 'Send failed';
+  return status || 'Not sent yet';
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 export default function FleetInspectionDetailPage() {
   const { id } = useParams();
   const [inspection, setInspection] = useState(null);
@@ -25,11 +56,10 @@ export default function FleetInspectionDetailPage() {
   const [photoLoading, setPhotoLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const findingsByShot = useMemo(() => {
-    return Object.fromEntries(
-      (inspection?.findings || []).map((finding) => [finding.shot_type, finding]),
-    );
-  }, [inspection]);
+  const findingsByShot = useMemo(
+    () => Object.fromEntries((inspection?.findings || []).map((finding) => [finding.shot_type, finding])),
+    [inspection],
+  );
 
   const orderedShots = useMemo(() => {
     if (!inspection) return [];
@@ -95,7 +125,7 @@ export default function FleetInspectionDetailPage() {
   }, [inspection]);
 
   if (loading) {
-    return <section className="fleet-inspection-card">Loading inspection…</section>;
+    return <section className="fleet-inspection-card">Loading inspection...</section>;
   }
 
   if (error) {
@@ -119,9 +149,7 @@ export default function FleetInspectionDetailPage() {
             <h2 style={{ margin: '0.2rem 0' }}>
               {inspection.license_plate || inspection.vehicle_id || inspection.vin}
             </h2>
-            <p className="fleet-inspection-muted">
-              {inspection.model || inspection.inspection_vehicle_type}
-            </p>
+            <p className="fleet-inspection-muted">{inspection.model || inspection.inspection_vehicle_type}</p>
           </div>
           <div className="fleet-inspection-actions">
             <span className="fleet-inspection-status" data-tone={resultTone(inspection.overall_result)}>
@@ -136,15 +164,15 @@ export default function FleetInspectionDetailPage() {
         <div className="fleet-inspection-detail-grid" style={{ marginTop: '1rem' }}>
           <div>
             <p className="fleet-inspection-label">Driver</p>
-            <p>{inspection.operator_name || '—'}</p>
+            <p>{inspection.operator_name || '-'}</p>
           </div>
           <div>
             <p className="fleet-inspection-label">VIN</p>
-            <p>{inspection.vin || '—'}</p>
+            <p>{inspection.vin || '-'}</p>
           </div>
           <div>
             <p className="fleet-inspection-label">Submitted</p>
-            <p>{inspection.submitted_at ? new Date(inspection.submitted_at).toLocaleString() : '—'}</p>
+            <p>{formatDateTime(inspection.submitted_at)}</p>
           </div>
           <div>
             <p className="fleet-inspection-label">New damages</p>
@@ -168,6 +196,55 @@ export default function FleetInspectionDetailPage() {
         </div>
       </div>
 
+      {inspection.task ? (
+        <div className="fleet-inspection-card">
+          <div className="fleet-inspection-toolbar" style={{ justifyContent: 'space-between' }}>
+            <div>
+              <p className="fleet-inspection-label" style={{ margin: 0 }}>Reminder task</p>
+              <p className="fleet-inspection-muted">
+                Same-day reminder state created from Car Planning for this vehicle and driver.
+              </p>
+            </div>
+            <span className="fleet-inspection-status" data-tone={taskTone(inspection.task.status)}>
+              {taskLabel(inspection.task.status)}
+            </span>
+          </div>
+
+          <div className="fleet-inspection-detail-grid" style={{ marginTop: '1rem' }}>
+            <div>
+              <p className="fleet-inspection-label">Plan date</p>
+              <p>{inspection.task.plan_date || '-'}</p>
+            </div>
+            <div>
+              <p className="fleet-inspection-label">Sent to</p>
+              <p>{inspection.task.driver_phone || '-'}</p>
+            </div>
+            <div>
+              <p className="fleet-inspection-label">Reminder delivery</p>
+              <p>{deliveryLabel(inspection.task.last_reminder_status)}</p>
+            </div>
+            <div>
+              <p className="fleet-inspection-label">Reminders sent</p>
+              <p>{inspection.task.reminder_count || 0}</p>
+            </div>
+            <div>
+              <p className="fleet-inspection-label">Last reminder</p>
+              <p>{formatDateTime(inspection.task.last_reminder_at)}</p>
+            </div>
+            <div>
+              <p className="fleet-inspection-label">Next reminder</p>
+              <p>{formatDateTime(inspection.task.next_reminder_at)}</p>
+            </div>
+          </div>
+
+          {inspection.task.last_reminder_error ? (
+            <div className="fleet-inspection-alert fleet-inspection-alert--warning" style={{ marginTop: '1rem' }}>
+              {inspection.task.last_reminder_error}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {inspection.findings?.length ? (
         <div className="fleet-inspection-card">
           <p className="fleet-inspection-label">Detected changes</p>
@@ -176,7 +253,7 @@ export default function FleetInspectionDetailPage() {
               <div key={finding.id} className="fleet-inspection-result-list__item">
                 <strong>{finding.shot_type}</strong>
                 <div className="fleet-inspection-muted">
-                  Difference ratio: {Number(finding.difference_ratio || 0).toFixed(4)} · Changed pixels: {finding.changed_pixels || 0}
+                  Difference ratio: {Number(finding.difference_ratio || 0).toFixed(4)} | Changed pixels: {finding.changed_pixels || 0}
                 </div>
               </div>
             ))}
@@ -187,7 +264,7 @@ export default function FleetInspectionDetailPage() {
       <div className="fleet-inspection-card">
         <div className="fleet-inspection-toolbar" style={{ justifyContent: 'space-between' }}>
           <p className="fleet-inspection-label" style={{ margin: 0 }}>Captured photos</p>
-          {photoLoading ? <span className="fleet-inspection-muted">Loading photo previews…</span> : null}
+          {photoLoading ? <span className="fleet-inspection-muted">Loading photo previews...</span> : null}
         </div>
         <div className="fleet-inspection-photo-grid" style={{ marginTop: '1rem' }}>
           {orderedShots.map((shot) => {
@@ -199,15 +276,13 @@ export default function FleetInspectionDetailPage() {
                   <img src={photoUrls[photo.id]} alt={shot.label} />
                 ) : (
                   <div className="fleet-inspection-photo-card__placeholder">
-                    {photo ? 'Loading…' : 'No photo'}
+                    {photo ? 'Loading...' : 'No photo'}
                   </div>
                 )}
                 <div className="fleet-inspection-photo-card__body">
                   <h4>{shot.label}</h4>
                   <div className="fleet-inspection-muted">
-                    {finding
-                      ? `Difference ${Number(finding.difference_ratio || 0).toFixed(4)}`
-                      : 'No new damage flagged'}
+                    {finding ? `Difference ${Number(finding.difference_ratio || 0).toFixed(4)}` : 'No new damage flagged'}
                   </div>
                 </div>
               </article>
@@ -223,12 +298,8 @@ export default function FleetInspectionDetailPage() {
             {inspection.events.map((event) => (
               <div key={event.id} className="fleet-inspection-result-list__item">
                 <strong>{event.event_type}</strong>
-                <div className="fleet-inspection-muted">
-                  {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
-                </div>
-                <div className="fleet-inspection-muted">
-                  New damages: {event.payload_json?.newDamages ?? 0}
-                </div>
+                <div className="fleet-inspection-muted">{formatDateTime(event.created_at)}</div>
+                <div className="fleet-inspection-muted">New damages: {event.payload_json?.newDamages ?? 0}</div>
               </div>
             ))}
           </div>

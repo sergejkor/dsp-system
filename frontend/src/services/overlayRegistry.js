@@ -59,30 +59,46 @@ export const SHOT_SEQUENCE = [
 
 export const REQUIRED_SHOT_IDS = SHOT_SEQUENCE.map((shot) => shot.id);
 
+const OVERLAY_VERSION = {
+  sprinter_high_roof_long: '2026-04-09-1',
+  peugeot_boxer: '2026-04-09-1',
+  rivian_edv: '2026-04-09-4',
+};
+
+const RIVIAN_OVERLAY_OVERRIDES = {
+  front_left: { overlayScale: 0.84 },
+  left_side: { overlayScale: 0.9 },
+  rear_left: { overlayScale: 0.88 },
+  rear: { overlayScale: 0.88 },
+  rear_right: { overlayScale: 0.88 },
+  right_side: { overlayScale: 0.9 },
+  front_right: { overlayScale: 0.84 },
+  front: { overlayScale: 0.86 },
+};
+
+function buildOverlayShots(baseFolder, version, overrides = {}) {
+  return SHOT_SEQUENCE.map((shot) => ({
+    ...shot,
+    ...(overrides[shot.id] || {}),
+    overlayPath: `/overlays/${baseFolder}/${shot.id}.svg?v=${version}`,
+  }));
+}
+
 export const overlayRegistry = {
   sprinter_high_roof_long: {
     label: 'Mercedes Sprinter',
     basePath: '/overlays/sprinter/',
-    shots: SHOT_SEQUENCE.map((shot) => ({
-      ...shot,
-      overlayPath: `/overlays/sprinter/${shot.id}.svg`,
-    })),
+    shots: buildOverlayShots('sprinter', OVERLAY_VERSION.sprinter_high_roof_long),
   },
   peugeot_boxer: {
     label: 'Peugeot Boxer',
     basePath: '/overlays/boxer/',
-    shots: SHOT_SEQUENCE.map((shot) => ({
-      ...shot,
-      overlayPath: `/overlays/boxer/${shot.id}.svg`,
-    })),
+    shots: buildOverlayShots('boxer', OVERLAY_VERSION.peugeot_boxer),
   },
   rivian_edv: {
     label: 'Rivian EDV',
     basePath: '/overlays/rivian/',
-    shots: SHOT_SEQUENCE.map((shot) => ({
-      ...shot,
-      overlayPath: `/overlays/rivian/${shot.id}.svg`,
-    })),
+    shots: buildOverlayShots('rivian', OVERLAY_VERSION.rivian_edv, RIVIAN_OVERLAY_OVERRIDES),
   },
 };
 

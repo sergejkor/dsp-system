@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import InspectionCamera from '../components/InspectionCamera.jsx';
 import { getOverlaySet, REQUIRED_SHOT_IDS } from '../services/overlayRegistry.js';
-import { resolveVehicleByVin, submitPublicInspection } from '../services/internalInspectionApi.js';
+import {
+  resolveVehicleByVin,
+  searchFleetInspectionOperators,
+  submitPublicInspection,
+} from '../services/internalInspectionApi.js';
 import './fleetInspections.css';
 
 const RESULT_LABELS = {
@@ -44,11 +48,48 @@ function getFirstMissingShotIndex(capturedShots) {
   return index === -1 ? REQUIRED_SHOT_IDS.length - 1 : index;
 }
 
+async function requestLandscapeInspectionMode() {
+  if (typeof window === 'undefined') return;
+
+  const root = document.documentElement;
+  try {
+    if (!document.fullscreenElement && root?.requestFullscreen) {
+      await root.requestFullscreen();
+    }
+  } catch (_error) {}
+
+  try {
+    if (window.screen?.orientation?.lock) {
+      await window.screen.orientation.lock('landscape');
+    }
+  } catch (_error) {}
+}
+
+async function releaseLandscapeInspectionMode() {
+  if (typeof window === 'undefined') return;
+
+  try {
+    if (window.screen?.orientation?.unlock) {
+      window.screen.orientation.unlock();
+    }
+  } catch (_error) {}
+
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      await document.exitFullscreen();
+    }
+  } catch (_error) {}
+}
+
 export default function FleetInspectionPublicPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [vinInput, setVinInput] = useState(() => normalizeVin(searchParams.get('vin')));
   const [vehicle, setVehicle] = useState(null);
   const [driverName, setDriverName] = useState('');
+  const [driverSuggestions, setDriverSuggestions] = useState([]);
+  const [driverSuggestionsLoading, setDriverSuggestionsLoading] = useState(false);
+  const [driverSuggestionsError, setDriverSuggestionsError] = useState('');
+  const [driverSuggestionsVisible, setDriverSuggestionsVisible] = useState(false);
   const [notes, setNotes] = useState('');
   const [notesOpen, setNotesOpen] = useState(false);
   const [inspectionStarted, setInspectionStarted] = useState(false);
@@ -66,6 +107,7 @@ export default function FleetInspectionPublicPage() {
   const capturedShotsRef = useRef({});
   const scannerCooldownUntilRef = useRef(0);
   const lastScannedVinRef = useRef('');
+  const driverSuggestionRequestRef = useRef(0);
 
   const barcodeSupported =
     typeof window !== 'undefined' &&
@@ -102,6 +144,53 @@ export default function FleetInspectionPublicPage() {
       setInspectionStarted(false);
     }
   }, [vehicle]);
+
+  useEffect(() => {
+    if (!inspectionStarted) {
+      void releaseLandscapeInspectionMode();
+    }
+    return () => {
+      void releaseLandscapeInspectionMode();
+    };
+  }, [inspectionStarted]);
+
+  useEffect(() => {
+    const query = String(driverName || '').trim();
+    if (!vehicle || query.length < 2) {
+      setDriverSuggestions([]);
+      setDriverSuggestionsLoading(false);
+      setDriverSuggestionsError('');
+      return undefined;
+    }
+
+    const requestId = driverSuggestionRequestRef.current + 1;
+    driverSuggestionRequestRef.current = requestId;
+    setDriverSuggestionsLoading(true);
+    setDriverSuggestionsError('');
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const rows = await searchFleetInspectionOperators(query);
+        if (driverSuggestionRequestRef.current !== requestId) return;
+        const normalizedQuery = query.toLowerCase();
+        const suggestions = (rows || []).filter((row) => {
+          const label = String(row?.label || '').trim().toLowerCase();
+          return label && label !== normalizedQuery;
+        });
+        setDriverSuggestions(suggestions);
+      } catch (lookupError) {
+        if (driverSuggestionRequestRef.current !== requestId) return;
+        setDriverSuggestions([]);
+        setDriverSuggestionsError(String(lookupError?.message || 'Failed to load employee suggestions'));
+      } finally {
+        if (driverSuggestionRequestRef.current === requestId) {
+          setDriverSuggestionsLoading(false);
+        }
+      }
+    }, 220);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [driverName, vehicle]);
 
   useEffect(() => {
     const queryVin = normalizeVin(searchParams.get('vin'));
@@ -269,6 +358,7 @@ export default function FleetInspectionPublicPage() {
       return;
     }
     setError('');
+    void requestLandscapeInspectionMode();
     setInspectionStarted(true);
     setCurrentIndex(getFirstMissingShotIndex(capturedShotsRef.current));
     if (typeof window !== 'undefined') {
@@ -313,6 +403,10 @@ export default function FleetInspectionPublicPage() {
     setVehicle(null);
     setResult(null);
     setError('');
+    setDriverSuggestions([]);
+    setDriverSuggestionsLoading(false);
+    setDriverSuggestionsError('');
+    setDriverSuggestionsVisible(false);
     setNotes('');
     setNotesOpen(false);
     setDriverName('');
@@ -474,9 +568,51 @@ export default function FleetInspectionPublicPage() {
                   id="inspection-driver-name"
                   className="fleet-inspection-input fleet-inspection-input--large"
                   value={driverName}
-                  onChange={(event) => setDriverName(event.target.value)}
-                  placeholder="Who is taking these photos?"
+                  onChange={(event) => {
+                    setDriverName(event.target.value);
+                    setDriverSuggestionsVisible(true);
+                  }}
+                  onFocus={() => setDriverSuggestionsVisible(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setDriverSuggestionsVisible(false), 120);
+                  }}
+                  placeholder="Start typing your name"
+                  autoComplete="off"
                 />
+                {driverSuggestionsVisible && (driverSuggestionsLoading || driverSuggestions.length || driverSuggestionsError) ? (
+                  <div className="fleet-inspection-suggestions" role="listbox" aria-label="Driver name suggestions">
+                    {driverSuggestionsLoading ? (
+                      <p className="fleet-inspection-suggestions__state">Searching employees...</p>
+                    ) : null}
+                    {!driverSuggestionsLoading && driverSuggestionsError ? (
+                      <p className="fleet-inspection-suggestions__state">{driverSuggestionsError}</p>
+                    ) : null}
+                    {!driverSuggestionsLoading && !driverSuggestionsError && !driverSuggestions.length && driverName.trim().length >= 2 ? (
+                      <p className="fleet-inspection-suggestions__state">No matching employee found yet.</p>
+                    ) : null}
+                    {!driverSuggestionsLoading && !driverSuggestionsError
+                      ? driverSuggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.id}
+                            type="button"
+                            className="fleet-inspection-suggestion"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setDriverName(suggestion.label);
+                              setDriverSuggestionsVisible(false);
+                              setDriverSuggestions([]);
+                              setDriverSuggestionsError('');
+                            }}
+                          >
+                            <span>{suggestion.label}</span>
+                            {suggestion.subtitle ? (
+                              <small>{suggestion.subtitle}</small>
+                            ) : null}
+                          </button>
+                        ))
+                      : null}
+                  </div>
+                ) : null}
               </div>
 
               <button
@@ -526,46 +662,10 @@ export default function FleetInspectionPublicPage() {
 
         {vehicle && !result && inspectionStarted && currentShot ? (
           <section className="fleet-inspection-session">
-            <div className="fleet-inspection-session__top">
-              <button
-                type="button"
-                className="fleet-inspection-button fleet-inspection-button--secondary fleet-inspection-button--compact"
-                onClick={() => setInspectionStarted(false)}
-              >
-                Back
-              </button>
-              <div className="fleet-inspection-session__title">
-                <p className="fleet-inspection-session__eyebrow">Current shot</p>
-                <strong>{currentShot.label}</strong>
-                <p>{vehicle.licensePlate || vehicle.vehicleId}</p>
-              </div>
-              <span className="fleet-inspection-session__counter">{capturedCount}/8</span>
-            </div>
-
-            <div className="fleet-inspection-session__progress">
-              <div className="fleet-inspection-progress__bar">
-                <span style={{ width: `${((currentIndex + (capturedShots[currentShot.id] ? 1 : 0)) / 8) * 100}%` }} />
-              </div>
-              <div className="fleet-inspection-dots" aria-hidden="true">
-                {shots.map((shot, index) => {
-                  const state = capturedShots[shot.id]
-                    ? 'done'
-                    : index === currentIndex
-                      ? 'current'
-                      : 'todo';
-                  return (
-                    <span
-                      key={shot.id}
-                      className={`fleet-inspection-dot fleet-inspection-dot--${state}`}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-
             <InspectionCamera
               shot={currentShot}
               overlayUrl={currentShot.overlayPath}
+              overlayScale={currentShot.overlayScale}
               currentPhoto={capturedShots[currentShot.id]}
               onCapture={(blob) => handleCaptureShot(currentShot.id, blob)}
               onRetake={() => handleRetakeShot(currentShot.id)}
@@ -574,18 +674,65 @@ export default function FleetInspectionPublicPage() {
               totalSteps={8}
             />
 
-            {allCaptured ? (
-              <div className="fleet-inspection-session__footer">
+            <div className="fleet-inspection-session__overlay fleet-inspection-session__overlay--top">
+              <button
+                type="button"
+                className="fleet-inspection-session__nav"
+                onClick={() => setInspectionStarted(false)}
+                aria-label="Back"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M15 18l-6-6 6-6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+
+              <div className="fleet-inspection-session__title">
+                <strong>{currentShot.label}</strong>
+                <span>{vehicle.licensePlate || vehicle.vehicleId}</span>
+                <span>{Math.min(currentIndex + 1, 8)} / 8</span>
+              </div>
+            </div>
+
+            <div className="fleet-inspection-session__overlay fleet-inspection-session__overlay--bottom">
+              <div className="fleet-inspection-session__progress">
+                <div className="fleet-inspection-progress__bar fleet-inspection-progress__bar--glass">
+                  <span style={{ width: `${((currentIndex + (capturedShots[currentShot.id] ? 1 : 0)) / 8) * 100}%` }} />
+                </div>
+                <div className="fleet-inspection-dots" aria-hidden="true">
+                  {shots.map((shot, index) => {
+                    const state = capturedShots[shot.id]
+                      ? 'done'
+                      : index === currentIndex
+                        ? 'current'
+                        : 'todo';
+                    return (
+                      <span
+                        key={shot.id}
+                        className={`fleet-inspection-dot fleet-inspection-dot--${state}`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+
+              {allCaptured ? (
                 <button
                   type="button"
-                  className="fleet-inspection-button fleet-inspection-button--large"
+                  className="fleet-inspection-button fleet-inspection-button--large fleet-inspection-button--floating"
                   onClick={() => void handleSubmitInspection()}
                   disabled={submitting || !driverName.trim()}
                 >
                   {submitting ? 'Submitting inspection...' : 'Submit inspection'}
                 </button>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </section>
         ) : null}
       </div>

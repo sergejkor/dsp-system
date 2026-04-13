@@ -161,6 +161,47 @@ function normalizeNameForMatch(value) {
     .replace(/\s+/g, ' ');
 }
 
+function createEmptyRescueDateDraft() {
+  return { day: '', month: '', year: '' };
+}
+
+function buildRescueIsoDate(draft) {
+  const day = String(draft?.day || '').replace(/\D/g, '').slice(0, 2);
+  const month = String(draft?.month || '').replace(/\D/g, '').slice(0, 2);
+  const year = String(draft?.year || '').replace(/\D/g, '').slice(0, 4);
+
+  if (!day || !month || year.length !== 4) {
+    return '';
+  }
+
+  const dayNumber = Number(day);
+  const monthNumber = Number(month);
+  const yearNumber = Number(year);
+
+  if (
+    !Number.isInteger(dayNumber) ||
+    !Number.isInteger(monthNumber) ||
+    !Number.isInteger(yearNumber) ||
+    monthNumber < 1 ||
+    monthNumber > 12 ||
+    dayNumber < 1 ||
+    dayNumber > 31
+  ) {
+    return '';
+  }
+
+  const candidate = new Date(Date.UTC(yearNumber, monthNumber - 1, dayNumber));
+  if (
+    candidate.getUTCFullYear() !== yearNumber ||
+    candidate.getUTCMonth() !== monthNumber - 1 ||
+    candidate.getUTCDate() !== dayNumber
+  ) {
+    return '';
+  }
+
+  return `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
 function getFrozenPayrollCache() {
   try {
     const raw = window.localStorage.getItem(PAYROLL_FROZEN_CACHE_KEY);
@@ -373,7 +414,7 @@ export default function EmployeeProfilePage() {
   const [rescuesLoading, setRescuesLoading] = useState(false);
   const [rescueError, setRescueError] = useState('');
   const [showRescueModal, setShowRescueModal] = useState(false);
-  const [rescueDate, setRescueDate] = useState('');
+  const [rescueDateDraft, setRescueDateDraft] = useState(createEmptyRescueDateDraft);
   const [rescueSaving, setRescueSaving] = useState(false);
   const [vacationDaysOverrideDraft, setVacationDaysOverrideDraft] = useState('');
   const [vacationDaysOverrideSaving, setVacationDaysOverrideSaving] = useState(false);
@@ -623,7 +664,7 @@ export default function EmployeeProfilePage() {
   };
 
   const openRescueModal = () => {
-    setRescueDate('');
+    setRescueDateDraft(createEmptyRescueDateDraft());
     setRescueError('');
     setShowRescueModal(true);
   };
@@ -631,7 +672,13 @@ export default function EmployeeProfilePage() {
   const closeRescueModal = () => {
     if (rescueSaving) return;
     setShowRescueModal(false);
-    setRescueDate('');
+    setRescueDateDraft(createEmptyRescueDateDraft());
+  };
+
+  const updateRescueDateDraft = (part, nextValue) => {
+    const maxLength = part === 'year' ? 4 : 2;
+    const sanitized = String(nextValue || '').replace(/\D/g, '').slice(0, maxLength);
+    setRescueDateDraft((prev) => ({ ...prev, [part]: sanitized }));
   };
 
   const saveRescue = async () => {
@@ -639,21 +686,22 @@ export default function EmployeeProfilePage() {
       setRescueError('Employee reference is missing.');
       return;
     }
-    if (!rescueDate) {
-      setRescueError('Please select a date.');
+    const nextRescueDate = buildRescueIsoDate(rescueDateDraft);
+    if (!nextRescueDate) {
+      setRescueError('Please enter a valid day, month, and year.');
       return;
     }
     setRescueSaving(true);
     setRescueError('');
     try {
-      const row = await addEmployeeRescue(employeeDocRef, rescueDate);
+      const row = await addEmployeeRescue(employeeDocRef, nextRescueDate);
       setRescues((prev) =>
         [row, ...(Array.isArray(prev) ? prev : [])].sort((a, b) =>
           String(b?.rescue_date || '').localeCompare(String(a?.rescue_date || ''))
         )
       );
       setShowRescueModal(false);
-      setRescueDate('');
+      setRescueDateDraft(createEmptyRescueDateDraft());
     } catch (e) {
       setRescueError(String(e?.message || e));
     } finally {
@@ -897,6 +945,16 @@ export default function EmployeeProfilePage() {
   );
   const selectedEmployeeDocumentTemplateOption =
     employeeDocumentTemplateOptions.find((option) => option.value === employeeDocumentTemplate) || null;
+  const showEmployeeDocExactName =
+    selectedEmployeeDocTypeConfig?.exactNameEnabled === true && employeeDocumentTemplateOptions.length > 0;
+  const showEmployeeDocTemplateDate = selectedEmployeeDocumentTemplateOption?.requiresSelectedDate === true;
+  const employeeDocFormGridTemplateColumns = [
+    'minmax(0, 1fr)',
+    showEmployeeDocExactName ? 'minmax(0, 1fr)' : null,
+    showEmployeeDocTemplateDate ? 'minmax(0, 180px)' : null,
+    'minmax(0, 240px)',
+    'auto',
+  ].filter(Boolean).join(' ');
   const employeeDocTypeFilterOptions = Array.from(
     new Set([
       ...employeeDocTypeOptions,
@@ -1394,7 +1452,7 @@ export default function EmployeeProfilePage() {
                 )}
                 <button
                   type="button"
-                  className="btn-secondary"
+                  className="btn-primary"
                   onClick={() => setShowDaPerformance(false)}
                 >
                   Close
@@ -1723,7 +1781,7 @@ export default function EmployeeProfilePage() {
               setEmployeeDocUploading(false);
             }
           }}
-          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'end', marginBottom: '0.75rem' }}
+          style={{ display: 'grid', gridTemplateColumns: employeeDocFormGridTemplateColumns, gap: '0.5rem', alignItems: 'end', marginBottom: '0.75rem' }}
         >
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <span>Type of document</span>
@@ -1738,7 +1796,7 @@ export default function EmployeeProfilePage() {
               {employeeDocTypeOptions.map((x) => <option key={x} value={x}>{x}</option>)}
             </select>
           </label>
-          {selectedEmployeeDocTypeConfig?.exactNameEnabled && employeeDocumentTemplateOptions.length ? (
+          {showEmployeeDocExactName ? (
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               <span>Exact document name</span>
               <select value={employeeDocumentTemplate} onChange={(e) => setEmployeeDocumentTemplate(e.target.value)}>
@@ -1748,8 +1806,8 @@ export default function EmployeeProfilePage() {
                 ))}
               </select>
             </label>
-          ) : <div />}
-          {selectedEmployeeDocumentTemplateOption?.requiresSelectedDate ? (
+          ) : null}
+          {showEmployeeDocTemplateDate ? (
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               <span>Select date</span>
               <input
@@ -1758,7 +1816,7 @@ export default function EmployeeProfilePage() {
                 onChange={(e) => setEmployeeContractTemplateDate(e.target.value)}
               />
             </label>
-          ) : <div />}
+          ) : null}
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <span>Files</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -1774,7 +1832,7 @@ export default function EmployeeProfilePage() {
                 className="btn-primary"
                 onClick={() => employeeDocFileInputRef.current?.click()}
                 disabled={employeeDocUploading}
-                style={{ minWidth: 132 }}
+                style={{ minWidth: 132, width: 'fit-content' }}
               >
                 Choose files
               </button>
@@ -1785,7 +1843,12 @@ export default function EmployeeProfilePage() {
               </span>
             </div>
           </label>
-          <button type="submit" className="btn-primary" disabled={employeeDocUploading}>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={employeeDocUploading}
+            style={{ justifySelf: 'start', width: 120, minWidth: 120 }}
+          >
             {employeeDocUploading ? 'Uploading…' : 'Upload files'}
           </button>
         </form>
@@ -1794,6 +1857,7 @@ export default function EmployeeProfilePage() {
             type="button"
             className="btn-secondary"
             onClick={() => setShowEmployeeDocsList((v) => !v)}
+            style={{ width: 120, minWidth: 120 }}
           >
             {showEmployeeDocsList ? 'Hide docs' : 'Show docs'}
           </button>
@@ -2040,6 +2104,7 @@ export default function EmployeeProfilePage() {
                 className="btn-primary"
                 onClick={saveVacationDaysOverride}
                 disabled={vacationDaysOverrideSaving}
+                style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
               >
                 {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
               </button>
@@ -2219,7 +2284,35 @@ export default function EmployeeProfilePage() {
             {rescueError ? <p className="error-text" style={{ margin: '0 0 0.75rem' }}>{rescueError}</p> : null}
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', color: isDark ? '#d7e5ff' : '#111827' }}>
               <span>Date</span>
-              <input type="date" value={rescueDate} onChange={(e) => setRescueDate(e.target.value)} style={modalInputStyle} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem' }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="day"
+                  aria-label="day"
+                  value={rescueDateDraft.day}
+                  onChange={(e) => updateRescueDateDraft('day', e.target.value)}
+                  style={modalInputStyle}
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="month"
+                  aria-label="month"
+                  value={rescueDateDraft.month}
+                  onChange={(e) => updateRescueDateDraft('month', e.target.value)}
+                  style={modalInputStyle}
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="year"
+                  aria-label="year"
+                  value={rescueDateDraft.year}
+                  onChange={(e) => updateRescueDateDraft('year', e.target.value)}
+                  style={modalInputStyle}
+                />
+              </div>
             </label>
             <p style={{ margin: '0.85rem 0 0', color: isDark ? '#9bb0d1' : '#666', fontSize: '0.9rem' }}>
               Each saved rescue adds the configured Rescue bonus from Payroll Settings to Total Bonus.

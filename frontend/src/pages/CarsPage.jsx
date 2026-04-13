@@ -18,6 +18,7 @@ import {
 import { getKenjoUsers } from '../services/kenjoApi';
 import { getPaveSessions } from '../services/paveApi';
 import { getPaveGmailReportsByCar } from '../services/paveGmailApi.js';
+import { listFleetInspections } from '../services/internalInspectionApi.js';
 import { formatPaveInspectionDate } from '../utils/paveInspectionDateDisplay.js';
 
 const STATUS_OPTIONS = ['Active', 'Maintenance', 'Grounded', 'Out of Service', 'Defleeted', 'Defleeting candidate', 'Defleeting finalized'];
@@ -321,6 +322,11 @@ export default function CarsPage() {
                 sortedCars.map((c) => (
                   <tr
                     key={c.id}
+                    title={
+                      c.status === 'Defleeting candidate' && c.planned_defleeting_date
+                        ? `Defleeting Candidate Date: ${formatDate(c.planned_defleeting_date)}`
+                        : undefined
+                    }
                     style={
                       c.status === 'Defleeting finalized'
                         ? { backgroundColor: 'rgba(158,158,158,0.3)', opacity: 0.7 }
@@ -1300,6 +1306,9 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
   const [paveImports, setPaveImports] = useState([]);
   const [paveImportsLoading, setPaveImportsLoading] = useState(false);
   const [paveImportsError, setPaveImportsError] = useState('');
+  const [internalInspections, setInternalInspections] = useState([]);
+  const [internalInspectionsLoading, setInternalInspectionsLoading] = useState(false);
+  const [internalInspectionsError, setInternalInspectionsError] = useState('');
   const [localDocuments, setLocalDocuments] = useState([]);
   const [workshopForm, setWorkshopForm] = useState({ from: '', to: '', workshop: '', comment: '' });
   const [workshopSaving, setWorkshopSaving] = useState(false);
@@ -1332,6 +1341,41 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
       .finally(() => {
         if (!cancelled) setPaveImportsLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [carId]);
+
+  useEffect(() => {
+    if (!carId) {
+      setInternalInspections([]);
+      setInternalInspectionsError('');
+      setInternalInspectionsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setInternalInspectionsLoading(true);
+    setInternalInspectionsError('');
+
+    listFleetInspections({ carId, limit: 12 })
+      .then((rows) => {
+        if (!cancelled) {
+          setInternalInspections(Array.isArray(rows) ? rows : []);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setInternalInspections([]);
+          setInternalInspectionsError(err?.message || 'Failed to load internal inspections');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setInternalInspectionsLoading(false);
+        }
+      });
+
     return () => {
       cancelled = true;
     };
@@ -1666,6 +1710,62 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
                 </div>
               </section>
               <section className="drawer-section">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <h4 style={{ margin: 0 }}>Internal inspections</h4>
+                  <Link to={`/fleet-inspections?carId=${encodeURIComponent(carId)}`} className="cars-btn cars-btn--secondary">
+                    All internal inspections
+                  </Link>
+                </div>
+                {internalInspectionsError ? (
+                  <p className="cars-message cars-message--error" style={{ marginTop: '0.75rem' }}>
+                    {internalInspectionsError}
+                  </p>
+                ) : null}
+                {internalInspectionsLoading ? (
+                  <p className="muted" style={{ marginTop: '0.75rem' }}>Loading internal inspections…</p>
+                ) : internalInspections.length === 0 ? (
+                  <p className="muted" style={{ marginTop: '0.75rem' }}>No internal inspections recorded for this vehicle yet.</p>
+                ) : (
+                  <div className="drawer-table-wrap" style={{ marginTop: '0.75rem' }}>
+                    <table className="cars-table">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Name</th>
+                          <th>New damages</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {internalInspections.map((inspection) => (
+                          <tr
+                            key={inspection.id}
+                            className={`drawer-table-row--clickable${Number(inspection.new_damages_count || 0) > 0 ? ' drawer-table-row--attention' : ''}`}
+                            tabIndex={0}
+                            role="link"
+                            onClick={() => navigate(`/fleet-inspections/${inspection.id}`)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                navigate(`/fleet-inspections/${inspection.id}`);
+                              }
+                            }}
+                            title={`Open internal inspection #${inspection.id}`}
+                          >
+                            <td>{formatDate(inspection.submitted_at || inspection.created_at)}</td>
+                            <td>{inspection.operator_name || '—'}</td>
+                            <td>
+                              <span className={`drawer-damage-pill${Number(inspection.new_damages_count || 0) > 0 ? ' drawer-damage-pill--alert' : ''}`}>
+                                {Number(inspection.new_damages_count || 0)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+              <section className="drawer-section">
                 <h4>Documents</h4>
                 {drawerError && <p className="cars-message cars-message--error">{drawerError}</p>}
                 {drawerMessage && <p className="cars-message cars-message--ok">{drawerMessage}</p>}
@@ -1748,6 +1848,27 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
         .drawer-dl dt { color: #666; }
         .drawer-table-wrap { overflow: auto; margin-top: 0.5rem; }
         .drawer-table-wrap .cars-table { font-size: 0.85rem; }
+        .drawer-table-row--clickable { cursor: pointer; }
+        .drawer-table-row--attention td { background: rgba(211, 47, 47, 0.06); }
+        .drawer-table-row--clickable:hover td,
+        .drawer-table-row--clickable:focus td { background: rgba(25, 118, 210, 0.08); }
+        .drawer-table-row--clickable:focus { outline: 2px solid rgba(25, 118, 210, 0.35); outline-offset: -2px; }
+        .drawer-damage-pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 32px;
+          padding: 0.18rem 0.55rem;
+          border-radius: 999px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          background: #eef3f8;
+          color: #44546a;
+        }
+        .drawer-damage-pill--alert {
+          background: rgba(211, 47, 47, 0.14);
+          color: #b71c1c;
+        }
         .drawer-comments-list { list-style: none; padding: 0; margin: 0 0 0.75rem 0; }
         .drawer-comment-item { padding: 0.4rem 0; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; }
         .drawer-comment-text { display: block; }

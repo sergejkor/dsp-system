@@ -31,6 +31,23 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/tasks', async (req, res) => {
+  try {
+    const rows = await vehicleInspectionsService.listInspectionTasks({
+      search: req.query.search,
+      status: req.query.status,
+      carId: req.query.carId,
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo,
+      limit: req.query.limit,
+    });
+    res.json(rows);
+  } catch (error) {
+    console.error('GET /api/fleet-inspections/tasks error', error);
+    res.status(500).json({ error: String(error?.message || error || 'Failed to load inspection tasks') });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const inspection = await vehicleInspectionsService.getInspectionById(req.params.id);

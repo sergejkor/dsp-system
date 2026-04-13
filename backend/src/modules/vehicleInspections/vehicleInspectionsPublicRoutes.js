@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import vehicleInspectionsService from './vehicleInspectionsService.js';
+import employeeService from '../employees/employeeService.js';
 
 const router = Router();
 const upload = multer({
@@ -33,6 +34,36 @@ router.get('/health', async (_req, res) => {
     res.json({ ok: true, module: 'vehicle-inspections-public' });
   } catch (error) {
     res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.get('/operators', async (req, res) => {
+  try {
+    const search = String(req.query?.search || '').trim();
+    if (search.length < 2) {
+      return res.json([]);
+    }
+    const employees = await employeeService.listEmployees({ search, onlyActive: true });
+    const out = (employees || [])
+      .map((row) => {
+        const label =
+          String(row.display_name || '').trim() ||
+          [row.first_name, row.last_name].filter(Boolean).join(' ').trim() ||
+          String(row.email || '').trim() ||
+          String(row.employee_id || row.id || '').trim();
+        if (!label) return null;
+        return {
+          id: String(row.employee_id || row.id || row.kenjo_user_id || label),
+          label,
+          subtitle: String(row.email || '').trim() || null,
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 8);
+    return res.json(out);
+  } catch (error) {
+    console.error('GET /api/public/fleet-inspections/operators error', error);
+    return res.status(500).json({ error: 'Failed to load operator suggestions' });
   }
 });
 

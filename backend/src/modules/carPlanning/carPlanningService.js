@@ -1,4 +1,5 @@
 import { query } from '../../db.js';
+import inspectionReminderService from '../vehicleInspections/inspectionReminderService.js';
 
 let carPlanningWorkshopColumnsReady = false;
 
@@ -211,6 +212,10 @@ async function savePlanningData(carStates = {}, slots = []) {
        VALUES ($1, $2, NULLIF(TRIM($3), ''), $4, NOW())`,
       [carId, planDate, (s.driver_identifier || '').toString(), hasControl]
     );
+  }
+
+  if (dateList.length > 0) {
+    await inspectionReminderService.syncTasksForPlanDates(dateList);
   }
 
   return { ok: true };

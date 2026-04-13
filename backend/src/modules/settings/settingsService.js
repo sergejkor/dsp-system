@@ -77,6 +77,67 @@ const PAYROLL_ADDITIONAL_DEFAULT_ITEMS = [
   { key: 'payroll_fantastic_bonus_eur', label: 'Fantastic Bonus per day', value_type: 'number', value_number: 5, default_value_json: '5', unit: 'EUR', sort_order: 104 },
 ];
 
+const INTERNAL_INSPECTION_GROUP = {
+  key: 'internal_inspections',
+  label: 'Internal inspections',
+  description: 'Internal inspection reminders and WhatsApp cadence',
+  sort_order: 45,
+};
+
+const INTERNAL_INSPECTION_DEFAULT_ITEMS = [
+  {
+    key: 'enabled',
+    label: 'Enable internal inspection reminders',
+    value_type: 'boolean',
+    value_boolean: true,
+    default_value_json: 'true',
+    sort_order: 10,
+  },
+  {
+    key: 'reminder_message',
+    label: 'Reminder message',
+    value_type: 'string',
+    value_text: 'Hi {{driverName}}, please complete today\'s internal inspection for {{licensePlate}}: {{inspectionUrl}}',
+    default_value_json: `"Hi {{driverName}}, please complete today's internal inspection for {{licensePlate}}: {{inspectionUrl}}"`,
+    sort_order: 20,
+  },
+  {
+    key: 'reminder_start_time',
+    label: 'Reminder start time',
+    value_type: 'string',
+    value_text: '10:00',
+    default_value_json: '"10:00"',
+    sort_order: 30,
+  },
+  {
+    key: 'reminder_interval_minutes',
+    label: 'Reminder interval (minutes)',
+    value_type: 'number',
+    value_number: 60,
+    default_value_json: '60',
+    sort_order: 40,
+    unit: 'min',
+  },
+  {
+    key: 'public_base_url',
+    label: 'FleetCheck public URL',
+    value_type: 'string',
+    value_text: 'https://fleetcheck.alfamile.com',
+    default_value_json: '"https://fleetcheck.alfamile.com"',
+    sort_order: 50,
+  },
+  {
+    key: 'default_country_code',
+    label: 'Default country code for WhatsApp numbers',
+    value_type: 'string',
+    value_text: '+49',
+    default_value_json: '"+49"',
+    sort_order: 60,
+  },
+];
+
+let defaultSettingsReady = false;
+
 function itemToValue(row) {
   if (!row) return null;
   switch (row.value_type) {
@@ -91,7 +152,62 @@ function itemToValue(row) {
   }
 }
 
+async function ensureGroup(group) {
+  await query(
+    `INSERT INTO settings_groups (key, label, description, sort_order)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (key) DO UPDATE
+       SET label = EXCLUDED.label,
+           description = EXCLUDED.description,
+           sort_order = EXCLUDED.sort_order,
+           updated_at = NOW()`,
+    [group.key, group.label, group.description || null, group.sort_order || 0],
+  );
+  const res = await query('SELECT id FROM settings_groups WHERE key = $1', [group.key]);
+  return res.rows[0]?.id || null;
+}
+
+async function ensureGroupItems(groupId, items) {
+  for (const item of items) {
+    await query(
+      `INSERT INTO settings_items
+        (group_id, key, label, value_type, value_text, value_number, value_boolean, value_json, default_value_json, unit, sort_order)
+       VALUES
+        ($1, $2, $3, $4, $5, $6, $7, NULL, $8::jsonb, $9, $10)
+       ON CONFLICT (group_id, key) DO UPDATE SET
+        label = EXCLUDED.label,
+        value_type = EXCLUDED.value_type,
+        default_value_json = EXCLUDED.default_value_json,
+        unit = EXCLUDED.unit,
+        sort_order = EXCLUDED.sort_order,
+        updated_at = NOW()`,
+      [
+        groupId,
+        item.key,
+        item.label,
+        item.value_type,
+        item.value_text ?? null,
+        item.value_number ?? null,
+        item.value_boolean ?? null,
+        item.default_value_json,
+        item.unit ?? null,
+        item.sort_order ?? 0,
+      ],
+    );
+  }
+}
+
+async function ensureDefaultSettingsDefinitions() {
+  if (defaultSettingsReady) return;
+  const internalInspectionGroupId = await ensureGroup(INTERNAL_INSPECTION_GROUP);
+  if (internalInspectionGroupId) {
+    await ensureGroupItems(internalInspectionGroupId, INTERNAL_INSPECTION_DEFAULT_ITEMS);
+  }
+  defaultSettingsReady = true;
+}
+
 async function getGroups() {
+  await ensureDefaultSettingsDefinitions();
   const res = await query(
     'SELECT id, key, label, description, sort_order, is_active FROM settings_groups WHERE is_active = true ORDER BY sort_order, id'
   );
@@ -99,6 +215,7 @@ async function getGroups() {
 }
 
 async function getByGroupKey(groupKey) {
+  await ensureDefaultSettingsDefinitions();
   const gRes = await query('SELECT id FROM settings_groups WHERE key = $1', [groupKey]);
   const group = gRes.rows[0];
   if (!group) return {};
@@ -174,6 +291,7 @@ async function getByGroupKey(groupKey) {
 }
 
 async function getSetting(groupKey, itemKey) {
+  await ensureDefaultSettingsDefinitions();
   const res = await query(
     `SELECT i.* FROM settings_items i
      JOIN settings_groups g ON g.id = i.group_id AND g.key = $1
@@ -184,6 +302,7 @@ async function getSetting(groupKey, itemKey) {
 }
 
 async function updateGroup(groupKey, payload, updatedBy = null) {
+  await ensureDefaultSettingsDefinitions();
   const gRes = await query('SELECT id FROM settings_groups WHERE key = $1', [groupKey]);
   const g = gRes.rows[0];
   if (!g) return null;
@@ -206,6 +325,7 @@ async function updateGroup(groupKey, payload, updatedBy = null) {
 }
 
 async function resetGroup(groupKey, updatedBy = null) {
+  await ensureDefaultSettingsDefinitions();
   const gRes = await query('SELECT id FROM settings_groups WHERE key = $1', [groupKey]);
   const g = gRes.rows[0];
   if (!g) return null;

@@ -1,32 +1,137 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1330 730">
+  <defs>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2.6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
 
-<defs>
-  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-    <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
-    <feMerge>
-      <feMergeNode in="coloredBlur"/>
-      <feMergeNode in="SourceGraphic"/>
-    </feMerge>
-  </filter>
-</defs>
+  <rect width="100%" height="100%" fill="none"/>
 
-<rect width="100%" height="100%" fill="none"/>
-<g stroke="#FFFFFF" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
-  
-<path d="M190 1140 L242 930 Q270 822 356 752 L710 752 Q800 758 862 830 L920 898 L950 1028 Q962 1098 936 1164 Q904 1230 828 1238 L286 1238 Q228 1234 198 1200 Q168 1168 190 1140 Z" stroke-width="8"/>
-<path d="M360 760 L360 1144" stroke-width="5" opacity="0.55"/>
-<path d="M606 760 L606 1134" stroke-width="4" opacity="0.35"/>
-<path d="M750 776 L750 1108" stroke-width="4" opacity="0.35"/>
-<path d="M238 928 Q252 844 326 792 L360 792 L360 928 Z" stroke-width="5" opacity="0.7"/>
-<path d="M782 932 L922 964 Q960 974 966 1014 L966 1084 Q956 1124 908 1128 L782 1126 Z" stroke-width="6" opacity="0.75"/>
-<circle cx="846" cy="982" r="40" stroke-width="8"/><circle cx="876" cy="982" r="40" stroke-width="8" opacity="0"/>
-<path d="M818 1028 L928 1044" stroke-width="4" opacity="0.45"/>
+  <g
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#glow)"
+    transform="translate(80 110)"
+  >
+    <path
+      d="M84 450
+         Q88 388 114 332
+         Q140 272 194 244
+         Q230 224 292 224
+         H734
+         Q802 226 858 260
+         Q934 306 988 384
+         Q1038 456 1040 514
+         Q1036 550 1010 570
+         Q980 590 928 592
+         H266
+         Q188 592 140 572
+         Q90 550 84 450 Z"
+      stroke-width="7"
+    />
 
-<circle cx="316" cy="1238" r="48" stroke-width="7" opacity="0.95"/><circle cx="316" cy="1238" r="26.400000000000002" stroke-width="4" opacity="0.55"/>
-<circle cx="808" cy="1232" r="58" stroke-width="7" opacity="0.95"/><circle cx="808" cy="1232" r="31.900000000000002" stroke-width="4" opacity="0.55"/>
-<path d="M158 1290 L996 1290" stroke-width="4" opacity="0.25"/>
-</g>
-<g fill="#FFFFFF" opacity="0.20" font-family="Arial, Helvetica, sans-serif" font-size="30">
-  <text x="540" y="1760" text-anchor="middle">rivian · front_left</text>
-</g>
+    <path
+      d="M206 336
+         Q256 252 356 224"
+      stroke-width="4.5"
+      opacity="0.72"
+    />
+
+    <path
+      d="M360 224
+         Q444 184 592 182
+         Q726 180 822 214"
+      stroke-width="4"
+      opacity="0.5"
+    />
+
+    <path
+      d="M312 236
+         Q306 308 306 512"
+      stroke-width="5"
+      opacity="0.76"
+    />
+
+    <path
+      d="M782 242
+         Q786 344 786 540"
+      stroke-width="4.5"
+      opacity="0.64"
+    />
+
+    <path
+      d="M902 330
+         Q914 382 914 516"
+      stroke-width="4"
+      opacity="0.44"
+    />
+
+    <path
+      d="M168 396
+         Q192 304 250 266
+         H312
+         V430
+         H166 Z"
+      stroke-width="5"
+      opacity="0.78"
+    />
+
+    <path
+      d="M332 266
+         L430 252
+         Q514 242 612 242
+         Q706 242 774 254
+         Q858 268 924 352"
+      stroke-width="4.5"
+      opacity="0.42"
+    />
+
+    <path
+      d="M840 408
+         Q878 360 944 364
+         Q992 368 1012 404
+         Q1026 430 1022 470
+         Q1012 516 966 526
+         H852"
+      stroke-width="5.5"
+      opacity="0.84"
+    />
+
+    <circle cx="918" cy="430" r="28" stroke-width="6.2" opacity="0.92"/>
+    <path d="M876 486 L980 496" stroke-width="4" opacity="0.4"/>
+
+    <path
+      d="M172 522
+         Q198 482 244 482
+         Q290 482 316 522"
+      stroke-width="5"
+      opacity="0.56"
+    />
+
+    <path
+      d="M688 528
+         Q726 466 796 466
+         Q866 466 906 528"
+      stroke-width="5.5"
+      opacity="0.56"
+    />
+
+    <circle cx="244" cy="590" r="74" stroke-width="7" opacity="0.96"/>
+    <circle cx="244" cy="590" r="38" stroke-width="4" opacity="0.58"/>
+    <circle cx="784" cy="590" r="88" stroke-width="7" opacity="0.96"/>
+    <circle cx="784" cy="590" r="44" stroke-width="4" opacity="0.58"/>
+
+    <path
+      d="M128 618
+         H1034"
+      stroke-width="3.5"
+      opacity="0.24"
+    />
+  </g>
 </svg>

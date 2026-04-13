@@ -12,6 +12,7 @@ const SECTION_KEYS = [
   { path: 'create-documents', key: 'createDocuments' },
   { path: 'drivers', key: 'drivers' },
   { path: 'cars', key: 'carsFleet' },
+  { path: 'internal-inspections', key: 'internalInspections' },
   { path: 'routes', key: 'routes' },
   { path: 'lookups', key: 'lookups' },
   { path: 'integrations', key: 'integrations' },

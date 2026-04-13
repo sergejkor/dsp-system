@@ -5,6 +5,7 @@ import carsService from '../cars/carsService.js';
 import vehicleInspectionEvents from './vehicleInspectionEvents.js';
 import analysisRepository from './vehicleInspectionAnalysisRepository.js';
 import inspectionAnalysisService from './inspectionAnalysisService.js';
+import inspectionReminderService from './inspectionReminderService.js';
 
 export const REQUIRED_SHOT_TYPES = [
   'front_left',
@@ -406,13 +407,22 @@ async function submitInspection(payload, files) {
     client.release();
   }
 
-  await inspectionAnalysisService.analyzeInspection(inspectionId);
+  try {
+    await inspectionAnalysisService.analyzeInspection(inspectionId);
+  } catch (error) {
+    console.error('Internal inspection analysis failed after upload', error);
+  }
 
+  const inspection = await getInspectionById(inspectionId);
+  await inspectionReminderService.completeTaskFromInspection(inspection).catch((error) => {
+    console.error('Failed to complete inspection reminder task', error);
+  });
   return getInspectionById(inspectionId);
 }
 
 async function listInspections(filters = {}) {
   await ensureVehicleInspectionTables();
+  await inspectionReminderService.ensureTables();
 
   const params = [];
   const conditions = [];
@@ -473,6 +483,11 @@ async function listInspections(filters = {}) {
        i.completed_at,
        i.created_at,
        i.updated_at,
+       t.status AS task_status,
+       t.next_reminder_at,
+       t.last_reminder_at,
+       t.last_reminder_status,
+       t.reminder_count,
        c.model,
        (
          SELECT COUNT(*)::int
@@ -481,6 +496,7 @@ async function listInspections(filters = {}) {
        ) AS photo_count
      FROM vehicle_internal_inspections i
      LEFT JOIN cars c ON c.id = i.car_id
+     LEFT JOIN vehicle_internal_inspection_tasks t ON t.completed_inspection_id = i.id
      ${where}
      ORDER BY COALESCE(i.submitted_at, i.created_at) DESC, i.id DESC
      LIMIT $${index}`,
@@ -493,11 +509,17 @@ async function listInspections(filters = {}) {
     analysis_status: stringOrNull(row.analysis_status, 32),
     review_status: stringOrNull(row.review_status, 32),
     review_required: Boolean(row.review_required),
+    task_status: stringOrNull(row.task_status, 32),
+    next_reminder_at: normalizeDateTime(row.next_reminder_at),
+    last_reminder_at: normalizeDateTime(row.last_reminder_at),
+    last_reminder_status: stringOrNull(row.last_reminder_status, 64),
+    reminder_count: toInteger(row.reminder_count, 0),
   }));
 }
 
 async function getInspectionById(id) {
   await ensureVehicleInspectionTables();
+  await inspectionReminderService.ensureTables();
 
   const inspectionId = toInteger(id, null);
   if (!inspectionId) return null;
@@ -513,7 +535,7 @@ async function getInspectionById(id) {
   const inspection = inspectionRes.rows[0];
   if (!inspection) return null;
 
-  const [photosRes, findingsRes, eventsRes, analysis] = await Promise.all([
+  const [photosRes, findingsRes, eventsRes, analysis, task] = await Promise.all([
     query(
       `SELECT id, inspection_id, shot_type, capture_order, file_name, mime_type, file_size, width, height, created_at
        FROM vehicle_internal_inspection_photos
@@ -536,6 +558,7 @@ async function getInspectionById(id) {
       [inspectionId],
     ),
     analysisRepository.getAnalysisByInspectionId(inspectionId).catch(() => null),
+    inspectionReminderService.getTaskByInspectionId(inspectionId).catch(() => null),
   ]);
 
   return {
@@ -544,6 +567,7 @@ async function getInspectionById(id) {
     findings: (findingsRes.rows || []).map(normalizeFindingRow),
     events: (eventsRes.rows || []).map(normalizeEventRow),
     analysis,
+    task,
   };
 }
 
@@ -589,10 +613,16 @@ async function getVehicleDamageHistory(vehicleId) {
   return analysisRepository.getDamageHistory(vehicleId);
 }
 
+async function listInspectionTasks(filters = {}) {
+  await ensureVehicleInspectionTables();
+  return inspectionReminderService.listTasks(filters);
+}
+
 export default {
   ensureVehicleInspectionTables,
   submitInspection,
   listInspections,
+  listInspectionTasks,
   getInspectionById,
   getInspectionPhoto,
   analyzeInspection,

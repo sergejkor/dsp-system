@@ -1,26 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1330 730">
+  <defs>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
+      <feMerge>
+        <feMergeNode in="coloredBlur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
 
-<defs>
-  <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-    <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
-    <feMerge>
-      <feMergeNode in="coloredBlur"/>
-      <feMergeNode in="SourceGraphic"/>
-    </feMerge>
-  </filter>
-</defs>
+  <rect width="100%" height="100%" fill="none" />
 
-<rect width="100%" height="100%" fill="none"/>
-<g stroke="#FFFFFF" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
-  <path d="M382 1234 Q338 1194 338 1124 L338 790 Q338 694 404 646 Q466 604 540 604 Q614 604 676 646 Q742 694 742 790 L742 1124 Q742 1194 698 1234 Q660 1270 602 1272 L478 1272 Q420 1270 382 1234 Z" stroke-width="8"/>
-<path d="M540 654 L540 1240" stroke-width="5" opacity="0.6"/><path d="M430 790 L650 790" stroke-width="4" opacity="0.35"/>
-<path d="M374 684 L374 1214" stroke-width="10"/><path d="M706 684 L706 1214" stroke-width="10"/>
-<path d="M428 1214 L652 1214" stroke-width="8" opacity="0.6"/>
-<circle cx="438" cy="1272" r="24" stroke-width="7" opacity="0.95"/><circle cx="438" cy="1272" r="13.200000000000001" stroke-width="4" opacity="0.55"/>
-<circle cx="642" cy="1272" r="24" stroke-width="7" opacity="0.95"/><circle cx="642" cy="1272" r="13.200000000000001" stroke-width="4" opacity="0.55"/>
-<path d="M322 1312 L758 1312" stroke-width="4" opacity="0.25"/>
-</g>
-<g fill="#FFFFFF" opacity="0.20" font-family="Arial, Helvetica, sans-serif" font-size="30">
-  <text x="540" y="1760" text-anchor="middle">rivian · rear</text>
-</g>
+  <g
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#glow)"
+  >
+    <g id="body" stroke-width="4">
+      <path d="
+        M 210 635
+        C 188 625, 175 604, 170 572
+        C 165 529, 164 474, 164 405
+        C 164 308, 166 224, 171 152
+        C 173 115, 179 92, 190 77
+        C 201 62, 221 54, 250 52
+        C 307 49, 384 48, 465 49
+        C 525 50, 566 52, 589 58
+        C 607 63, 620 76, 628 96
+        C 634 114, 637 145, 639 192
+        C 642 262, 644 336, 644 414
+        C 644 500, 642 560, 637 593
+        C 632 615, 621 629, 604 637
+        C 585 646, 555 650, 512 651
+        C 450 653, 379 653, 307 651
+        C 261 650, 228 645, 210 635
+        Z
+      " />
+    </g>
+
+    <g id="door-opening" stroke-width="3.5" opacity="0.72">
+      <path d="
+        M 249 553
+        C 244 538, 241 511, 240 472
+        C 237 395, 236 316, 239 235
+        C 241 180, 244 141, 250 118
+        C 255 100, 265 90, 281 86
+        C 299 82, 333 80, 381 80
+        C 437 80, 481 82, 513 86
+        C 535 89, 549 99, 556 117
+        C 564 141, 568 181, 570 236
+        C 573 315, 572 394, 569 472
+        C 567 512, 563 539, 557 554
+        L 249 553
+        Z
+      " />
+    </g>
+  </g>
 </svg>
