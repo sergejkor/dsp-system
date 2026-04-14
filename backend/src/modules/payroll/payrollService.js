@@ -41,6 +41,39 @@ function getWeeksInRange(fromDate, toDate) {
   return weeks;
 }
 
+function parseIsoDate(value) {
+  const date = new Date(`${String(value || '').slice(0, 10)}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatIsoDate(value) {
+  return value.toISOString().slice(0, 10);
+}
+
+async function getKenjoAttendancesForPayrollRange(fromDate, toDate) {
+  const from = parseIsoDate(fromDate);
+  const to = parseIsoDate(toDate);
+  if (!from || !to || from > to) return [];
+
+  const ranges = [];
+  let cursor = new Date(from.getFullYear(), from.getMonth(), 1, 12, 0, 0, 0);
+  while (cursor <= to) {
+    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 12, 0, 0, 0);
+    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 12, 0, 0, 0);
+    const chunkStart = monthStart < from ? new Date(from) : monthStart;
+    const chunkEnd = monthEnd > to ? new Date(to) : monthEnd;
+    ranges.push([formatIsoDate(chunkStart), formatIsoDate(chunkEnd)]);
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1, 12, 0, 0, 0);
+  }
+
+  const merged = [];
+  for (const [chunkFrom, chunkTo] of ranges) {
+    const rows = await getKenjoAttendances(chunkFrom, chunkTo);
+    if (Array.isArray(rows) && rows.length) merged.push(...rows);
+  }
+  return merged;
+}
+
 /**
  * Count working days per user in a date range from Kenjo attendances.
  * Returns Map<userId, number> and Map<userId, Map<weekKey, days>> for days per week.
@@ -142,8 +175,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
   const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows] = await Promise.all([
     getKenjoUsersList(),
-    getKenjoAttendances(monthStart, monthEnd),
-    getKenjoAttendances(from, to),
+    getKenjoAttendancesForPayrollRange(monthStart, monthEnd),
+    getKenjoAttendancesForPayrollRange(from, to),
     query(
       `SELECT employee_id, line_no, amount, comment FROM payroll_abzug_items WHERE period_id = $1 ORDER BY employee_id, line_no`,
       [monthStr]
