@@ -1012,6 +1012,7 @@ export default function EmployeeProfilePage() {
           currentBadge: 'Aktuell',
           unlimitedLabel: 'Unbefristed',
           terminateButton: 'Terminate contract',
+          terminateCurrentButton: 'Terminate Current Contract',
           editContractDateButton: 'Edit contract date',
           editContractDateTitle: 'Edit contract date',
           terminateTitle: 'Vertrag kuendigen',
@@ -1058,6 +1059,7 @@ export default function EmployeeProfilePage() {
           currentBadge: 'Current',
           unlimitedLabel: 'Unbefristed',
           terminateButton: 'Terminate contract',
+          terminateCurrentButton: 'Terminate Current Contract',
           editContractDateButton: 'Edit contract date',
           editContractDateTitle: 'Edit contract date',
           terminateTitle: 'Terminate contract',
@@ -1614,6 +1616,8 @@ export default function EmployeeProfilePage() {
 
   const fixedContractCount = contractTimeline.filter((row) => !row.isUnlimited).length;
   const hasUnlimitedContract = contractTimeline.some((row) => row.isUnlimited);
+  const currentActiveContract =
+    contractTimeline.find((row) => row.isCurrentProfile && !normalizeContractDate(row?.termination_date)) || null;
   const canAddAnotherFixedContract = !hasUnlimitedContract && fixedContractCount < 4;
   const canAddUnlimitedContract = !hasUnlimitedContract && fixedContractCount >= 4;
   const nextFixedContractStartDate = (() => {
@@ -2085,6 +2089,24 @@ export default function EmployeeProfilePage() {
         {canAddUnlimitedContract ? (
           <button type="button" className="btn-secondary" onClick={() => openContractForm('unlimited')} disabled={contractSaving}>
             {contractUi.unlimitedButton}
+          </button>
+        ) : null}
+        {currentActiveContract ? (
+          <button
+            type="button"
+            onClick={() => openTerminateContractModal(currentActiveContract)}
+            disabled={terminateContractSaving}
+            style={{
+              border: 'none',
+              borderRadius: 999,
+              padding: '0.6rem 1rem',
+              background: '#dc2626',
+              color: '#fff',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            {contractUi.terminateCurrentButton}
           </button>
         ) : null}
         <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>{fixedContractCount}/4</span>
