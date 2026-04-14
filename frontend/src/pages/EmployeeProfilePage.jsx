@@ -546,6 +546,7 @@ export default function EmployeeProfilePage() {
   const [employeeContractTemplateDate, setEmployeeContractTemplateDate] = useState('');
   const [showEmployeeDocsList, setShowEmployeeDocsList] = useState(false);
   const [employeeDocsFilterType, setEmployeeDocsFilterType] = useState('');
+  const [activeTab, setActiveTab] = useState('overview');
   const [contracts, setContracts] = useState([]);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contractError, setContractError] = useState('');
@@ -1221,6 +1222,56 @@ export default function EmployeeProfilePage() {
     color: isDark ? '#9bb0d1' : '#666',
   };
 
+  const employeeTabs = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'profile', label: 'Profile' },
+    { key: 'employment', label: 'Employment' },
+    { key: 'time-off', label: 'Time Off' },
+    { key: 'documents', label: 'Documents' },
+    { key: 'performance', label: 'Performance' },
+  ];
+
+  const employeeTabsBarStyle = {
+    display: 'flex',
+    gap: '0.35rem',
+    alignItems: 'flex-end',
+    overflowX: 'auto',
+    padding: '0 0 0.1rem',
+    borderBottom: isDark ? '1px solid rgba(132, 162, 214, 0.28)' : '1px solid #d8dde6',
+    marginBottom: '1rem',
+  };
+
+  const getEmployeeTabButtonStyle = (tabKey) => {
+    const isActiveTab = activeTab === tabKey;
+    return {
+      border: isActiveTab
+        ? (isDark ? '1px solid rgba(120, 176, 255, 0.45)' : '1px solid #bcd0f5')
+        : (isDark ? '1px solid rgba(132, 162, 214, 0.2)' : '1px solid #d8dde6'),
+      borderBottom: isActiveTab ? 'none' : undefined,
+      borderRadius: '14px 14px 0 0',
+      padding: '0.72rem 1rem',
+      background: isActiveTab
+        ? (isDark ? 'linear-gradient(180deg, rgba(18, 42, 74, 0.96), rgba(11, 25, 45, 0.98))' : '#ffffff')
+        : (isDark ? 'rgba(10, 20, 37, 0.82)' : '#f4f6fb'),
+      color: isActiveTab
+        ? (isDark ? '#f8fbff' : '#0f172a')
+        : (isDark ? '#c3d4f0' : '#475569'),
+      fontWeight: isActiveTab ? 700 : 600,
+      cursor: 'pointer',
+      boxShadow: isActiveTab
+        ? (isDark ? '0 -10px 22px rgba(2, 10, 24, 0.32)' : '0 -8px 18px rgba(148, 163, 184, 0.12)')
+        : 'none',
+      whiteSpace: 'nowrap',
+      transition: 'background 120ms ease, color 120ms ease, box-shadow 120ms ease',
+    };
+  };
+
+  const tabHeadingStyle = {
+    margin: '0 0 0.85rem',
+    fontSize: '1rem',
+    color: isDark ? '#f8fbff' : '#111827',
+  };
+
   const modalOverlayStyle = {
     position: 'fixed',
     inset: 0,
@@ -1818,11 +1869,608 @@ export default function EmployeeProfilePage() {
     }
   };
 
+  const contractEndDisplayValue =
+    contractEndSummary === contractUi.unlimitedLabel ? contractUi.unlimitedLabel : formatDate(contractEndSummary);
+
+  const rescueSection = (
+    <div style={employeeSectionStyle}>
+      <h3 style={tabHeadingStyle}>Rescue</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+          {visibleRescues.length} shown
+        </span>
+        {kenjoEmployeeId ? (
+          <button type="button" className="btn-secondary" onClick={openRescueModal} disabled={rescueSaving}>
+            Add Rescue
+          </button>
+        ) : null}
+      </div>
+      {rescuesLoading ? (
+        <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color }}>Loading rescues...</p>
+      ) : null}
+      {rescueError ? (
+        <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{rescueError}</p>
+      ) : null}
+      {!rescuesLoading && visibleRescues.length > 0 ? (
+        <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.45rem' }}>
+          {visibleRescues.map((row) => (
+            <div
+              key={row.id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr auto auto',
+                gap: '0.5rem',
+                alignItems: 'center',
+                padding: '0.65rem 0.8rem',
+                border: isDark ? '1px solid rgba(132, 162, 214, 0.24)' : '1px solid #d8dde6',
+                borderRadius: 10,
+                background: isDark ? 'rgba(14, 29, 50, 0.94)' : '#f8fafc',
+              }}
+            >
+              <span>{formatDate(row.rescue_date)}</span>
+              <strong>{Number(row?.amount || 0).toFixed(2)} EUR</strong>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => removeRescue(row.id)}
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : !rescuesLoading ? (
+        <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color }}>No rescues in current or last month.</p>
+      ) : null}
+    </div>
+  );
+
+  const overviewContent = (
+    <>
+      <div style={employeeSectionStyle}>
+        <h3 style={tabHeadingStyle}>Overview</h3>
+        <div className="grid two-columns">
+          <div>
+            {renderText('Status', isActive ? 'Active' : 'Inactive')}
+            {renderText('Job title', jobTitle)}
+            {renderText('Start date', formatDate(contractStartSummary))}
+            {renderText('Contract end', contractEndDisplayValue)}
+          </div>
+          <div>
+            {renderText('Personal Nr.', work?.employeeNumber || externalId, (v) => onNestedChange('work', 'employeeNumber', v))}
+            {renderText(
+              'Manager',
+              work?.managerName || employee?.manager?.displayName,
+              (v) => onNestedChange('work', 'managerName', v),
+            )}
+            {renderText('Email', email || personal?.email || account?.email, (v) => onFieldChange('email', v))}
+            {renderText(
+              'Mobile Phone',
+              personal?.mobile || home?.personalMobile,
+              (v) => onNestedChange('personal', 'mobile', v),
+            )}
+          </div>
+        </div>
+      </div>
+      {rescueSection}
+    </>
+  );
+
+  const employmentContent = (
+    <div style={employeeSectionStyle}>
+      <h3 style={tabHeadingStyle}>Employment</h3>
+      <div className="grid two-columns">
+        <div>
+          {renderText('Status', isActive ? 'Active' : 'Inactive')}
+          {renderText('Job title', jobTitle, (v) => onNestedChange('work', 'jobTitle', v))}
+          {renderText('Start date', formatDate(contractStartSummary))}
+          {renderText('Personal Nr.', work?.employeeNumber || externalId, (v) => onNestedChange('work', 'employeeNumber', v))}
+          {renderText(
+            'Manager',
+            work?.managerName || employee?.manager?.displayName,
+            (v) => onNestedChange('work', 'managerName', v),
+          )}
+        </div>
+        <div>
+          {renderText('Weekly hours', work?.weeklyHours, (v) => onNestedChange('work', 'weeklyHours', v))}
+          {renderText('Probation until', formatDate(work?.probationUntil), (v) =>
+            onNestedChange('work', 'probationUntil', v),
+          )}
+          {renderText('Language', account?.language)}
+          {renderText('Contract end', contractEndDisplayValue)}
+        </div>
+      </div>
+
+      <p style={{ margin: '0.75rem 0 0.5rem', color: employeeMutedTextStyle.color, fontSize: '0.85rem' }}>
+        {contractUi.managedSummaryHint}
+      </p>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          flexWrap: 'wrap',
+          marginBottom: contractTimeline.length || showContractForm || contractError ? '0.5rem' : 0,
+        }}
+      >
+        {canAddAnotherFixedContract ? (
+          <button type="button" className="btn-primary" onClick={() => openContractForm('fixed')} disabled={contractSaving}>
+            {contractUi.extendButton}
+          </button>
+        ) : null}
+        {canAddUnlimitedContract ? (
+          <button type="button" className="btn-secondary" onClick={() => openContractForm('unlimited')} disabled={contractSaving}>
+            {contractUi.unlimitedButton}
+          </button>
+        ) : null}
+        <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>{fixedContractCount}/3</span>
+      </div>
+
+      <p style={{ margin: '0.25rem 0 0.2rem' }}>
+        <strong>{contractUi.historyTitle}</strong>
+      </p>
+      <p style={{ margin: '0 0 0.45rem', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+        {contractUi.historyHint}
+      </p>
+      {contractsLoading ? <p style={{ margin: '0.25rem 0 0', color: employeeMutedTextStyle.color }}>{contractUi.loading}</p> : null}
+      {contractError ? <p className="error-text" style={{ margin: '0.25rem 0 0' }}>{contractError}</p> : null}
+      {contractTimeline.map((row) => (
+        <div
+          key={row.row_key || row.id}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) auto',
+            gap: '0.35rem 0.75rem',
+            padding: '0.65rem 0.8rem',
+            border: isDark ? '1px solid rgba(132, 162, 214, 0.3)' : '1px solid #d8dde6',
+            borderRadius: 10,
+            background: isDark ? 'rgba(10, 20, 37, 0.84)' : '#f8fafc',
+            marginTop: '0.5rem',
+            alignItems: 'center',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <strong>{row.label}</strong>
+            {row.isCurrentProfile ? (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '0.1rem 0.45rem',
+                  borderRadius: 999,
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: isDark ? '#dbeafe' : '#1d4ed8',
+                  background: isDark ? 'rgba(37, 99, 235, 0.2)' : 'rgba(59, 130, 246, 0.12)',
+                }}
+              >
+                {contractUi.currentBadge}
+              </span>
+            ) : null}
+            {row.termination_date ? (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '0.1rem 0.45rem',
+                  borderRadius: 999,
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  color: '#fff',
+                  background: '#dc2626',
+                }}
+              >
+                {contractUi.terminationBadge}
+              </span>
+            ) : null}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <span>
+              {row.isUnlimited
+                ? `${formatDate(row.start_date)} - ${contractUi.unlimitedLabel}`
+                : `${formatDate(row.start_date)} - ${formatDate(row.effectiveEndDate)}`}
+            </span>
+            {row.canTerminate ? (
+              <button
+                type="button"
+                onClick={() => openTerminateContractModal(row)}
+                style={{
+                  border: 'none',
+                  borderRadius: 999,
+                  padding: '0.45rem 0.85rem',
+                  background: '#dc2626',
+                  color: '#fff',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {contractUi.terminateButton}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ))}
+      {showContractForm ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: contractDraft.type === 'unlimited' ? '1fr auto' : '1fr 1fr auto',
+            gap: '0.5rem',
+            alignItems: 'end',
+            padding: '0.75rem',
+            border: isDark ? '1px solid rgba(132, 162, 214, 0.3)' : '1px solid #d8dde6',
+            borderRadius: 10,
+            background: isDark ? 'rgba(10, 20, 37, 0.84)' : '#f8fafc',
+            marginTop: '0.5rem',
+          }}
+        >
+          <input
+            ref={contractFileInputRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+            style={{ display: 'none' }}
+            onChange={handleContractFileChange}
+          />
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+            <span>{contractUi.from}</span>
+            <input
+              type="date"
+              value={contractDraft.startDate}
+              onChange={(e) => setContractDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+              style={modalInputStyle}
+            />
+          </label>
+          {contractDraft.type !== 'unlimited' ? (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <span>{contractUi.to}</span>
+              <input
+                type="date"
+                value={contractDraft.endDate}
+                onChange={(e) => setContractDraft((prev) => ({ ...prev, endDate: e.target.value }))}
+                style={modalInputStyle}
+              />
+            </label>
+          ) : null}
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={closeContractForm}
+              disabled={contractSaving}
+            >
+              {contractUi.cancel}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleUploadNewContractClick}
+              disabled={contractFileUploading}
+            >
+              {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadNewContract}
+            </button>
+            <button type="button" className="btn-primary" onClick={saveContract} disabled={contractSaving}>
+              {contractSaving ? contractUi.saving : contractUi.save}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const timeOffContent = (
+    <div style={employeeSectionStyle}>
+      <h3 style={tabHeadingStyle}>Time Off</h3>
+      <p style={{ margin: '0 0 0.35rem' }}>
+        <strong>Total year vacation ({currentVacationYear})</strong>
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 180px) auto', gap: '0.5rem', alignItems: 'center' }}>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={vacationDaysOverrideDraft}
+          onChange={(e) => setVacationDaysOverrideDraft(e.target.value)}
+          placeholder={String(vacationSummary?.default_total_year_vacation || 20)}
+          style={{ padding: '0.5rem' }}
+        />
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={saveVacationDaysOverride}
+          disabled={vacationDaysOverrideSaving}
+          style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
+        >
+          {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+      <p style={{ margin: '0.85rem 0 0.35rem', color: isDark ? '#d7e5ff' : '#111827', fontWeight: 600 }}>
+        {timeOffUi.currentRemainingLabel}
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 180px) auto', gap: '0.5rem', alignItems: 'center' }}>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={currentVacationBalanceDraft}
+          onChange={(e) => setCurrentVacationBalanceDraft(e.target.value)}
+          placeholder={formatDaysValue(vacationBalance.remainingVacationDays)}
+          style={{ padding: '0.5rem' }}
+        />
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={saveCurrentVacationBalance}
+          disabled={currentVacationBalanceSaving}
+          style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
+        >
+          {currentVacationBalanceSaving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+      <p style={{ margin: '0.45rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+        Standard entitlement is 20 days. Carry over from the previous year is added first and expires after 31.03 if unused.
+      </p>
+      <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+        {timeOffUi.currentRemainingHint}
+      </p>
+      {vacationBalance.seedApplied ? (
+        <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+          {timeOffUi.currentRemainingSeedInfo(formatDate(vacationBalance.seedDateIso))}
+        </p>
+      ) : null}
+      {vacationDaysOverrideError ? (
+        <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationDaysOverrideError}</p>
+      ) : null}
+      {currentVacationBalanceError ? (
+        <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{currentVacationBalanceError}</p>
+      ) : null}
+      {vacationSummaryError ? (
+        <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationSummaryError}</p>
+      ) : null}
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+        <button type="button" className="btn-secondary" onClick={() => openTimeOffHistoryModal('vacation')}>
+          {timeOffUi.vacationHistoryButton}
+        </button>
+        <button type="button" className="btn-secondary" onClick={() => openTimeOffHistoryModal('sick')}>
+          {timeOffUi.sicknessHistoryButton}
+        </button>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+          gap: '0.5rem',
+          marginTop: '0.75rem',
+        }}
+      >
+        <div style={employeeSectionStyle}>
+          <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Carry over days</div>
+          <strong>{formatDaysValue(vacationBalance.carryOver)}</strong>
+        </div>
+        <div style={employeeSectionStyle}>
+          <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Used vacation ({currentVacationYear})</div>
+          <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.usedYear)}</strong>
+        </div>
+        <div style={employeeSectionStyle}>
+          <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Remaining vacation</div>
+          <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.remainingVacationDays)}</strong>
+        </div>
+        {vacationBalance.seedApplied ? (
+          <div style={employeeSectionStyle}>
+            <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Starting balance</div>
+            <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.seedStartingBalance)}</strong>
+            <div style={{ marginTop: '0.25rem', color: employeeMutedTextStyle.color, fontSize: '0.82rem' }}>
+              {vacationSummaryLoading ? '...' : formatDate(vacationBalance.seedDateIso)}
+            </div>
+          </div>
+        ) : (
+          <div style={employeeSectionStyle}>
+            <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>
+              {vacationBalance.afterCarryDeadline ? 'Carry over expired' : `Carry over valid until ${vacationBalance.carryDeadlineIso}`}
+            </div>
+            <strong>
+              {vacationSummaryLoading
+                ? '...'
+                : formatDaysValue(
+                    vacationBalance.afterCarryDeadline
+                      ? vacationBalance.carryExpired
+                      : vacationBalance.carryAvailableNow
+                  )}
+            </strong>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const profileContent = (
+    <>
+      <div style={employeeSectionStyle}>
+        <h3 style={tabHeadingStyle}>Personal & Contact</h3>
+        <div className="grid two-columns">
+          <div>
+            {renderText('First Name', firstName)}
+            {renderText('Last Name', lastName, (v) => onFieldChange('lastName', v))}
+            {renderText('Email', email || personal?.email || account?.email, (v) => onFieldChange('email', v))}
+            {renderText('Birth day', formatDate(personal?.birthdate))}
+            {renderText(
+              'Address',
+              address
+                ? [address.streetName, address.houseNumber, address.addressLine1].filter(Boolean).join(' ')
+                : '',
+              (v) => {
+                const parts = String(v || '').split(' ');
+                onNestedChange('address', 'streetName', parts[0] || '');
+              },
+            )}
+            {renderText(
+              'Postal code',
+              address?.postalCode || address?.zip,
+              (v) => onNestedChange('address', 'postalCode', v),
+            )}
+            {renderText('City', address?.city, (v) => onNestedChange('address', 'city', v))}
+            {renderText('Country', address?.country, (v) => onNestedChange('address', 'country', v))}
+          </div>
+          <div>
+            {renderText('Marital status', home?.maritalStatus, (v) => onNestedChange('home', 'maritalStatus', v))}
+            {renderText(
+              'Mobile Phone',
+              personal?.mobile || home?.personalMobile,
+              (v) => onNestedChange('personal', 'mobile', v),
+            )}
+            {renderText('Work Mobile', work?.workMobile)}
+            {renderText('Language', account?.language)}
+            {renderText('Gender', personal?.gender, (v) => onNestedChange('personal', 'gender', v))}
+            {renderText('Nationality', personal?.nationality)}
+            {renderText('Transporter ID', transportationId)}
+          </div>
+        </div>
+      </div>
+      <div style={employeeSectionStyle}>
+        <h3 style={tabHeadingStyle}>Financial & Custom</h3>
+        <div className="grid two-columns">
+          <div>
+            {renderText('Bank name', financial?.bankName, (v) => onNestedChange('financial', 'bankName', v))}
+            {renderText(
+              'Name on card',
+              financial?.accountHolderName || financial?.nameOnCard,
+              (v) => onNestedChange('financial', 'accountHolderName', v),
+            )}
+            {renderText('IBAN', financial?.iban, (v) => onNestedChange('financial', 'iban', v))}
+            {renderText('Steuer ID', financial?.steuerId || financial?.taxIdentificationNumber || financial?.taxNumber)}
+            {renderText('SV-number', financial?.nationalInsuranceNumber || financial?.socialInsuranceNumber)}
+            {renderText('Children', Array.isArray(home?.children) ? String(home.children.length) : '')}
+            {renderText(
+              'Child names',
+              Array.isArray(home?.children) && home.children.length
+                ? home.children
+                    .map((ch) =>
+                      [ch.childFirstName, ch.childLastName, ch.firstName, ch.lastName, ch.name]
+                        .filter(Boolean)
+                        .join(' '),
+                    )
+                    .filter(Boolean)
+                    .join(', ')
+                : '',
+            )}
+          </div>
+          <div>
+            {renderLocalDate(
+              'Führerschein Aufstellungsdatum',
+              current?.dspLocal?.fuehrerschein_aufstellungsdatum,
+              (v) =>
+                setDraft((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        dspLocal: { ...(prev.dspLocal || {}), fuehrerschein_aufstellungsdatum: v },
+                      }
+                    : prev,
+                ),
+            )}
+            {renderText(
+              'Führerschein Aufstellungsbehörde',
+              current?.dspLocal?.fuehrerschein_aufstellungsbehoerde,
+              (v) =>
+                setDraft((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        dspLocal: { ...(prev.dspLocal || {}), fuehrerschein_aufstellungsbehoerde: v },
+                      }
+                    : prev,
+                ),
+            )}
+            {Array.isArray(current.customFields) &&
+              current.customFields.length > 0 &&
+              current.customFields.map((f) => {
+                const name = f.name || f.label || f.fieldLabel || f.displayName || '—';
+                const type = (f.type || f.fieldType || '').toString().toLowerCase();
+                const rawValue = f.value;
+                let displayValue = '—';
+                if (rawValue !== null && rawValue !== undefined && rawValue !== '') {
+                  if (Array.isArray(rawValue)) {
+                    displayValue = rawValue
+                      .map((v) =>
+                        v && typeof v === 'object'
+                          ? v.label || v.name || v.value || JSON.stringify(v)
+                          : String(v),
+                      )
+                      .join(', ');
+                  } else if (typeof rawValue === 'boolean' || type === 'boolean') {
+                    displayValue = rawValue ? 'Yes' : 'No';
+                  } else if (type === 'date') {
+                    displayValue = formatDate(rawValue);
+                  } else if (type === 'number') {
+                    const num = Number(rawValue);
+                    displayValue = Number.isFinite(num) ? String(num) : String(rawValue);
+                  } else if (rawValue && typeof rawValue === 'object') {
+                    displayValue = rawValue.label || rawValue.name || rawValue.value || JSON.stringify(rawValue);
+                  } else {
+                    displayValue = String(rawValue);
+                  }
+                }
+                return renderText(name, displayValue);
+              })}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const performanceContent = (
+    <>
+      <div style={employeeSectionStyle}>
+        <h3 style={tabHeadingStyle}>Performance</h3>
+        <p style={{ margin: '0 0 0.75rem', color: employeeMutedTextStyle.color }}>
+          Use the tools below to review KPI history, leave DA comments, and manage PAVE sessions for this employee.
+        </p>
+        {kenjoEmployeeId ? (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button type="button" className="btn-secondary" onClick={openDaPerformance}>
+              DA Performance
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={openKpiCommentFromMain}
+              disabled={kpiLoading}
+            >
+              Add comment
+            </button>
+            <Link to={`/pave/new?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary">Create PAVE Session</Link>
+            <Link to={`/pave?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary">View PAVE History</Link>
+          </div>
+        ) : (
+          <p style={{ margin: 0, color: employeeMutedTextStyle.color }}>Performance tools are available after the employee is linked to Kenjo.</p>
+        )}
+      </div>
+      {kenjoEmployeeId ? (
+        <div style={employeeSectionStyle}>
+          <h3 style={tabHeadingStyle}>PAVE Summary</h3>
+          <p style={{ margin: 0, fontSize: '0.95rem' }}>
+            Last:{' '}
+            {paveSessions[0] ? (
+              <>
+                Grade <strong>{paveSessions[0].overall_grade ?? '—'}</strong>,{' '}
+                {paveSessions[0].inspect_ended_at ? new Date(paveSessions[0].inspect_ended_at).toLocaleDateString() : '—'}
+              </>
+            ) : '—'}
+          </p>
+          <p style={{ margin: '0.5rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+            Total completed: <strong>{paveSessions.filter((s) => s.status === 'COMPLETE').length}</strong>
+            {' · '}
+            Expired: <strong>{paveSessions.filter((s) => s.status === 'EXPIRED').length}</strong>
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+
   return (
     <section className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0 }}>{fullName}</h2>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {isEditing ? (
             <>
               <button type="button" className="btn-secondary" onClick={handleCancelEditing} disabled={saving}>
@@ -1837,22 +2485,22 @@ export default function EmployeeProfilePage() {
               <button type="button" className="btn-primary" onClick={handleStartEditing}>
                 Edit
               </button>
-              {kenjoEmployeeId && (
+              {activeTab === 'overview' && kenjoEmployeeId && (
                   <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openAdvanceDialog}>
                     Add Advance
                   </button>
                 )}
-              {kenjoEmployeeId && (
-                  <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openDaPerformance}>
-                    DA Performance
-                  </button>
-                )}
-              {kenjoEmployeeId && (
+              {activeTab === 'overview' && kenjoEmployeeId && (
                   <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openRescueModal} disabled={rescueSaving}>
                     Add Rescue
                   </button>
                 )}
-              {kenjoEmployeeId && (
+              {activeTab === 'performance' && kenjoEmployeeId && (
+                  <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openDaPerformance}>
+                    DA Performance
+                  </button>
+                )}
+              {activeTab === 'performance' && kenjoEmployeeId && (
                   <button
                     type="button"
                     className="btn-secondary employee-profile-toolbar-btn"
@@ -1862,13 +2510,13 @@ export default function EmployeeProfilePage() {
                     Add comment
                   </button>
                 )}
-              {kenjoEmployeeId && (
+              {activeTab === 'performance' && kenjoEmployeeId && (
                 <>
                   <Link to={`/pave/new?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary employee-profile-toolbar-btn">Create PAVE Session</Link>
                   <Link to={`/pave?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary employee-profile-toolbar-btn">View PAVE History</Link>
                 </>
               )}
-              {kenjoEmployeeId && isActive && (
+              {activeTab === 'employment' && kenjoEmployeeId && isActive && (
                 <button type="button" className="btn-secondary btn-danger" onClick={openDeactivateConfirm}>
                   Deactivate employee
                 </button>
@@ -1878,7 +2526,7 @@ export default function EmployeeProfilePage() {
         </div>
       </div>
 
-      {kenjoEmployeeId && (
+      {kenjoEmployeeId && activeTab === 'overview' && (
         <div
           style={{
             marginTop: '1rem',
@@ -1918,6 +2566,19 @@ export default function EmployeeProfilePage() {
           </div>
         </div>
       )}
+
+      <div style={employeeTabsBarStyle}>
+        {employeeTabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            style={getEmployeeTabButtonStyle(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       {showDeactivateConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
@@ -2391,23 +3052,13 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
-      {false && kenjoEmployeeId && paveSessions.length >= 0 && (
-        <div style={employeeSectionStyle}>
-          <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>PAVE Inspections</h3>
-          <p style={{ margin: 0, fontSize: '0.9rem' }}>
-            Last: {paveSessions[0] ? (
-              <>Grade <strong>{paveSessions[0].overall_grade ?? '—'}</strong>, {paveSessions[0].inspect_ended_at ? new Date(paveSessions[0].inspect_ended_at).toLocaleDateString() : '—'}</>
-            ) : '—'}
-            {' · '}Total completed: <strong>{paveSessions.filter((s) => s.status === 'COMPLETE').length}</strong>
-            {' · '}Expired: <strong>{paveSessions.filter((s) => s.status === 'EXPIRED').length}</strong>
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-            <Link to={`/pave/new?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary">Create PAVE Session</Link>
-            <Link to={`/pave?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary">View PAVE History</Link>
-          </div>
-        </div>
-      )}
+      {activeTab === 'overview' ? overviewContent : null}
+      {activeTab === 'profile' ? profileContent : null}
+      {activeTab === 'employment' ? employmentContent : null}
+      {activeTab === 'time-off' ? timeOffContent : null}
+      {activeTab === 'performance' ? performanceContent : null}
 
+      {activeTab === 'documents' && (
       <div style={employeeSectionStyle}>
         <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>Employee documents</h3>
         {employeeDocError && <p className="error-text" style={{ margin: '0 0 0.5rem' }}>{employeeDocError}</p>}
@@ -2622,517 +3273,7 @@ export default function EmployeeProfilePage() {
           )
         )}
       </div>
-
-      <div className="grid two-columns">
-        <div>
-          {renderText('Status', isActive ? 'Active' : 'Inactive')}
-          {renderText('Job title', jobTitle)}
-          {renderText('First Name', firstName)}
-          {renderText('Last Name', lastName, (v) => onFieldChange('lastName', v))}
-          {renderText('Email', email || personal?.email || account?.email, (v) => onFieldChange('email', v))}
-          {renderText('Start date', formatDate(contractStartSummary))}
-          {renderText('Birth day', formatDate(personal?.birthdate))}
-          {renderText(
-            'Address',
-            address
-              ? [address.streetName, address.houseNumber, address.addressLine1].filter(Boolean).join(' ')
-              : '',
-            (v) => {
-              const parts = String(v || '').split(' ');
-              onNestedChange('address', 'streetName', parts[0] || '');
-            },
-          )}
-          {renderText(
-            'Postal code',
-            address?.postalCode || address?.zip,
-            (v) => onNestedChange('address', 'postalCode', v),
-          )}
-          {renderText('City', address?.city, (v) => onNestedChange('address', 'city', v))}
-          {renderText('Country', address?.country, (v) => onNestedChange('address', 'country', v))}
-          {renderText('Personal Nr.', work?.employeeNumber || externalId, (v) => onNestedChange('work', 'employeeNumber', v))}
-        </div>
-        <div>
-          {renderText('Marital status', home?.maritalStatus, (v) => onNestedChange('home', 'maritalStatus', v))}
-          {renderText(
-            'Mobile Phone',
-            personal?.mobile || home?.personalMobile,
-            (v) => onNestedChange('personal', 'mobile', v),
-          )}
-          {renderText('Work Mobile', work?.workMobile)}
-          {renderText('Language', account?.language)}
-          {renderText('Job Title', jobTitle, (v) => onNestedChange('work', 'jobTitle', v))}
-          {renderText('Weekly hours', work?.weeklyHours, (v) => onNestedChange('work', 'weeklyHours', v))}
-          {renderText('Probation until', formatDate(work?.probationUntil), (v) =>
-            onNestedChange('work', 'probationUntil', v),
-          )}
-          <div style={{ marginBottom: '1rem' }}>
-            {renderText(
-              'Contract end',
-              contractEndSummary === contractUi.unlimitedLabel ? contractUi.unlimitedLabel : formatDate(contractEndSummary)
-            )}
-            <p style={{ margin: '-0.35rem 0 0.5rem', color: employeeMutedTextStyle.color, fontSize: '0.85rem' }}>
-              {contractUi.managedSummaryHint}
-            </p>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                flexWrap: 'wrap',
-                marginTop: '-0.15rem',
-                marginBottom: contractTimeline.length || showContractForm || contractError ? '0.5rem' : 0,
-              }}
-            >
-              {canAddAnotherFixedContract ? (
-                <button type="button" className="btn-primary" onClick={() => openContractForm('fixed')} disabled={contractSaving}>
-                  {contractUi.extendButton}
-                </button>
-              ) : null}
-              {canAddUnlimitedContract ? (
-                <button type="button" className="btn-secondary" onClick={() => openContractForm('unlimited')} disabled={contractSaving}>
-                  {contractUi.unlimitedButton}
-                </button>
-              ) : null}
-              <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>{fixedContractCount}/3</span>
-            </div>
-            <p style={{ margin: '0.25rem 0 0.2rem' }}>
-              <strong>{contractUi.historyTitle}</strong>
-            </p>
-            <p style={{ margin: '0 0 0.45rem', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
-              {contractUi.historyHint}
-            </p>
-            {contractsLoading ? <p style={{ margin: '0.25rem 0 0', color: employeeMutedTextStyle.color }}>{contractUi.loading}</p> : null}
-            {contractError ? <p className="error-text" style={{ margin: '0.25rem 0 0' }}>{contractError}</p> : null}
-            {contractTimeline.map((row) => (
-              <div
-                key={row.row_key || row.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(0, 1fr) auto',
-                  gap: '0.35rem 0.75rem',
-                  padding: '0.65rem 0.8rem',
-                  border: isDark ? '1px solid rgba(132, 162, 214, 0.3)' : '1px solid #d8dde6',
-                  borderRadius: 10,
-                  background: isDark ? 'rgba(10, 20, 37, 0.84)' : '#f8fafc',
-                  marginTop: '0.5rem',
-                  alignItems: 'center',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <strong>{row.label}</strong>
-                  {row.isCurrentProfile ? (
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '0.1rem 0.45rem',
-                        borderRadius: 999,
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        color: isDark ? '#dbeafe' : '#1d4ed8',
-                        background: isDark ? 'rgba(37, 99, 235, 0.2)' : 'rgba(59, 130, 246, 0.12)',
-                      }}
-                    >
-                      {contractUi.currentBadge}
-                    </span>
-                  ) : null}
-                  {row.termination_date ? (
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '0.1rem 0.45rem',
-                        borderRadius: 999,
-                        fontSize: '0.75rem',
-                        fontWeight: 700,
-                        color: '#fff',
-                        background: '#dc2626',
-                      }}
-                    >
-                      {contractUi.terminationBadge}
-                    </span>
-                  ) : null}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                  <span>
-                    {row.isUnlimited
-                      ? `${formatDate(row.start_date)} - ${contractUi.unlimitedLabel}`
-                      : `${formatDate(row.start_date)} - ${formatDate(row.effectiveEndDate)}`}
-                  </span>
-                  {row.canTerminate ? (
-                    <button
-                      type="button"
-                      onClick={() => openTerminateContractModal(row)}
-                      style={{
-                        border: 'none',
-                        borderRadius: 999,
-                        padding: '0.45rem 0.85rem',
-                        background: '#dc2626',
-                        color: '#fff',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {contractUi.terminateButton}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-            {showContractForm && (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: contractDraft.type === 'unlimited' ? '1fr auto' : '1fr 1fr auto',
-                  gap: '0.5rem',
-                  alignItems: 'end',
-                  padding: '0.75rem',
-                  border: isDark ? '1px solid rgba(132, 162, 214, 0.3)' : '1px solid #d8dde6',
-                  borderRadius: 10,
-                  background: isDark ? 'rgba(10, 20, 37, 0.84)' : '#f8fafc',
-                  marginTop: '0.5rem',
-                }}
-              >
-                <input
-                  ref={contractFileInputRef}
-                  type="file"
-                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-                  style={{ display: 'none' }}
-                  onChange={handleContractFileChange}
-                />
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  <span>{contractUi.from}</span>
-                  <input
-                    type="date"
-                    value={contractDraft.startDate}
-                    onChange={(e) => setContractDraft((prev) => ({ ...prev, startDate: e.target.value }))}
-                    style={modalInputStyle}
-                  />
-                </label>
-                {contractDraft.type !== 'unlimited' ? (
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                    <span>{contractUi.to}</span>
-                    <input
-                      type="date"
-                      value={contractDraft.endDate}
-                      onChange={(e) => setContractDraft((prev) => ({ ...prev, endDate: e.target.value }))}
-                      style={modalInputStyle}
-                    />
-                  </label>
-                ) : null}
-                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={closeContractForm}
-                    disabled={contractSaving}
-                  >
-                    {contractUi.cancel}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={handleUploadNewContractClick}
-                    disabled={contractFileUploading}
-                  >
-                    {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadNewContract}
-                  </button>
-                  <button type="button" className="btn-primary" onClick={saveContract} disabled={contractSaving}>
-                    {contractSaving ? contractUi.saving : contractUi.save}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-          <div style={{ marginBottom: '1rem' }}>
-            <p style={{ margin: '0 0 0.35rem' }}>
-              <strong>Total year vacation ({currentVacationYear})</strong>
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 180px) auto', gap: '0.5rem', alignItems: 'center' }}>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={vacationDaysOverrideDraft}
-                onChange={(e) => setVacationDaysOverrideDraft(e.target.value)}
-                placeholder={String(vacationSummary?.default_total_year_vacation || 20)}
-                style={{ padding: '0.5rem' }}
-              />
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={saveVacationDaysOverride}
-                disabled={vacationDaysOverrideSaving}
-                style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
-              >
-                {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-            <p style={{ margin: '0.85rem 0 0.35rem', color: isDark ? '#d7e5ff' : '#111827', fontWeight: 600 }}>
-              {timeOffUi.currentRemainingLabel}
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 180px) auto', gap: '0.5rem', alignItems: 'center' }}>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={currentVacationBalanceDraft}
-                onChange={(e) => setCurrentVacationBalanceDraft(e.target.value)}
-                placeholder={formatDaysValue(vacationBalance.remainingVacationDays)}
-                style={{ padding: '0.5rem' }}
-              />
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={saveCurrentVacationBalance}
-                disabled={currentVacationBalanceSaving}
-                style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
-              >
-                {currentVacationBalanceSaving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-            <p style={{ margin: '0.45rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
-              Standard entitlement is 20 days. Carry over from the previous year is added first and expires after 31.03 if unused.
-            </p>
-            <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
-              {timeOffUi.currentRemainingHint}
-            </p>
-            {vacationBalance.seedApplied ? (
-              <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
-                {timeOffUi.currentRemainingSeedInfo(formatDate(vacationBalance.seedDateIso))}
-              </p>
-            ) : null}
-            {vacationDaysOverrideError ? (
-              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationDaysOverrideError}</p>
-            ) : null}
-            {currentVacationBalanceError ? (
-              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{currentVacationBalanceError}</p>
-            ) : null}
-            {vacationSummaryError ? (
-              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationSummaryError}</p>
-            ) : null}
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => openTimeOffHistoryModal('vacation')}
-              >
-                {timeOffUi.vacationHistoryButton}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => openTimeOffHistoryModal('sick')}
-              >
-                {timeOffUi.sicknessHistoryButton}
-              </button>
-            </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-                gap: '0.5rem',
-                marginTop: '0.75rem',
-              }}
-            >
-              <div style={employeeSectionStyle}>
-                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Carry over days</div>
-                <strong>{formatDaysValue(vacationBalance.carryOver)}</strong>
-              </div>
-              <div style={employeeSectionStyle}>
-                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Used vacation ({currentVacationYear})</div>
-                <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.usedYear)}</strong>
-              </div>
-              <div style={employeeSectionStyle}>
-                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Remaining vacation</div>
-                <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.remainingVacationDays)}</strong>
-              </div>
-              {vacationBalance.seedApplied ? (
-                <div style={employeeSectionStyle}>
-                  <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Starting balance</div>
-                  <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.seedStartingBalance)}</strong>
-                  <div style={{ marginTop: '0.25rem', color: employeeMutedTextStyle.color, fontSize: '0.82rem' }}>
-                    {vacationSummaryLoading ? '...' : formatDate(vacationBalance.seedDateIso)}
-                  </div>
-                </div>
-              ) : (
-                <div style={employeeSectionStyle}>
-                  <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>
-                    {vacationBalance.afterCarryDeadline ? 'Carry over expired' : `Carry over valid until ${vacationBalance.carryDeadlineIso}`}
-                  </div>
-                  <strong>
-                    {vacationSummaryLoading
-                      ? '...'
-                      : formatDaysValue(
-                          vacationBalance.afterCarryDeadline
-                            ? vacationBalance.carryExpired
-                            : vacationBalance.carryAvailableNow
-                        )}
-                  </strong>
-                </div>
-              )}
-            </div>
-          </div>
-          <div style={{ marginBottom: '1rem' }}>
-            <p style={{ margin: '0 0 0.35rem' }}>
-              <strong>Rescue</strong>
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <span style={{ color: '#666', fontSize: '0.9rem' }}>
-                {visibleRescues.length} shown
-              </span>
-            </div>
-            {rescuesLoading ? (
-              <p style={{ margin: '0.35rem 0 0', color: '#666' }}>Loading rescues...</p>
-            ) : null}
-            {rescueError ? (
-              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{rescueError}</p>
-            ) : null}
-            {!rescuesLoading && visibleRescues.length > 0 ? (
-              <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.45rem' }}>
-                {visibleRescues.map((row) => (
-                  <div
-                    key={row.id}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr auto auto',
-                      gap: '0.5rem',
-                      alignItems: 'center',
-                      padding: '0.65rem 0.8rem',
-                      border: '1px solid #d8dde6',
-                      borderRadius: 10,
-                      background: '#f8fafc',
-                    }}
-                  >
-                    <span>{formatDate(row.rescue_date)}</span>
-                    <strong>{Number(row?.amount || 0).toFixed(2)} EUR</strong>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => removeRescue(row.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : !rescuesLoading ? (
-              <p style={{ margin: '0.35rem 0 0', color: '#666' }}>No rescues in current or last month.</p>
-            ) : null}
-          </div>
-          {renderText(
-            'Manager',
-            work?.managerName || employee?.manager?.displayName,
-            (v) => onNestedChange('work', 'managerName', v),
-          )}
-        </div>
-      </div>
-
-      <hr style={{ margin: '1.5rem 0' }} />
-
-      <div className="grid two-columns">
-        <div>
-          {renderText('Transporter ID', transportationId)}
-          {renderText('Gender', personal?.gender, (v) => onNestedChange('personal', 'gender', v))}
-          {renderText('Nationality', personal?.nationality)}
-          {renderText('Bank name', financial?.bankName, (v) => onNestedChange('financial', 'bankName', v))}
-          {renderText(
-            'Name on card',
-            financial?.accountHolderName || financial?.nameOnCard,
-            (v) => onNestedChange('financial', 'accountHolderName', v),
-          )}
-          {renderText('IBAN', financial?.iban, (v) => onNestedChange('financial', 'iban', v))}
-          {renderText('Steuer ID', financial?.steuerId || financial?.taxIdentificationNumber || financial?.taxNumber)}
-          {renderText('SV-number', financial?.nationalInsuranceNumber || financial?.socialInsuranceNumber)}
-        </div>
-        <div>
-          {renderText(
-            'Children',
-            Array.isArray(home?.children) ? String(home.children.length) : '',
-          )}
-          {renderText(
-            'Child names',
-            Array.isArray(home?.children) && home.children.length
-              ? home.children
-                  .map((ch) =>
-                    [ch.childFirstName, ch.childLastName, ch.firstName, ch.lastName, ch.name]
-                      .filter(Boolean)
-                      .join(' '),
-                  )
-                  .filter(Boolean)
-                  .join(', ')
-              : '',
-          )}
-          {Array.isArray(current.customFields) &&
-            current.customFields.length > 0 &&
-            current.customFields.map((f) => {
-              const name =
-                f.name ||
-                f.label ||
-                f.fieldLabel ||
-                f.displayName ||
-                '—';
-              const type = (f.type || f.fieldType || '').toString().toLowerCase();
-
-              const rawValue = f.value;
-              let displayValue = '—';
-              if (rawValue !== null && rawValue !== undefined && rawValue !== '') {
-                if (Array.isArray(rawValue)) {
-                  displayValue = rawValue
-                    .map((v) =>
-                      v && typeof v === 'object'
-                        ? v.label || v.name || v.value || JSON.stringify(v)
-                        : String(v),
-                    )
-                    .join(', ');
-                } else if (typeof rawValue === 'boolean' || type === 'boolean') {
-                  displayValue = rawValue ? 'Yes' : 'No';
-                } else if (type === 'date') {
-                  displayValue = formatDate(rawValue);
-                } else if (type === 'number') {
-                  const num = Number(rawValue);
-                  displayValue = Number.isFinite(num) ? String(num) : String(rawValue);
-                } else if (rawValue && typeof rawValue === 'object') {
-                  displayValue =
-                    rawValue.label ||
-                    rawValue.name ||
-                    rawValue.value ||
-                    JSON.stringify(rawValue);
-                } else {
-                  displayValue = String(rawValue);
-                }
-              }
-
-              return renderText(name, displayValue);
-            })}
-          {renderLocalDate(
-            'Führerschein Aufstellungsdatum',
-            current?.dspLocal?.fuehrerschein_aufstellungsdatum,
-            (v) =>
-              setDraft((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      dspLocal: { ...(prev.dspLocal || {}), fuehrerschein_aufstellungsdatum: v },
-                    }
-                  : prev,
-              ),
-          )}
-          {renderText(
-            'Führerschein Aufstellungsbehörde',
-            current?.dspLocal?.fuehrerschein_aufstellungsbehoerde,
-            (v) =>
-              setDraft((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      dspLocal: { ...(prev.dspLocal || {}), fuehrerschein_aufstellungsbehoerde: v },
-                    }
-                  : prev,
-              ),
-          )}
-        </div>
-      </div>
+      )}
 
       {timeOffHistoryModal && (
         <div style={modalOverlayStyle} onClick={closeTimeOffHistoryModal}>
