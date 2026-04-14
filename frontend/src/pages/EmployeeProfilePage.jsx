@@ -478,6 +478,17 @@ function buildVacationBalanceSnapshot({
   };
 }
 
+function getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId) {
+  return String(
+    localEmployee?.kenjo_user_id ||
+    kenjoEmployeeId ||
+    localEmployee?.pn ||
+    localEmployee?.employee_id ||
+    localEmployeeId ||
+    ''
+  ).trim();
+}
+
 export default function EmployeeProfilePage() {
   const { language, isDark } = useAppSettings();
   const location = useLocation();
@@ -644,7 +655,7 @@ export default function EmployeeProfilePage() {
   ]);
 
   useEffect(() => {
-    const employeeRef = String(localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || '').trim();
+    const employeeRef = getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId);
     if (!employeeRef) {
       setVacationSummary(null);
       setVacationSummaryError('');
@@ -905,7 +916,7 @@ export default function EmployeeProfilePage() {
   };
 
   const saveVacationDaysOverride = async () => {
-    const employeeRef = String(localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || '').trim();
+    const employeeRef = getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId);
     if (!employeeRef) {
       setVacationDaysOverrideError('Employee reference is missing.');
       return;
@@ -934,7 +945,7 @@ export default function EmployeeProfilePage() {
   };
 
   const saveCurrentVacationBalance = async () => {
-    const employeeRef = String(localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || '').trim();
+    const employeeRef = getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId);
     if (!employeeRef) {
       setCurrentVacationBalanceError('Employee reference is missing.');
       return;
@@ -969,9 +980,7 @@ export default function EmployeeProfilePage() {
   }, [kenjoEmployeeId]);
 
   const employeeDocRef = String(kenjoEmployeeId || localEmployee?.employee_id || localEmployeeId || '').trim();
-  const employeeVacationRef = String(
-    localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || ''
-  ).trim();
+  const employeeVacationRef = getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId);
   const contractUi =
     language === 'de'
       ? {

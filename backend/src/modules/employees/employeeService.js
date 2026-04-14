@@ -262,7 +262,7 @@ async function getEmployeeById(employeeId) {
       ${effectiveActiveSql} AS is_active
      FROM employees e
      ${buildEmployeeTerminationJoin('e')}
-     WHERE e.employee_id = $1 OR e.id::text = $1 OR e.kenjo_user_id = $1
+     WHERE e.employee_id = $1 OR e.id::text = $1 OR e.kenjo_user_id = $1 OR e.pn = $1
      LIMIT 1`,
     [String(employeeId)]
   );
@@ -335,6 +335,7 @@ async function updateEmployeeLocalSettings(employeeId, payload = {}) {
            vacation_balance_seed_date = CASE WHEN $4::boolean THEN $7 ELSE vacation_balance_seed_date END,
            updated_at = NOW()
        WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
+          OR pn = $1
        RETURNING *
      )
      SELECT
@@ -382,14 +383,14 @@ async function resolveEmployeeRefs(employeeRef) {
   const refs = new Set([ref]);
 
   const employeesRes = await query(
-    `SELECT id::text AS id_text, employee_id, kenjo_user_id
+    `SELECT id::text AS id_text, employee_id, kenjo_user_id, pn, transporter_id
      FROM employees
-     WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1`,
+     WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1 OR pn = $1`,
     [ref]
   ).catch(() => ({ rows: [] }));
 
   for (const row of employeesRes.rows || []) {
-    const values = [row.id_text, row.employee_id, row.kenjo_user_id];
+    const values = [row.id_text, row.employee_id, row.kenjo_user_id, row.pn, row.transporter_id];
     for (const value of values) {
       const normalized = String(value || '').trim();
       if (normalized) refs.add(normalized);
@@ -397,15 +398,17 @@ async function resolveEmployeeRefs(employeeRef) {
   }
 
   const kenjoRes = await query(
-    `SELECT kenjo_user_id
+    `SELECT kenjo_user_id, employee_number, transporter_id
      FROM kenjo_employees
-     WHERE kenjo_user_id = $1`,
+     WHERE kenjo_user_id = $1 OR employee_number = $1 OR transporter_id = $1`,
     [ref]
   ).catch(() => ({ rows: [] }));
 
   for (const row of kenjoRes.rows || []) {
-    const normalized = String(row.kenjo_user_id || '').trim();
-    if (normalized) refs.add(normalized);
+    for (const value of [row.kenjo_user_id, row.employee_number, row.transporter_id]) {
+      const normalized = String(value || '').trim();
+      if (normalized) refs.add(normalized);
+    }
   }
 
   return [...refs];
@@ -416,18 +419,47 @@ async function resolveEmployeeRescueTarget(employeeRef) {
   const refs = await resolveEmployeeRefs(ref);
   const allRefs = [...new Set([ref, ...refs].filter(Boolean))];
   let kenjoEmployeeId = '';
+  let employeeRow = null;
   if (allRefs.length) {
     const res = await query(
-      `SELECT kenjo_user_id
+      `SELECT id::text AS id_text, employee_id, kenjo_user_id, pn, transporter_id, first_name, last_name, display_name
        FROM employees
        WHERE employee_id = ANY($1::text[])
           OR id::text = ANY($1::text[])
           OR kenjo_user_id = ANY($1::text[])
+          OR pn = ANY($1::text[])
        ORDER BY CASE WHEN kenjo_user_id IS NOT NULL AND kenjo_user_id <> '' THEN 0 ELSE 1 END, id ASC
        LIMIT 1`,
       [allRefs]
     ).catch(() => ({ rows: [] }));
-    kenjoEmployeeId = String(res.rows?.[0]?.kenjo_user_id || '').trim();
+    employeeRow = res.rows?.[0] || null;
+    kenjoEmployeeId = String(employeeRow?.kenjo_user_id || '').trim();
+  }
+  if (!kenjoEmployeeId) {
+    const candidateRefs = [...new Set([
+      ...allRefs,
+      employeeRow?.pn,
+      employeeRow?.transporter_id,
+    ].map((item) => String(item || '').trim()).filter(Boolean))];
+
+    if (candidateRefs.length) {
+      const kenjoRes = await query(
+        `SELECT kenjo_user_id, employee_number, transporter_id
+         FROM kenjo_employees
+         WHERE kenjo_user_id = ANY($1::text[])
+            OR employee_number = ANY($1::text[])
+            OR transporter_id = ANY($1::text[])
+         ORDER BY CASE
+           WHEN employee_number = ANY($1::text[]) THEN 0
+           WHEN transporter_id = ANY($1::text[]) THEN 1
+           WHEN kenjo_user_id = ANY($1::text[]) THEN 2
+           ELSE 3
+         END, kenjo_user_id ASC
+         LIMIT 1`,
+        [candidateRefs]
+      ).catch(() => ({ rows: [] }));
+      kenjoEmployeeId = String(kenjoRes.rows?.[0]?.kenjo_user_id || '').trim();
+    }
   }
   if (!kenjoEmployeeId && looksLikeKenjoId(ref)) {
     kenjoEmployeeId = ref;
@@ -474,7 +506,11 @@ function normalizeDbDateOutput(value) {
 function normalizeTimeOffType(typeId, typeName) {
   const id = String(typeId || '').trim();
   if (id === '685e7223e6bac64cb0a27e38') return 'vacation';
+  if (id === '685e7223e6bac64cb0a27e39') return 'sick';
   const normalizedName = String(typeName || '').trim().toLowerCase();
+  if (normalizedName.includes('sick') || normalizedName.includes('krank')) {
+    return 'sick';
+  }
   if (normalizedName.includes('vacation') || normalizedName.includes('urlaub') || normalizedName.includes('holiday')) {
     return 'vacation';
   }
@@ -667,6 +703,37 @@ async function ensureEmployeeTimeOffYearCache(target, year) {
     if (!shouldRefreshCurrentMonth && syncedKeys.has(monthKey)) continue;
     await syncKenjoTimeOffMonthToCache(year, month);
   }
+}
+
+async function loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty = false } = {}) {
+  if (!target?.kenjoEmployeeId) return [];
+  await ensureEmployeeTimeOffYearCache(target, selectedYear);
+
+  async function queryRows() {
+    const res = await query(
+      `SELECT kenjo_request_id, start_date, end_date, time_off_type, time_off_type_name, status
+       FROM kenjo_time_off
+       WHERE kenjo_user_id = $1
+         AND start_date <= $3::date
+         AND end_date >= $2::date
+       ORDER BY start_date DESC, end_date DESC, kenjo_request_id DESC`,
+      [target.kenjoEmployeeId, `${selectedYear}-01-01`, `${selectedYear}-12-31`]
+    ).catch(() => ({ rows: [] }));
+    return res.rows || [];
+  }
+
+  let rows = await queryRows();
+  if (!rows.length && forceRefreshOnEmpty) {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const lastMonth = selectedYear === currentYear ? now.getMonth() + 1 : 12;
+    for (let month = 1; month <= lastMonth; month += 1) {
+      await syncKenjoTimeOffMonthToCache(selectedYear, month);
+    }
+    rows = await queryRows();
+  }
+
+  return rows;
 }
 
 function sortEmployeeContractRows(rows = []) {
@@ -1022,24 +1089,7 @@ async function getEmployeeVacationSummary(employeeRef, yearValue) {
 
   const employee = await getEmployeeById(employeeRef);
   const target = await resolveEmployeeRescueTarget(employeeRef);
-  await ensureEmployeeTimeOffYearCache(target, selectedYear);
-
-  let rows = [];
-  if (target.kenjoEmployeeId) {
-    try {
-      const res = await query(
-        `SELECT start_date, end_date, time_off_type, time_off_type_name, status
-         FROM kenjo_time_off
-         WHERE kenjo_user_id = $1
-           AND start_date <= $3::date
-           AND end_date >= $2::date`,
-        [target.kenjoEmployeeId, `${selectedYear}-01-01`, `${selectedYear}-12-31`]
-      );
-      rows = res.rows || [];
-    } catch {
-      rows = [];
-    }
-  }
+  const rows = await loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty: true });
 
   const holidaySet = getBavariaHolidaySet(selectedYear);
   const approvedVacationDaysYear = countVacationDaysInRange(
@@ -1108,28 +1158,15 @@ async function getEmployeeTimeOffHistory(employeeRef, type, yearValue) {
       ? year
       : new Date().getFullYear();
   const target = await resolveEmployeeRescueTarget(employeeRef);
-  await ensureEmployeeTimeOffYearCache(target, selectedYear);
   if (!target.kenjoEmployeeId) {
     return { year: selectedYear, type: normalizedType, rows: [] };
   }
-
-  const res = await query(
-    `SELECT kenjo_request_id, start_date, end_date, time_off_type, time_off_type_name, status
-     FROM kenjo_time_off
-     WHERE kenjo_user_id = $1
-       AND start_date <= $3::date
-       AND end_date >= $2::date
-     ORDER BY start_date DESC, end_date DESC, kenjo_request_id DESC`,
-    [target.kenjoEmployeeId, `${selectedYear}-01-01`, `${selectedYear}-12-31`]
-  ).catch(() => ({ rows: [] }));
-
-  const rows = (res.rows || [])
+  const rows = (await loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty: true }))
     .filter((row) => {
       if (!isApprovedTimeOffStatus(row?.status)) return false;
       const typeKey = normalizeTimeOffType(row?.time_off_type, row?.time_off_type_name);
       if (normalizedType === 'vacation') return typeKey === 'vacation';
-      const typeName = String(row?.time_off_type_name || '').trim().toLowerCase();
-      return typeKey !== 'vacation' && (typeName.includes('krank') || typeName.includes('sick'));
+      return typeKey === 'sick';
     })
     .map((row) => {
       const startDate = normalizeDbDateOutput(row.start_date);
