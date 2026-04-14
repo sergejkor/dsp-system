@@ -499,6 +499,18 @@ function getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId) 
   ).trim();
 }
 
+function getEmployeeLocalSettingsRef(localEmployee, kenjoEmployeeId, localEmployeeId) {
+  return String(
+    localEmployee?.employee_id ||
+    localEmployee?.id ||
+    localEmployeeId ||
+    localEmployee?.pn ||
+    localEmployee?.kenjo_user_id ||
+    kenjoEmployeeId ||
+    ''
+  ).trim();
+}
+
 export default function EmployeeProfilePage() {
   const { language, isDark } = useAppSettings();
   const location = useLocation();
@@ -928,7 +940,7 @@ export default function EmployeeProfilePage() {
   };
 
   const saveVacationDaysOverride = async () => {
-    const employeeRef = getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId);
+    const employeeRef = getEmployeeLocalSettingsRef(localEmployee, kenjoEmployeeId, localEmployeeId);
     if (!employeeRef) {
       setVacationDaysOverrideError('Employee reference is missing.');
       return;
@@ -957,7 +969,7 @@ export default function EmployeeProfilePage() {
   };
 
   const saveCurrentVacationBalance = async () => {
-    const employeeRef = getEmployeeTimeOffRef(localEmployee, kenjoEmployeeId, localEmployeeId);
+    const employeeRef = getEmployeeLocalSettingsRef(localEmployee, kenjoEmployeeId, localEmployeeId);
     if (!employeeRef) {
       setCurrentVacationBalanceError('Employee reference is missing.');
       return;

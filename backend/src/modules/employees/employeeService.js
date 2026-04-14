@@ -269,6 +269,165 @@ async function getEmployeeById(employeeId) {
   return res.rows[0] || null;
 }
 
+async function ensureLocalEmployeeRow(employeeRef) {
+  await ensureEmployeeVacationColumns();
+  await ensureEmployeeContractTerminationColumns();
+  const ref = String(employeeRef || '').trim();
+  if (!ref) return null;
+
+  const existing = await getEmployeeById(ref).catch(() => null);
+  if (existing) return existing;
+
+  const kenjoRes = await query(
+    `SELECT
+       kenjo_user_id,
+       employee_number,
+       transporter_id,
+       first_name,
+       last_name,
+       display_name,
+       start_date,
+       contract_end,
+       is_active
+     FROM kenjo_employees
+     WHERE kenjo_user_id = $1 OR employee_number = $1 OR transporter_id = $1
+     LIMIT 1`,
+    [ref]
+  ).catch(() => ({ rows: [] }));
+
+  const row = kenjoRes.rows?.[0];
+  if (!row) return null;
+
+  const employeeId =
+    String(row.employee_number || row.kenjo_user_id || ref)
+      .trim() || ref;
+  const pn =
+    String(row.employee_number || '')
+      .trim() || null;
+  const firstName =
+    String(row.first_name || '')
+      .trim() || null;
+  const lastName =
+    String(row.last_name || '')
+      .trim() || null;
+  const displayName =
+    String(
+      row.display_name ||
+        [firstName, lastName].filter(Boolean).join(' ') ||
+        employeeId
+    ).trim() || employeeId;
+  const transporterId =
+    String(row.transporter_id || '')
+      .trim() || null;
+  const kenjoUserId =
+    String(row.kenjo_user_id || '')
+      .trim() || null;
+
+  await query(
+    `INSERT INTO employees (
+       employee_id,
+       pn,
+       first_name,
+       last_name,
+       display_name,
+       start_date,
+       contract_end,
+       transporter_id,
+       kenjo_user_id,
+       is_active,
+       created_at,
+       updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, true), NOW(), NOW())
+     ON CONFLICT (employee_id) DO UPDATE SET
+       pn = COALESCE(EXCLUDED.pn, employees.pn),
+       first_name = COALESCE(EXCLUDED.first_name, employees.first_name),
+       last_name = COALESCE(EXCLUDED.last_name, employees.last_name),
+       display_name = COALESCE(EXCLUDED.display_name, employees.display_name),
+       start_date = COALESCE(EXCLUDED.start_date, employees.start_date),
+       contract_end = COALESCE(EXCLUDED.contract_end, employees.contract_end),
+       transporter_id = COALESCE(EXCLUDED.transporter_id, employees.transporter_id),
+       kenjo_user_id = COALESCE(EXCLUDED.kenjo_user_id, employees.kenjo_user_id),
+       is_active = COALESCE(EXCLUDED.is_active, employees.is_active),
+       updated_at = NOW()`,
+    [
+      employeeId,
+      pn,
+      firstName,
+      lastName,
+      displayName,
+      normalizeDateOnly(row.start_date),
+      normalizeDateOnly(row.contract_end),
+      transporterId,
+      kenjoUserId,
+      row.is_active,
+    ]
+  );
+
+  return getEmployeeById(employeeId).catch(() => null);
+}
+
+async function runEmployeeLocalSettingsUpdate({
+  id,
+  vacationDaysOverride,
+  vacationDaysOverrideYear,
+  hasCurrentRemainingVacation,
+  vacationBalanceSeed,
+  vacationBalanceSeedYear,
+  vacationBalanceSeedDate,
+}) {
+  await ensureEmployeeContractTerminationColumns();
+  const effectiveActiveSql = buildEmployeeEffectiveActiveSql('e');
+  const res = await query(
+    `WITH updated_employee AS (
+       UPDATE employees
+       SET vacation_days_override = $2,
+           vacation_days_override_year = $3,
+           vacation_balance_seed = CASE WHEN $4::boolean THEN $5 ELSE vacation_balance_seed END,
+           vacation_balance_seed_year = CASE WHEN $4::boolean THEN $6 ELSE vacation_balance_seed_year END,
+           vacation_balance_seed_date = CASE WHEN $4::boolean THEN $7 ELSE vacation_balance_seed_date END,
+           updated_at = NOW()
+       WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
+          OR pn = $1 OR transporter_id = $1
+       RETURNING *
+     )
+     SELECT
+       e.id,
+       e.employee_id,
+       e.pn,
+       e.first_name,
+       e.last_name,
+       e.display_name,
+       e.email,
+       e.phone,
+       e.start_date,
+       e.contract_end,
+       e.transporter_id,
+       e.kenjo_user_id,
+       e.vacation_days_override,
+       e.vacation_days_override_year,
+       e.vacation_days_override AS total_year_vacation,
+       e.vacation_days_override_year AS total_year_vacation_year,
+       e.vacation_balance_seed AS current_remaining_vacation,
+       e.vacation_balance_seed_year AS current_remaining_vacation_year,
+       e.vacation_balance_seed_date AS current_remaining_vacation_set_on,
+       employee_contract_state.latest_termination_date,
+       ${effectiveActiveSql} AS is_active
+     FROM updated_employee e
+     ${buildEmployeeTerminationJoin('e')}
+     LIMIT 1`,
+    [
+      id,
+      vacationDaysOverride,
+      vacationDaysOverrideYear,
+      hasCurrentRemainingVacation,
+      vacationBalanceSeed,
+      vacationBalanceSeedYear,
+      vacationBalanceSeedDate,
+    ]
+  );
+  return res.rows[0] || null;
+}
+
 async function updateEmployeeLocalSettings(employeeId, payload = {}) {
   await ensureEmployeeVacationColumns();
   const id = String(employeeId || '').trim();
@@ -323,57 +482,28 @@ async function updateEmployeeLocalSettings(employeeId, payload = {}) {
     }
   }
 
-  await ensureEmployeeContractTerminationColumns();
-  const effectiveActiveSql = buildEmployeeEffectiveActiveSql('e');
-  const res = await query(
-    `WITH updated_employee AS (
-       UPDATE employees
-       SET vacation_days_override = $2,
-           vacation_days_override_year = $3,
-           vacation_balance_seed = CASE WHEN $4::boolean THEN $5 ELSE vacation_balance_seed END,
-           vacation_balance_seed_year = CASE WHEN $4::boolean THEN $6 ELSE vacation_balance_seed_year END,
-           vacation_balance_seed_date = CASE WHEN $4::boolean THEN $7 ELSE vacation_balance_seed_date END,
-           updated_at = NOW()
-       WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
-          OR pn = $1
-       RETURNING *
-     )
-     SELECT
-       e.id,
-       e.employee_id,
-       e.pn,
-       e.first_name,
-       e.last_name,
-       e.display_name,
-       e.email,
-       e.phone,
-       e.start_date,
-       e.contract_end,
-       e.transporter_id,
-       e.kenjo_user_id,
-       e.vacation_days_override,
-       e.vacation_days_override_year,
-       e.vacation_days_override AS total_year_vacation,
-       e.vacation_days_override_year AS total_year_vacation_year,
-       e.vacation_balance_seed AS current_remaining_vacation,
-       e.vacation_balance_seed_year AS current_remaining_vacation_year,
-       e.vacation_balance_seed_date AS current_remaining_vacation_set_on,
-       employee_contract_state.latest_termination_date,
-       ${effectiveActiveSql} AS is_active
-     FROM updated_employee e
-     ${buildEmployeeTerminationJoin('e')}
-     LIMIT 1`,
-    [
-      id,
-      vacationDaysOverride,
-      vacationDaysOverrideYear,
-      hasCurrentRemainingVacation,
-      vacationBalanceSeed,
-      vacationBalanceSeedYear,
-      vacationBalanceSeedDate,
-    ]
-  );
-  return res.rows[0] || null;
+  let updated = await runEmployeeLocalSettingsUpdate({
+    id,
+    vacationDaysOverride,
+    vacationDaysOverrideYear,
+    hasCurrentRemainingVacation,
+    vacationBalanceSeed,
+    vacationBalanceSeedYear,
+    vacationBalanceSeedDate,
+  });
+  if (updated) return updated;
+
+  await ensureLocalEmployeeRow(id);
+  updated = await runEmployeeLocalSettingsUpdate({
+    id,
+    vacationDaysOverride,
+    vacationDaysOverrideYear,
+    hasCurrentRemainingVacation,
+    vacationBalanceSeed,
+    vacationBalanceSeedYear,
+    vacationBalanceSeedDate,
+  });
+  return updated;
 }
 
 async function resolveEmployeeRefs(employeeRef) {
