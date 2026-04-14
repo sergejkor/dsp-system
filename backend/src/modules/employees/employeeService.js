@@ -971,6 +971,44 @@ function filterEmployeeTimeOffRows(rows, target, nameCandidates) {
   });
 }
 
+function mapEmployeeTimeOffHistoryRows(rows, normalizedType, selectedYear) {
+  return (rows || [])
+    .filter((row) => {
+      if (!isApprovedTimeOffStatus(row?.status)) return false;
+      const typeKey = normalizeTimeOffType(row?.time_off_type, row?.time_off_type_name);
+      if (normalizedType === 'vacation') return typeKey === 'vacation';
+      return typeKey === 'sick';
+    })
+    .map((row) => {
+      const startDate = normalizeDbDateOutput(row.start_date);
+      const endDate = normalizeDbDateOutput(row.end_date);
+      const rangeStart = startDate < `${selectedYear}-01-01` ? `${selectedYear}-01-01` : startDate;
+      const rangeEnd = endDate > `${selectedYear}-12-31` ? `${selectedYear}-12-31` : endDate;
+      return {
+        id: String(row.kenjo_request_id || `${startDate}-${endDate}`),
+        start_date: startDate,
+        end_date: endDate,
+        working_days: countWeekdaysInclusive(rangeStart, rangeEnd),
+        status: String(row.status || '').trim() || null,
+        type_name: String(row.time_off_type_name || '').trim() || null,
+      };
+    });
+}
+
+function countHistoryRowsWorkingDaysInRange(rows, rangeStart, rangeEnd) {
+  let total = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const startDate = normalizeDateOnly(row?.start_date);
+    const endDate = normalizeDateOnly(row?.end_date);
+    if (!startDate || !endDate) continue;
+    const effectiveStart = startDate > rangeStart ? startDate : rangeStart;
+    const effectiveEnd = endDate < rangeEnd ? endDate : rangeEnd;
+    if (effectiveStart > effectiveEnd) continue;
+    total += countWeekdaysInclusive(effectiveStart, effectiveEnd);
+  }
+  return total;
+}
+
 function sortEmployeeContractRows(rows = []) {
   return [...rows].sort((a, b) => {
     const startA = normalizeDateOnly(a?.start_date) || '9999-12-31';
@@ -1426,19 +1464,15 @@ async function getEmployeeVacationSummary(employeeRef, yearValue) {
       nameCandidates
     );
   }
-
-  const holidaySet = getBavariaHolidaySet(selectedYear);
-  const approvedVacationDaysYear = countVacationDaysInRange(
-    rows,
-    `${selectedYear}-01-01`,
-    `${selectedYear}-12-31`,
-    holidaySet
+  const vacationHistoryRows = mapEmployeeTimeOffHistoryRows(rows, 'vacation', selectedYear);
+  const approvedVacationDaysYear = (vacationHistoryRows || []).reduce(
+    (sum, row) => sum + (Number(row?.working_days) || 0),
+    0
   );
-  const approvedVacationDaysUntilMarch31 = countVacationDaysInRange(
-    rows,
+  const approvedVacationDaysUntilMarch31 = countHistoryRowsWorkingDaysInRange(
+    vacationHistoryRows,
     `${selectedYear}-01-01`,
-    `${selectedYear}-03-31`,
-    holidaySet
+    `${selectedYear}-03-31`
   );
 
   const storedTotalYearVacation =
@@ -1455,11 +1489,10 @@ async function getEmployeeVacationSummary(employeeRef, yearValue) {
       : null;
   const approvedVacationDaysAfterSeed =
     currentRemainingSeed != null && currentRemainingSeedDate
-      ? countVacationDaysInRange(
-          rows,
+      ? countHistoryRowsWorkingDaysInRange(
+          vacationHistoryRows,
           currentRemainingSeedDate,
-          `${selectedYear}-12-31`,
-          holidaySet
+          `${selectedYear}-12-31`
         )
       : 0;
 
@@ -1508,27 +1541,7 @@ async function getEmployeeTimeOffHistory(employeeRef, type, yearValue) {
       nameCandidates
     );
   }
-  rows = rows
-    .filter((row) => {
-      if (!isApprovedTimeOffStatus(row?.status)) return false;
-      const typeKey = normalizeTimeOffType(row?.time_off_type, row?.time_off_type_name);
-      if (normalizedType === 'vacation') return typeKey === 'vacation';
-      return typeKey === 'sick';
-    })
-    .map((row) => {
-      const startDate = normalizeDbDateOutput(row.start_date);
-      const endDate = normalizeDbDateOutput(row.end_date);
-      const rangeStart = startDate < `${selectedYear}-01-01` ? `${selectedYear}-01-01` : startDate;
-      const rangeEnd = endDate > `${selectedYear}-12-31` ? `${selectedYear}-12-31` : endDate;
-      return {
-        id: String(row.kenjo_request_id || `${startDate}-${endDate}`),
-        start_date: startDate,
-        end_date: endDate,
-        working_days: countWeekdaysInclusive(rangeStart, rangeEnd),
-        status: String(row.status || '').trim() || null,
-        type_name: String(row.time_off_type_name || '').trim() || null,
-      };
-    });
+  rows = mapEmployeeTimeOffHistoryRows(rows, normalizedType, selectedYear);
 
   return { year: selectedYear, type: normalizedType, rows };
 }
