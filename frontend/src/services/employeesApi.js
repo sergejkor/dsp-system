@@ -130,6 +130,24 @@ export async function addEmployeeContract(employeeRef, payload) {
   return out;
 }
 
+export async function updateEmployeeContract(employeeRef, contractId, payload) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts/${encodeURIComponent(contractId)}`,
+    authOpts({
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: payload?.source || 'history',
+        startDate: payload?.startDate || '',
+        endDate: payload?.endDate ?? null,
+      }),
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee contract update failed');
+  return out;
+}
+
 export async function terminateEmployeeContract(employeeRef, payload) {
   const form = new FormData();
   form.append('contractStartDate', payload?.contractStartDate || '');

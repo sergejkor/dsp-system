@@ -9,6 +9,7 @@ import {
   getEmployeeRescues,
   getEmployeeDocuments,
   addEmployeeContract,
+  updateEmployeeContract,
   terminateEmployeeContract,
   addEmployeeRescue,
   updateEmployeeLocalSettings,
@@ -553,6 +554,7 @@ export default function EmployeeProfilePage() {
   const [showContractForm, setShowContractForm] = useState(false);
   const [contractDraft, setContractDraft] = useState({ startDate: '', endDate: '', type: 'fixed' });
   const [contractSaving, setContractSaving] = useState(false);
+  const [editingContractTarget, setEditingContractTarget] = useState(null);
   const [contractModal, setContractModal] = useState(null);
   const [contractFileUploading, setContractFileUploading] = useState(false);
   const [terminateContractTarget, setTerminateContractTarget] = useState(null);
@@ -1005,10 +1007,13 @@ export default function EmployeeProfilePage() {
           missingEmployeeRef: 'Mitarbeiterreferenz fehlt.',
           chooseDates: 'Bitte waehlen Sie ein Start- und Enddatum aus.',
           chooseStartDate: 'Bitte waehlen Sie ein Startdatum aus.',
-          contractLabel: (n) => `Vertrag ${n}`,
+          contractLabel: 'Contract',
+          contractExtensionLabel: (n) => `Contract extension ${n}`,
           currentBadge: 'Aktuell',
           unlimitedLabel: 'Unbefristed',
           terminateButton: 'Terminate contract',
+          editContractDateButton: 'Edit contract date',
+          editContractDateTitle: 'Edit contract date',
           terminateTitle: 'Vertrag kuendigen',
           terminationDate: 'Termination date',
           mutualTermination: 'Aufhebungsvertrag',
@@ -1048,10 +1053,13 @@ export default function EmployeeProfilePage() {
           missingEmployeeRef: 'Employee reference is missing.',
           chooseDates: 'Please choose both start and end dates.',
           chooseStartDate: 'Please choose a start date.',
-          contractLabel: (n) => `Contract ${n}`,
+          contractLabel: 'Contract',
+          contractExtensionLabel: (n) => `Contract extension ${n}`,
           currentBadge: 'Current',
           unlimitedLabel: 'Unbefristed',
           terminateButton: 'Terminate contract',
+          editContractDateButton: 'Edit contract date',
+          editContractDateTitle: 'Edit contract date',
           terminateTitle: 'Terminate contract',
           terminationDate: 'Termination date',
           mutualTermination: 'Aufhebungsvertrag',
@@ -1556,14 +1564,18 @@ export default function EmployeeProfilePage() {
       isCurrentProfile,
       canTerminate: isCurrentProfile && !normalizeContractDate(row?.termination_date),
       contractNumber,
-      label: isUnlimited ? contractUi.unlimitedLabel : contractUi.contractLabel(contractNumber),
+      label: isUnlimited
+        ? contractUi.unlimitedLabel
+        : contractNumber === 1
+          ? contractUi.contractLabel
+          : contractUi.contractExtensionLabel(contractNumber - 1),
     };
   });
 
   const fixedContractCount = contractTimeline.filter((row) => !row.isUnlimited).length;
   const hasUnlimitedContract = contractTimeline.some((row) => row.isUnlimited);
-  const canAddAnotherFixedContract = !hasUnlimitedContract && fixedContractCount < 3;
-  const canAddUnlimitedContract = !hasUnlimitedContract && fixedContractCount >= 3;
+  const canAddAnotherFixedContract = !hasUnlimitedContract && fixedContractCount < 4;
+  const canAddUnlimitedContract = !hasUnlimitedContract && fixedContractCount >= 4;
   const nextFixedContractStartDate = (() => {
     const latestFixedWithEnd = [...contractTimeline]
       .filter((row) => !row.isUnlimited && normalizeContractDate(row?.end_date))
@@ -1663,24 +1675,42 @@ export default function EmployeeProfilePage() {
     setShowContractForm(false);
     setContractDraft({ startDate: '', endDate: '', type: 'fixed' });
     setContractError('');
+    setEditingContractTarget(null);
   };
 
   const openContractForm = (type = 'fixed') => {
     if (type === 'fixed' && !canAddAnotherFixedContract) return;
     if (type === 'unlimited' && !canAddUnlimitedContract) return;
     setContractError('');
+    setEditingContractTarget(null);
     setShowContractForm(true);
     setContractDraft({
       startDate: nextFixedContractStartDate || currentContractStart || '',
       endDate: '',
       type,
     });
-    if (type === 'fixed' && fixedContractCount === 2) {
+    if (type === 'fixed' && fixedContractCount === 3) {
       setContractModal({
         title: contractUi.reminderTitle,
         message: contractUi.reminderMessage,
       });
     }
+  };
+
+  const openEditContractForm = (row) => {
+    if (!row || row.isDerived || row.id == null) return;
+    setContractError('');
+    setEditingContractTarget({
+      id: row.id,
+      source: row.source || 'history',
+      rowKey: row.row_key || row.id,
+    });
+    setShowContractForm(true);
+    setContractDraft({
+      startDate: normalizeContractDate(row?.start_date) || '',
+      endDate: normalizeContractDate(row?.end_date) || '',
+      type: row?.isUnlimited ? 'unlimited' : 'fixed',
+    });
   };
 
   const saveContract = async () => {
@@ -1699,11 +1729,24 @@ export default function EmployeeProfilePage() {
     setContractSaving(true);
     setContractError('');
     try {
-      const created = await addEmployeeContract(employeeDocRef, {
-        startDate: contractDraft.startDate,
-        endDate: contractDraft.type === 'unlimited' ? null : contractDraft.endDate,
+      const saved = editingContractTarget
+        ? await updateEmployeeContract(employeeDocRef, editingContractTarget.id, {
+            source: editingContractTarget.source,
+            startDate: contractDraft.startDate,
+            endDate: contractDraft.type === 'unlimited' ? null : contractDraft.endDate,
+          })
+        : await addEmployeeContract(employeeDocRef, {
+            startDate: contractDraft.startDate,
+            endDate: contractDraft.type === 'unlimited' ? null : contractDraft.endDate,
+          });
+      setContracts((prev) => {
+        const nextRows = editingContractTarget
+          ? (prev || []).map((row) =>
+              row?.id === editingContractTarget.id && row?.source === editingContractTarget.source ? saved : row
+            )
+          : [...(prev || []), saved];
+        return sortContractTimelineRows(nextRows.filter(Boolean));
       });
-      setContracts((prev) => sortContractTimelineRows([...(prev || []), created].filter(Boolean)));
       closeContractForm();
     } catch (e) {
       setContractError(String(e?.message || e));
@@ -2003,7 +2046,7 @@ export default function EmployeeProfilePage() {
             {contractUi.unlimitedButton}
           </button>
         ) : null}
-        <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>{fixedContractCount}/3</span>
+        <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>{fixedContractCount}/4</span>
       </div>
 
       <p style={{ margin: '0.25rem 0 0.2rem' }}>
@@ -2067,9 +2110,19 @@ export default function EmployeeProfilePage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
             <span>
               {row.isUnlimited
-                ? `${formatDate(row.start_date)} - ${contractUi.unlimitedLabel}`
-                : `${formatDate(row.start_date)} - ${formatDate(row.effectiveEndDate)}`}
+                ? `${formatDateDayMonthYear(row.start_date)} - ${contractUi.unlimitedLabel}`
+                : `${formatDateDayMonthYear(row.start_date)} - ${formatDateDayMonthYear(row.effectiveEndDate)}`}
             </span>
+            {!row.isDerived && row.id != null ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => openEditContractForm(row)}
+                disabled={contractSaving}
+              >
+                {contractUi.editContractDateButton}
+              </button>
+            ) : null}
             {row.canTerminate ? (
               <button
                 type="button"
@@ -2111,6 +2164,20 @@ export default function EmployeeProfilePage() {
             style={{ display: 'none' }}
             onChange={handleContractFileChange}
           />
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              fontWeight: 700,
+              color: isDark ? '#eaf2ff' : '#111827',
+              marginBottom: '0.15rem',
+            }}
+          >
+            {editingContractTarget
+              ? contractUi.editContractDateTitle
+              : contractDraft.type === 'unlimited'
+                ? contractUi.unlimitedLabel
+                : contractUi.extendButton}
+          </div>
           <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <span>{contractUi.from}</span>
             <input
@@ -2140,14 +2207,16 @@ export default function EmployeeProfilePage() {
             >
               {contractUi.cancel}
             </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={handleUploadNewContractClick}
-              disabled={contractFileUploading}
-            >
-              {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadNewContract}
-            </button>
+            {!editingContractTarget ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleUploadNewContractClick}
+                disabled={contractFileUploading}
+              >
+                {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadNewContract}
+              </button>
+            ) : null}
             <button type="button" className="btn-primary" onClick={saveContract} disabled={contractSaving}>
               {contractSaving ? contractUi.saving : contractUi.save}
             </button>

@@ -495,9 +495,9 @@ function normalizeDateOnly(value) {
 function normalizeDbDateOutput(value) {
   if (!value) return null;
   if (value instanceof Date) {
-    const y = value.getUTCFullYear();
-    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(value.getUTCDate()).padStart(2, '0');
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
   return normalizeDateOnly(value);
@@ -817,6 +817,25 @@ function sortEmployeeContractRows(rows = []) {
   });
 }
 
+function mapEmployeeContractRow(row, source = 'history', rowKeyPrefix = 'history') {
+  return {
+    id: row.id,
+    row_key: `${rowKeyPrefix}-${row.id}`,
+    source,
+    employee_ref: String(row.employee_ref || '').trim() || null,
+    kenjo_employee_id: String(row.kenjo_employee_id || '').trim() || null,
+    start_date: normalizeDbDateOutput(row.start_date),
+    end_date: normalizeDbDateOutput(row.end_date),
+    termination_date: normalizeDbDateOutput(row.termination_date),
+    termination_type: String(row.termination_type || '').trim() || null,
+    termination_initiator: String(row.termination_initiator || '').trim() || null,
+    termination_document_id: row.termination_document_id == null ? null : Number(row.termination_document_id),
+    termination_document_name: String(row.termination_document_name || '').trim() || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 async function listEmployeeContractExtensions(employeeRef) {
   await ensureEmployeeContractExtensionsTable();
   const refs = await resolveEmployeeRefs(employeeRef);
@@ -892,22 +911,7 @@ async function listEmployeeContracts(employeeRef) {
        ORDER BY start_date ASC, end_date ASC NULLS LAST, id ASC`,
       params
     );
-    historyRows = (res.rows || []).map((row) => ({
-      id: row.id,
-      row_key: `history-${row.id}`,
-      source: 'history',
-      employee_ref: String(row.employee_ref || '').trim() || null,
-      kenjo_employee_id: String(row.kenjo_employee_id || '').trim() || null,
-      start_date: normalizeDbDateOutput(row.start_date),
-      end_date: normalizeDbDateOutput(row.end_date),
-      termination_date: normalizeDbDateOutput(row.termination_date),
-      termination_type: String(row.termination_type || '').trim() || null,
-      termination_initiator: String(row.termination_initiator || '').trim() || null,
-      termination_document_id: row.termination_document_id == null ? null : Number(row.termination_document_id),
-      termination_document_name: String(row.termination_document_name || '').trim() || null,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }));
+    historyRows = (res.rows || []).map((row) => mapEmployeeContractRow(row, 'history', 'history'));
   }
 
   const historyKeys = new Set(
@@ -962,22 +966,111 @@ async function addEmployeeContract(employeeRef, { startDate, endDate }) {
 
   const row = res.rows?.[0];
   if (!row) return null;
-  return {
-    id: row.id,
-    row_key: `history-${row.id}`,
-    source: 'history',
-    employee_ref: String(row.employee_ref || '').trim() || null,
-    kenjo_employee_id: String(row.kenjo_employee_id || '').trim() || null,
-    start_date: normalizeDbDateOutput(row.start_date),
-    end_date: normalizeDbDateOutput(row.end_date),
-    termination_date: normalizeDbDateOutput(row.termination_date),
-    termination_type: String(row.termination_type || '').trim() || null,
-    termination_initiator: String(row.termination_initiator || '').trim() || null,
-    termination_document_id: row.termination_document_id == null ? null : Number(row.termination_document_id),
-    termination_document_name: String(row.termination_document_name || '').trim() || null,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
+  return mapEmployeeContractRow(row, 'history', 'history');
+}
+
+async function updateEmployeeContract(employeeRef, contractId, { source, startDate, endDate }) {
+  await ensureEmployeeContractsTable();
+  await ensureEmployeeContractTerminationColumns();
+  await ensureEmployeeContractExtensionsTable();
+
+  const ref = String(employeeRef || '').trim();
+  const id = Number(contractId);
+  const normalizedSource = String(source || 'history').trim();
+  const normalizedStartDate = normalizeDateOnly(startDate);
+  const normalizedEndDate = endDate == null || endDate === '' ? null : normalizeDateOnly(endDate);
+
+  if (!ref) throw new Error('employee_ref is required');
+  if (!Number.isFinite(id)) throw new Error('Valid contract id is required');
+  if (!normalizedStartDate) throw new Error('Valid start date is required');
+  if (normalizedSource !== 'history' && normalizedSource !== 'legacy_extension') {
+    throw new Error('Valid contract source is required');
+  }
+  if (normalizedSource === 'legacy_extension' && !normalizedEndDate) {
+    throw new Error('Valid end date is required');
+  }
+  if (normalizedEndDate && normalizedStartDate > normalizedEndDate) {
+    throw new Error('End date must be on or after start date');
+  }
+
+  if (normalizedSource === 'legacy_extension') {
+    const refs = await resolveEmployeeRefs(ref);
+    const allRefs = [...new Set([ref, ...refs].filter(Boolean))];
+    const res = await query(
+      `UPDATE employee_contract_extensions
+       SET start_date = $2,
+           end_date = $3,
+           updated_at = NOW()
+       WHERE id = $1
+         AND employee_ref = ANY($4::text[])
+       RETURNING id, employee_ref, extension_index, start_date, end_date, created_at, updated_at`,
+      [id, normalizedStartDate, normalizedEndDate, allRefs]
+    );
+    const row = res.rows?.[0];
+    if (!row) throw new Error('Contract not found');
+    return {
+      id: row.id,
+      row_key: `legacy-extension-${row.id}`,
+      source: 'legacy_extension',
+      employee_ref: String(row.employee_ref || '').trim() || null,
+      kenjo_employee_id: null,
+      start_date: normalizeDbDateOutput(row.start_date),
+      end_date: normalizeDbDateOutput(row.end_date),
+      termination_date: null,
+      termination_type: null,
+      termination_initiator: null,
+      termination_document_id: null,
+      termination_document_name: null,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
+  const target = await resolveEmployeeRescueTarget(ref);
+  const refs = [...new Set([ref, ...(target.refs || [])].filter(Boolean))];
+  const params = [id, normalizedStartDate, normalizedEndDate];
+  const where = [];
+  if (refs.length) {
+    params.push(refs);
+    where.push(`employee_ref = ANY($${params.length}::text[])`);
+  }
+  if (target.kenjoEmployeeId) {
+    params.push(target.kenjoEmployeeId);
+    where.push(`kenjo_employee_id = $${params.length}`);
+  }
+  if (!where.length) throw new Error('Contract not found');
+
+  const existing = await query(
+    `SELECT id, termination_date
+     FROM employee_contracts
+     WHERE id = $1
+       AND (${where.join(' OR ')})
+     LIMIT 1`,
+    params
+  );
+  const currentRow = existing.rows?.[0];
+  if (!currentRow) throw new Error('Contract not found');
+  const normalizedTerminationDate = normalizeDbDateOutput(currentRow.termination_date);
+  if (normalizedTerminationDate && normalizedStartDate > normalizedTerminationDate) {
+    throw new Error('Start date must be on or before termination date');
+  }
+  if (normalizedTerminationDate && normalizedEndDate && normalizedTerminationDate > normalizedEndDate) {
+    throw new Error('End date must not be before termination date');
+  }
+
+  const res = await query(
+    `UPDATE employee_contracts
+     SET start_date = $2,
+         end_date = $3,
+         updated_at = NOW()
+     WHERE id = $1
+       AND (${where.join(' OR ')})
+     RETURNING id, employee_ref, kenjo_employee_id, start_date, end_date, termination_date, termination_type, termination_initiator, termination_document_id, termination_document_name, created_at, updated_at`,
+    params
+  );
+  const row = res.rows?.[0];
+  if (!row) throw new Error('Contract not found');
+  return mapEmployeeContractRow(row, 'history', 'history');
 }
 
 async function terminateEmployeeContract(
@@ -1105,22 +1198,7 @@ async function terminateEmployeeContract(
 
   const row = persisted.rows?.[0];
   if (!row) return null;
-  return {
-    id: row.id,
-    row_key: `history-${row.id}`,
-    source: 'history',
-    employee_ref: String(row.employee_ref || '').trim() || null,
-    kenjo_employee_id: String(row.kenjo_employee_id || '').trim() || null,
-    start_date: normalizeDbDateOutput(row.start_date),
-    end_date: normalizeDbDateOutput(row.end_date),
-    termination_date: normalizeDbDateOutput(row.termination_date),
-    termination_type: String(row.termination_type || '').trim() || null,
-    termination_initiator: String(row.termination_initiator || '').trim() || null,
-    termination_document_id: row.termination_document_id == null ? null : Number(row.termination_document_id),
-    termination_document_name: String(row.termination_document_name || '').trim() || null,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
+  return mapEmployeeContractRow(row, 'history', 'history');
 }
 
 async function updateEmployeeEffectiveContractState(employeeRef, terminationDate) {
@@ -1467,6 +1545,7 @@ const employeeService = {
   listEmployeeContracts,
   listEmployeeContractExtensions,
   addEmployeeContract,
+  updateEmployeeContract,
   terminateEmployeeContract,
   addEmployeeContractExtension,
   addEmployeeRescue,

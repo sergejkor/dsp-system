@@ -137,6 +137,34 @@ router.post('/:id/contracts', async (req, res) => {
   }
 });
 
+router.put('/:id/contracts/:contractId', async (req, res) => {
+  try {
+    const row = await employeeService.updateEmployeeContract(req.params.id, req.params.contractId, {
+      source: req.body?.source ?? 'history',
+      startDate: req.body?.startDate,
+      endDate: req.body?.endDate ?? null,
+    });
+    res.json(row);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_ref is required' ||
+      message === 'Valid contract id is required' ||
+      message === 'Valid contract source is required' ||
+      message === 'Valid start date is required' ||
+      message === 'Valid end date is required' ||
+      message === 'End date must be on or after start date' ||
+      message === 'Start date must be on or before termination date' ||
+      message === 'End date must not be before termination date' ||
+      message === 'Contract not found'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('PUT /api/employees/:id/contracts/:contractId error', error);
+    res.status(500).json({ error: 'Failed to update contract' });
+  }
+});
+
 router.post('/:id/contracts/terminate', upload.single('file'), async (req, res) => {
   try {
     const row = await employeeService.terminateEmployeeContract(req.params.id, {
