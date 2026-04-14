@@ -381,8 +381,8 @@ function sortContractTimelineRows(rows = []) {
     const startB = normalizeContractDate(b?.start_date) || '9999-12-31';
     if (startA !== startB) return startA.localeCompare(startB);
 
-    const endA = normalizeContractDate(a?.end_date) || '9999-12-31';
-    const endB = normalizeContractDate(b?.end_date) || '9999-12-31';
+    const endA = normalizeContractDate(a?.termination_date) || normalizeContractDate(a?.end_date) || '9999-12-31';
+    const endB = normalizeContractDate(b?.termination_date) || normalizeContractDate(b?.end_date) || '9999-12-31';
     if (endA !== endB) return endA.localeCompare(endB);
 
     return String(a?.row_key || a?.id || '').localeCompare(String(b?.row_key || b?.id || ''));
@@ -1529,40 +1529,80 @@ export default function EmployeeProfilePage() {
   const currentContractStart = normalizeContractDate(work?.startDate || localEmployee?.start_date);
   const currentContractEnd = normalizeContractDate(work?.contractEnd || localEmployee?.contract_end);
   const normalizedContracts = sortContractTimelineRows(Array.isArray(contracts) ? contracts : []);
-  const derivedCurrentContract =
-    currentContractStart &&
-    !normalizedContracts.some(
-      (row) =>
-        normalizeContractDate(row?.start_date) === currentContractStart &&
-        normalizeContractDate(row?.end_date) === currentContractEnd
-    )
-      ? {
-          id: 'current-derived',
-          row_key: 'current-derived',
-          source: 'current_profile',
-          start_date: currentContractStart,
-          end_date: currentContractEnd,
-          isDerived: true,
-        }
-      : null;
+  const derivedCurrentContract = (() => {
+    if (!normalizedContracts.length) {
+      if (!currentContractStart) return null;
+      return {
+        id: 'current-derived',
+        row_key: 'current-derived',
+        source: 'current_profile',
+        start_date: currentContractStart,
+        end_date: currentContractEnd,
+        isDerived: true,
+      };
+    }
+
+    const latestStoredEffectiveEnd = normalizedContracts
+      .map((row) => normalizeContractDate(row?.termination_date) || normalizeContractDate(row?.end_date))
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+
+    if (!latestStoredEffectiveEnd) return null;
+
+    const nextDerivedStart = addDaysToContractDate(latestStoredEffectiveEnd, 1);
+    if (!nextDerivedStart) return null;
+    if (currentContractEnd && nextDerivedStart > currentContractEnd) return null;
+    if (currentContractEnd && latestStoredEffectiveEnd >= currentContractEnd) return null;
+    if (
+      normalizedContracts.some(
+        (row) =>
+          normalizeContractDate(row?.start_date) === nextDerivedStart &&
+          (normalizeContractDate(row?.end_date) || null) === (currentContractEnd || null)
+      )
+    ) {
+      return null;
+    }
+
+    return {
+      id: 'current-derived',
+      row_key: 'current-derived',
+      source: 'current_profile',
+      start_date: nextDerivedStart,
+      end_date: currentContractEnd,
+      isDerived: true,
+    };
+  })();
 
   const rawContractTimeline = sortContractTimelineRows(
     derivedCurrentContract ? [...normalizedContracts, derivedCurrentContract] : normalizedContracts
   );
+  const currentContractRowIdentity = (() => {
+    const activeRows = rawContractTimeline.filter((row) => !normalizeContractDate(row?.termination_date));
+    const currentRow = activeRows.at(-1) || null;
+    if (!currentRow) return null;
+    return String(currentRow.row_key || `${currentRow.source || 'history'}-${currentRow.id ?? ''}`);
+  })();
   let fixedContractOrdinal = 0;
   const contractTimeline = rawContractTimeline.map((row) => {
     const effectiveEndDate = normalizeContractDate(row?.termination_date) || normalizeContractDate(row?.end_date);
     const isUnlimited = !effectiveEndDate;
-    const isCurrentProfile =
-      normalizeContractDate(row?.start_date) === currentContractStart &&
-      normalizeContractDate(row?.end_date) === currentContractEnd;
+    const rowIdentity = String(row?.row_key || `${row?.source || 'history'}-${row?.id ?? ''}`);
+    const isCurrentProfile = currentContractRowIdentity
+      ? rowIdentity === currentContractRowIdentity
+      : normalizeContractDate(row?.start_date) === currentContractStart &&
+        normalizeContractDate(row?.end_date) === currentContractEnd;
     const contractNumber = isUnlimited ? null : ++fixedContractOrdinal;
     return {
       ...row,
       effectiveEndDate,
       isUnlimited,
       isCurrentProfile,
-      canTerminate: isCurrentProfile && !normalizeContractDate(row?.termination_date),
+      canTerminate:
+        isCurrentProfile &&
+        !normalizeContractDate(row?.termination_date) &&
+        !row?.isDerived &&
+        row?.id != null,
       contractNumber,
       label: isUnlimited
         ? contractUi.unlimitedLabel
@@ -1698,11 +1738,12 @@ export default function EmployeeProfilePage() {
   };
 
   const openEditContractForm = (row) => {
-    if (!row || row.isDerived || row.id == null) return;
+    if (!row) return;
     setContractError('');
     setEditingContractTarget({
-      id: row.id,
+      id: row.id ?? null,
       source: row.source || 'history',
+      mode: row.isDerived ? 'create_from_derived' : 'update_existing',
       rowKey: row.row_key || row.id,
     });
     setShowContractForm(true);
@@ -1729,7 +1770,7 @@ export default function EmployeeProfilePage() {
     setContractSaving(true);
     setContractError('');
     try {
-      const saved = editingContractTarget
+      const saved = editingContractTarget && editingContractTarget.mode !== 'create_from_derived'
         ? await updateEmployeeContract(employeeDocRef, editingContractTarget.id, {
             source: editingContractTarget.source,
             startDate: contractDraft.startDate,
@@ -2113,7 +2154,7 @@ export default function EmployeeProfilePage() {
                 ? `${formatDateDayMonthYear(row.start_date)} - ${contractUi.unlimitedLabel}`
                 : `${formatDateDayMonthYear(row.start_date)} - ${formatDateDayMonthYear(row.effectiveEndDate)}`}
             </span>
-            {!row.isDerived && row.id != null ? (
+            {row.id != null || row.isDerived ? (
               <button
                 type="button"
                 className="btn-primary"
