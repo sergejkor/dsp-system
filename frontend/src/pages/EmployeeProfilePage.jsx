@@ -996,8 +996,11 @@ export default function EmployeeProfilePage() {
   const contractUi =
     language === 'de'
       ? {
-          extendButton: 'Weiteren Vertrag hinzufuegen',
-          unlimitedButton: 'Unbefristed',
+          addContractButton: 'Add contract',
+          addContractTitle: 'Add contract',
+          addFixedContractOption: 'Add fixed contract',
+          addPermanentContractOption: 'Add permanent contract',
+          fixedContractLimitReached: 'Maximum number of fixed contracts reached.',
           loading: 'Vertragshistorie wird geladen...',
           historyTitle: 'Vertragshistorie',
           historyHint: 'Hier koennen fruehere Vertraege manuell nachgetragen werden. Start date und Contract end oben werden automatisch aus der Historie berechnet.',
@@ -1038,13 +1041,16 @@ export default function EmployeeProfilePage() {
           cancel: 'Abbrechen',
           save: 'Speichern',
           saving: 'Speichert...',
-          uploadNewContract: 'Neuen Vertrag hochladen',
+          uploadContract: 'Upload contract',
           uploadingContract: 'Laedt hoch...',
           uploadSuccess: 'Der neue Vertrag wurde unter Dokumenttyp "Vertrag" gespeichert.',
         }
       : {
-          extendButton: 'Add fixed contract',
-          unlimitedButton: 'Unbefristed',
+          addContractButton: 'Add contract',
+          addContractTitle: 'Add contract',
+          addFixedContractOption: 'Add fixed contract',
+          addPermanentContractOption: 'Add permanent contract',
+          fixedContractLimitReached: 'Maximum number of fixed contracts reached.',
           loading: 'Loading contract history...',
           historyTitle: 'Contract history',
           historyHint: 'You can backfill older contracts here. Start date and Contract end above are calculated automatically from the history.',
@@ -1085,7 +1091,7 @@ export default function EmployeeProfilePage() {
           cancel: 'Cancel',
           save: 'Save',
           saving: 'Saving...',
-          uploadNewContract: 'Upload new contract',
+          uploadContract: 'Upload contract',
           uploadingContract: 'Uploading...',
           uploadSuccess: 'The new contract was saved under document type "Vertrag".',
         };
@@ -1618,6 +1624,7 @@ export default function EmployeeProfilePage() {
   const hasUnlimitedContract = contractTimeline.some((row) => row.isUnlimited);
   const currentActiveContract =
     contractTimeline.find((row) => row.isCurrentProfile && !normalizeContractDate(row?.termination_date)) || null;
+  const canOpenContractCreator = !hasUnlimitedContract;
   const canAddAnotherFixedContract = !hasUnlimitedContract && fixedContractCount < 4;
   const canAddUnlimitedContract = !hasUnlimitedContract && fixedContractCount >= 4;
   const nextFixedContractStartDate = (() => {
@@ -1722,23 +1729,17 @@ export default function EmployeeProfilePage() {
     setEditingContractTarget(null);
   };
 
-  const openContractForm = (type = 'fixed') => {
-    if (type === 'fixed' && !canAddAnotherFixedContract) return;
-    if (type === 'unlimited' && !canAddUnlimitedContract) return;
+  const openContractForm = () => {
+    if (!canOpenContractCreator) return;
+    const defaultType = canAddAnotherFixedContract ? 'fixed' : 'unlimited';
     setContractError('');
     setEditingContractTarget(null);
     setShowContractForm(true);
     setContractDraft({
       startDate: nextFixedContractStartDate || currentContractStart || '',
       endDate: '',
-      type,
+      type: defaultType,
     });
-    if (type === 'fixed' && fixedContractCount === 3) {
-      setContractModal({
-        title: contractUi.reminderTitle,
-        message: contractUi.reminderMessage,
-      });
-    }
   };
 
   const openEditContractForm = (row) => {
@@ -2083,14 +2084,9 @@ export default function EmployeeProfilePage() {
           marginBottom: contractTimeline.length || showContractForm || contractError ? '0.5rem' : 0,
         }}
       >
-        {canAddAnotherFixedContract ? (
-          <button type="button" className="btn-primary" onClick={() => openContractForm('fixed')} disabled={contractSaving}>
-            {contractUi.extendButton}
-          </button>
-        ) : null}
-        {canAddUnlimitedContract ? (
-          <button type="button" className="btn-secondary" onClick={() => openContractForm('unlimited')} disabled={contractSaving}>
-            {contractUi.unlimitedButton}
+        {canOpenContractCreator ? (
+          <button type="button" className="btn-primary" onClick={openContractForm} disabled={contractSaving}>
+            {contractUi.addContractButton}
           </button>
         ) : null}
         {currentActiveContract ? (
@@ -2121,7 +2117,7 @@ export default function EmployeeProfilePage() {
         {contractUi.historyHint}
       </p>
       {contractsLoading ? <p style={{ margin: '0.25rem 0 0', color: employeeMutedTextStyle.color }}>{contractUi.loading}</p> : null}
-      {contractError ? <p className="error-text" style={{ margin: '0.25rem 0 0' }}>{contractError}</p> : null}
+      {!showContractForm && contractError ? <p className="error-text" style={{ margin: '0.25rem 0 0' }}>{contractError}</p> : null}
       {contractTimeline.map((row) => (
         <div
           key={row.row_key || row.id}
@@ -2208,86 +2204,6 @@ export default function EmployeeProfilePage() {
           </div>
         </div>
       ))}
-      {showContractForm ? (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: contractDraft.type === 'unlimited' ? '1fr auto' : '1fr 1fr auto',
-            gap: '0.5rem',
-            alignItems: 'end',
-            padding: '0.75rem',
-            border: isDark ? '1px solid rgba(132, 162, 214, 0.3)' : '1px solid #d8dde6',
-            borderRadius: 10,
-            background: isDark ? 'rgba(10, 20, 37, 0.84)' : '#f8fafc',
-            marginTop: '0.5rem',
-          }}
-        >
-          <input
-            ref={contractFileInputRef}
-            type="file"
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-            style={{ display: 'none' }}
-            onChange={handleContractFileChange}
-          />
-          <div
-            style={{
-              gridColumn: '1 / -1',
-              fontWeight: 700,
-              color: isDark ? '#eaf2ff' : '#111827',
-              marginBottom: '0.15rem',
-            }}
-          >
-            {editingContractTarget
-              ? contractUi.editContractDateTitle
-              : contractDraft.type === 'unlimited'
-                ? contractUi.unlimitedLabel
-                : contractUi.extendButton}
-          </div>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <span>{contractUi.from}</span>
-            <input
-              type="date"
-              value={contractDraft.startDate}
-              onChange={(e) => setContractDraft((prev) => ({ ...prev, startDate: e.target.value }))}
-              style={modalInputStyle}
-            />
-          </label>
-          {contractDraft.type !== 'unlimited' ? (
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-              <span>{contractUi.to}</span>
-              <input
-                type="date"
-                value={contractDraft.endDate}
-                onChange={(e) => setContractDraft((prev) => ({ ...prev, endDate: e.target.value }))}
-                style={modalInputStyle}
-              />
-            </label>
-          ) : null}
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={closeContractForm}
-              disabled={contractSaving}
-            >
-              {contractUi.cancel}
-            </button>
-            {!editingContractTarget ? (
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={handleUploadNewContractClick}
-                disabled={contractFileUploading}
-              >
-                {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadNewContract}
-              </button>
-            ) : null}
-            <button type="button" className="btn-primary" onClick={saveContract} disabled={contractSaving}>
-              {contractSaving ? contractUi.saving : contractUi.save}
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 
@@ -2721,6 +2637,120 @@ export default function EmployeeProfilePage() {
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
               <button type="button" className="btn-secondary" onClick={closeDeactivateConfirm}>No</button>
               <button type="button" className="btn-primary" onClick={onDeactivateConfirmYes}>Yes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showContractForm && (
+        <div style={modalOverlayStyle} onClick={() => !contractSaving && closeContractForm()}>
+          <div
+            style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 560, width: 'calc(100% - 2rem)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              ref={contractFileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+              style={{ display: 'none' }}
+              onChange={handleContractFileChange}
+            />
+
+            <h3 style={{ margin: '0 0 1rem' }}>
+              {editingContractTarget ? contractUi.editContractDateTitle : contractUi.addContractTitle}
+            </h3>
+
+            {!editingContractTarget ? (
+              <div style={{ display: 'grid', gap: '0.45rem', marginBottom: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={contractDraft.type === 'fixed'}
+                    disabled={!canAddAnotherFixedContract}
+                    onChange={() =>
+                      canAddAnotherFixedContract &&
+                      setContractDraft((prev) => ({
+                        ...prev,
+                        type: prev.type === 'fixed' ? 'unlimited' : 'fixed',
+                      }))
+                    }
+                  />
+                  <span>{contractUi.addFixedContractOption}</span>
+                </label>
+                {!canAddAnotherFixedContract ? (
+                  <div style={{ color: employeeMutedTextStyle.color, fontSize: '0.85rem', paddingLeft: '1.65rem' }}>
+                    {contractUi.fixedContractLimitReached}
+                  </div>
+                ) : null}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={contractDraft.type === 'unlimited'}
+                    onChange={() =>
+                      setContractDraft((prev) => ({
+                        ...prev,
+                        type: prev.type === 'unlimited' ? (canAddAnotherFixedContract ? 'fixed' : 'unlimited') : 'unlimited',
+                        endDate: '',
+                      }))
+                    }
+                  />
+                  <span>{contractUi.addPermanentContractOption}</span>
+                </label>
+              </div>
+            ) : null}
+
+            {contractError ? <p className="error-text" style={{ margin: '0 0 0.9rem' }}>{contractError}</p> : null}
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: contractDraft.type === 'unlimited' ? '1fr' : '1fr 1fr',
+                gap: '0.75rem',
+                marginBottom: '1rem',
+              }}
+            >
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                <span>{contractUi.from}</span>
+                <input
+                  type="date"
+                  value={contractDraft.startDate}
+                  onChange={(e) => setContractDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+                  style={modalInputStyle}
+                />
+              </label>
+              {contractDraft.type !== 'unlimited' ? (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  <span>{contractUi.to}</span>
+                  <input
+                    type="date"
+                    value={contractDraft.endDate}
+                    onChange={(e) => setContractDraft((prev) => ({ ...prev, endDate: e.target.value }))}
+                    style={modalInputStyle}
+                  />
+                </label>
+              ) : null}
+            </div>
+
+            {!editingContractTarget ? (
+              <div style={{ marginBottom: '1rem' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleUploadNewContractClick}
+                  disabled={contractFileUploading}
+                >
+                  {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadContract}
+                </button>
+              </div>
+            ) : null}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button type="button" className="btn-secondary" onClick={closeContractForm} disabled={contractSaving}>
+                {contractUi.cancel}
+              </button>
+              <button type="button" className="btn-primary" onClick={saveContract} disabled={contractSaving}>
+                {contractSaving ? contractUi.saving : contractUi.save}
+              </button>
             </div>
           </div>
         </div>
