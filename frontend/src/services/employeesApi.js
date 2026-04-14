@@ -143,8 +143,17 @@ export async function updateEmployeeContract(employeeRef, contractId, payload) {
       }),
     })
   );
-  const out = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(out.error || 'Employee contract update failed');
+  const raw = await response.text();
+  let out = {};
+  try {
+    out = raw ? JSON.parse(raw) : {};
+  } catch {
+    out = {};
+  }
+  if (!response.ok) {
+    const fallback = raw && !raw.trim().startsWith('<') ? raw.trim() : `Employee contract update failed (${response.status})`;
+    throw new Error(out.error || fallback);
+  }
   return out;
 }
 

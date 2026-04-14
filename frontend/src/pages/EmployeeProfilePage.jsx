@@ -1774,7 +1774,9 @@ export default function EmployeeProfilePage() {
     setContractSaving(true);
     setContractError('');
     try {
-      const saved = editingContractTarget && editingContractTarget.mode !== 'create_from_derived'
+      const isUpdatingExistingContract =
+        editingContractTarget && editingContractTarget.mode !== 'create_from_derived';
+      const saved = isUpdatingExistingContract
         ? await updateEmployeeContract(employeeDocRef, editingContractTarget.id, {
             source: editingContractTarget.source,
             startDate: contractDraft.startDate,
@@ -1785,7 +1787,7 @@ export default function EmployeeProfilePage() {
             endDate: contractDraft.type === 'unlimited' ? null : contractDraft.endDate,
           });
       setContracts((prev) => {
-        const nextRows = editingContractTarget
+        const nextRows = isUpdatingExistingContract
           ? (prev || []).map((row) =>
               row?.id === editingContractTarget.id && row?.source === editingContractTarget.source ? saved : row
             )
