@@ -403,6 +403,18 @@ function formatDaysValue(value) {
   });
 }
 
+function normalizeWholeDaysDraftValue(value) {
+  if (value == null || value === '') return '';
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return '';
+  return String(Math.round(parsed));
+}
+
+function formatWholeDaysValue(value) {
+  const normalized = normalizeWholeDaysDraftValue(value);
+  return normalized || '0';
+}
+
 function formatDateDayMonthYear(value) {
   if (!value) return '—';
   const s = String(value).trim();
@@ -585,9 +597,11 @@ export default function EmployeeProfilePage() {
   const [rescueDateDraft, setRescueDateDraft] = useState(createEmptyRescueDateDraft);
   const [rescueSaving, setRescueSaving] = useState(false);
   const [vacationDaysOverrideDraft, setVacationDaysOverrideDraft] = useState('');
+  const [vacationDaysOverrideEditing, setVacationDaysOverrideEditing] = useState(false);
   const [vacationDaysOverrideSaving, setVacationDaysOverrideSaving] = useState(false);
   const [vacationDaysOverrideError, setVacationDaysOverrideError] = useState('');
   const [currentVacationBalanceDraft, setCurrentVacationBalanceDraft] = useState('');
+  const [currentVacationBalanceEditing, setCurrentVacationBalanceEditing] = useState(false);
   const [currentVacationBalanceSaving, setCurrentVacationBalanceSaving] = useState(false);
   const [currentVacationBalanceError, setCurrentVacationBalanceError] = useState('');
   const [vacationSummary, setVacationSummary] = useState(null);
@@ -660,6 +674,7 @@ export default function EmployeeProfilePage() {
       ? (localEmployee?.total_year_vacation ?? localEmployee?.vacation_days_override)
       : '';
     setVacationDaysOverrideDraft(value == null || value === '' ? '' : String(value));
+    setVacationDaysOverrideEditing(false);
   }, [
     currentVacationYear,
     localEmployee?.total_year_vacation,
@@ -671,7 +686,8 @@ export default function EmployeeProfilePage() {
   useEffect(() => {
     const hasCurrentYearBalance = Number(localEmployee?.current_remaining_vacation_year) === currentVacationYear;
     const value = hasCurrentYearBalance ? localEmployee?.current_remaining_vacation : '';
-    setCurrentVacationBalanceDraft(value == null || value === '' ? '' : String(value));
+    setCurrentVacationBalanceDraft(normalizeWholeDaysDraftValue(value));
+    setCurrentVacationBalanceEditing(false);
   }, [
     currentVacationYear,
     localEmployee?.current_remaining_vacation,
@@ -959,6 +975,7 @@ export default function EmployeeProfilePage() {
           ? ''
           : String(updated.total_year_vacation)
         );
+      setVacationDaysOverrideEditing(false);
       const refreshedSummary = await getEmployeeVacationSummary(employeeRef, currentVacationYear);
       setVacationSummary(refreshedSummary);
     } catch (e) {
@@ -977,18 +994,15 @@ export default function EmployeeProfilePage() {
     setCurrentVacationBalanceSaving(true);
     setCurrentVacationBalanceError('');
     try {
-      const payloadValue = String(currentVacationBalanceDraft || '').trim();
+      const payloadValue = normalizeWholeDaysDraftValue(currentVacationBalanceDraft);
       const updated = await updateEmployeeLocalSettings(employeeRef, {
         currentRemainingVacation: payloadValue === '' ? null : payloadValue,
         currentRemainingVacationYear: currentVacationYear,
         currentRemainingVacationSetOn: new Date().toISOString().slice(0, 10),
       });
       setLocalEmployee(updated);
-      setCurrentVacationBalanceDraft(
-        updated?.current_remaining_vacation == null || updated?.current_remaining_vacation === ''
-          ? ''
-          : String(updated.current_remaining_vacation)
-      );
+      setCurrentVacationBalanceDraft(normalizeWholeDaysDraftValue(updated?.current_remaining_vacation));
+      setCurrentVacationBalanceEditing(false);
       const refreshedSummary = await getEmployeeVacationSummary(employeeRef, currentVacationYear);
       setVacationSummary(refreshedSummary);
     } catch (e) {
@@ -1442,6 +1456,28 @@ export default function EmployeeProfilePage() {
     approvedVacationDaysAfterSeed: vacationSummary?.approved_vacation_days_after_seed ?? 0,
     year: currentVacationYear,
   });
+  const currentYearVacationOverrideValue =
+    Number(localEmployee?.total_year_vacation_year ?? localEmployee?.vacation_days_override_year) === currentVacationYear
+      ? (localEmployee?.total_year_vacation ?? localEmployee?.vacation_days_override)
+      : '';
+  const currentYearVacationOverrideSourceNormalized =
+    currentYearVacationOverrideValue == null || currentYearVacationOverrideValue === ''
+      ? ''
+      : String(currentYearVacationOverrideValue);
+  const currentYearVacationOverrideDraftNormalized = String(vacationDaysOverrideDraft ?? '').trim();
+  const canSaveVacationDaysOverride =
+    vacationDaysOverrideEditing &&
+    currentYearVacationOverrideDraftNormalized !== currentYearVacationOverrideSourceNormalized &&
+    !vacationDaysOverrideSaving;
+  const currentYearRemainingVacationValue =
+    Number(localEmployee?.current_remaining_vacation_year) === currentVacationYear
+      ? normalizeWholeDaysDraftValue(localEmployee?.current_remaining_vacation)
+      : '';
+  const currentYearRemainingVacationDraftNormalized = normalizeWholeDaysDraftValue(currentVacationBalanceDraft);
+  const canSaveCurrentVacationBalance =
+    currentVacationBalanceEditing &&
+    currentYearRemainingVacationDraftNormalized !== currentYearRemainingVacationValue &&
+    !currentVacationBalanceSaving;
   const isActive = typeof localEmployee?.is_active === 'boolean' ? localEmployee.is_active : (account?.isActive ?? false);
   const jobTitle = work?.jobTitle;
   const transportationId = work?.transportationId;
@@ -2243,17 +2279,32 @@ export default function EmployeeProfilePage() {
           value={vacationDaysOverrideDraft}
           onChange={(e) => setVacationDaysOverrideDraft(e.target.value)}
           placeholder={String(vacationSummary?.default_total_year_vacation || 20)}
+          disabled={!vacationDaysOverrideEditing}
           style={{ padding: '0.5rem' }}
         />
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={saveVacationDaysOverride}
-          disabled={vacationDaysOverrideSaving}
-          style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
-        >
-          {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifySelf: 'start', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setVacationDaysOverrideEditing(true);
+              setVacationDaysOverrideError('');
+            }}
+            disabled={vacationDaysOverrideSaving}
+            style={{ width: 'fit-content', minWidth: 96 }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={saveVacationDaysOverride}
+            disabled={!canSaveVacationDaysOverride}
+            style={{ width: 'fit-content', minWidth: 96 }}
+          >
+            {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
       </div>
       <p style={{ margin: '0.85rem 0 0.35rem', color: isDark ? '#d7e5ff' : '#111827', fontWeight: 600 }}>
         {timeOffUi.currentRemainingLabel}
@@ -2262,21 +2313,36 @@ export default function EmployeeProfilePage() {
         <input
           type="number"
           min="0"
-          step="0.01"
+          step="1"
           value={currentVacationBalanceDraft}
-          onChange={(e) => setCurrentVacationBalanceDraft(e.target.value)}
-          placeholder={formatDaysValue(vacationBalance.remainingVacationDays)}
+          onChange={(e) => setCurrentVacationBalanceDraft(normalizeWholeDaysDraftValue(e.target.value))}
+          placeholder={formatWholeDaysValue(vacationBalance.remainingVacationDays)}
+          disabled={!currentVacationBalanceEditing}
           style={{ padding: '0.5rem' }}
         />
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={saveCurrentVacationBalance}
-          disabled={currentVacationBalanceSaving}
-          style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
-        >
-          {currentVacationBalanceSaving ? 'Saving...' : 'Save'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifySelf: 'start', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setCurrentVacationBalanceEditing(true);
+              setCurrentVacationBalanceError('');
+            }}
+            disabled={currentVacationBalanceSaving}
+            style={{ width: 'fit-content', minWidth: 96 }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={saveCurrentVacationBalance}
+            disabled={!canSaveCurrentVacationBalance}
+            style={{ width: 'fit-content', minWidth: 96 }}
+          >
+            {currentVacationBalanceSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
       </div>
       <p style={{ margin: '0.45rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
         Standard entitlement is 20 days. Carry over from the previous year is added first and expires after 31.03 if unused.
@@ -2324,12 +2390,12 @@ export default function EmployeeProfilePage() {
         </div>
         <div style={employeeSectionStyle}>
           <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Remaining vacation</div>
-          <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.remainingVacationDays)}</strong>
+          <strong>{vacationSummaryLoading ? '...' : formatWholeDaysValue(vacationBalance.remainingVacationDays)}</strong>
         </div>
         {vacationBalance.seedApplied ? (
           <div style={employeeSectionStyle}>
             <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Starting balance</div>
-            <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.seedStartingBalance)}</strong>
+            <strong>{vacationSummaryLoading ? '...' : formatWholeDaysValue(vacationBalance.seedStartingBalance)}</strong>
             <div style={{ marginTop: '0.25rem', color: employeeMutedTextStyle.color, fontSize: '0.82rem' }}>
               {vacationSummaryLoading ? '...' : formatDate(vacationBalance.seedDateIso)}
             </div>
