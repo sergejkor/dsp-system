@@ -83,7 +83,8 @@ async function fetchKenjoAttendancesForDay(isoDay) {
     if (resp.status === 404 && msg.toLowerCase().includes('could not find attendance entries')) {
       return [];
     }
-    throw new Error(`Kenjo GET /attendances failed ${resp.status}: ${text}`);
+    console.error('Payroll attendance day fetch failed', { isoDay, status: resp.status, body: text });
+    throw new Error(`Kenjo GET /attendances failed ${resp.status} [from=${isoDay} to=${isoDay}]: ${text}`);
   }
 
   if (!text) return [];
