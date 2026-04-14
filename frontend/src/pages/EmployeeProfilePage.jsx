@@ -1418,6 +1418,14 @@ export default function EmployeeProfilePage() {
     (sum, row) => sum + (Number(row?.working_days) || 0),
     0
   );
+  const localCurrentRemainingSeed =
+    Number(localEmployee?.current_remaining_vacation_year) === currentVacationYear
+      ? localEmployee?.current_remaining_vacation
+      : null;
+  const localCurrentRemainingSeedDate =
+    Number(localEmployee?.current_remaining_vacation_year) === currentVacationYear
+      ? localEmployee?.current_remaining_vacation_set_on
+      : null;
   const vacationBalance = buildVacationBalanceSnapshot({
     totalYearVacation:
       vacationSummary?.total_year_vacation ??
@@ -1427,8 +1435,10 @@ export default function EmployeeProfilePage() {
     carryOverDays,
     approvedVacationDaysYear: vacationSummary?.approved_vacation_days_year ?? 0,
     approvedVacationDaysUntilMarch31: vacationSummary?.approved_vacation_days_until_march_31 ?? 0,
-    currentRemainingVacationSeed: vacationSummary?.current_remaining_vacation_seed,
-    currentRemainingVacationSeedDate: vacationSummary?.current_remaining_vacation_seed_date,
+    currentRemainingVacationSeed:
+      vacationSummary?.current_remaining_vacation_seed ?? localCurrentRemainingSeed,
+    currentRemainingVacationSeedDate:
+      vacationSummary?.current_remaining_vacation_seed_date ?? localCurrentRemainingSeedDate,
     approvedVacationDaysAfterSeed: vacationSummary?.approved_vacation_days_after_seed ?? 0,
     year: currentVacationYear,
   });

@@ -263,6 +263,7 @@ async function getEmployeeById(employeeId) {
      FROM employees e
      ${buildEmployeeTerminationJoin('e')}
      WHERE e.employee_id = $1 OR e.id::text = $1 OR e.kenjo_user_id = $1 OR e.pn = $1
+        OR e.transporter_id = $1 OR e.email = $1
      LIMIT 1`,
     [String(employeeId)]
   );
@@ -295,8 +296,32 @@ async function ensureLocalEmployeeRow(employeeRef) {
     [ref]
   ).catch(() => ({ rows: [] }));
 
-  const row = kenjoRes.rows?.[0];
-  if (!row) return null;
+  let row = kenjoRes.rows?.[0] || null;
+  if (!row) {
+    const remoteUsers = await getKenjoUsersList().catch(() => []);
+    const normalizedRef = String(ref).trim().toLowerCase();
+    const remoteMatch = (Array.isArray(remoteUsers) ? remoteUsers : []).find((user) =>
+      [
+        user?._id,
+        user?.employeeNumber,
+        user?.transportationId,
+        user?.email,
+      ].some((value) => String(value || '').trim().toLowerCase() === normalizedRef)
+    );
+    if (!remoteMatch) return null;
+    row = {
+      kenjo_user_id: remoteMatch?._id || null,
+      employee_number: remoteMatch?.employeeNumber || null,
+      transporter_id: remoteMatch?.transportationId || null,
+      first_name: remoteMatch?.firstName || null,
+      last_name: remoteMatch?.lastName || null,
+      display_name: remoteMatch?.displayName || null,
+      start_date: remoteMatch?.startDate || null,
+      contract_end: remoteMatch?.contractEnd || null,
+      is_active: remoteMatch?.isActive ?? true,
+      email: remoteMatch?.email || null,
+    };
+  }
 
   const employeeId =
     String(row.employee_number || row.kenjo_user_id || ref)
@@ -322,6 +347,9 @@ async function ensureLocalEmployeeRow(employeeRef) {
   const kenjoUserId =
     String(row.kenjo_user_id || '')
       .trim() || null;
+  const email =
+    String(row.email || '')
+      .trim() || null;
 
   await query(
     `INSERT INTO employees (
@@ -330,6 +358,7 @@ async function ensureLocalEmployeeRow(employeeRef) {
        first_name,
        last_name,
        display_name,
+       email,
        start_date,
        contract_end,
        transporter_id,
@@ -343,6 +372,7 @@ async function ensureLocalEmployeeRow(employeeRef) {
        first_name = COALESCE(EXCLUDED.first_name, employees.first_name),
        last_name = COALESCE(EXCLUDED.last_name, employees.last_name),
        display_name = COALESCE(EXCLUDED.display_name, employees.display_name),
+       email = COALESCE(EXCLUDED.email, employees.email),
        start_date = COALESCE(EXCLUDED.start_date, employees.start_date),
        contract_end = COALESCE(EXCLUDED.contract_end, employees.contract_end),
        transporter_id = COALESCE(EXCLUDED.transporter_id, employees.transporter_id),
@@ -355,6 +385,7 @@ async function ensureLocalEmployeeRow(employeeRef) {
       firstName,
       lastName,
       displayName,
+      email,
       normalizeDateOnly(row.start_date),
       normalizeDateOnly(row.contract_end),
       transporterId,
@@ -387,7 +418,7 @@ async function runEmployeeLocalSettingsUpdate({
            vacation_balance_seed_date = CASE WHEN $4::boolean THEN $7 ELSE vacation_balance_seed_date END,
            updated_at = NOW()
        WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
-          OR pn = $1 OR transporter_id = $1
+          OR pn = $1 OR transporter_id = $1 OR email = $1
        RETURNING *
      )
      SELECT
@@ -641,7 +672,13 @@ function normalizeTimeOffType(typeId, typeName) {
   if (normalizedName.includes('sick') || normalizedName.includes('krank')) {
     return 'sick';
   }
-  if (normalizedName.includes('vacation') || normalizedName.includes('urlaub') || normalizedName.includes('holiday')) {
+  if (
+    normalizedName.includes('vacation') ||
+    normalizedName.includes('urlaub') ||
+    normalizedName.includes('holiday') ||
+    normalizedName.includes('paid leave') ||
+    normalizedName.includes('annual leave')
+  ) {
     return 'vacation';
   }
   return null;
@@ -653,7 +690,8 @@ function normalizeTimeOffStatus(status) {
 
 function isApprovedTimeOffStatus(status) {
   const normalized = normalizeTimeOffStatus(status);
-  return normalized === 'processed' || normalized === 'approved' || normalized === 'accepted';
+  if (!normalized) return true;
+  return !['rejected', 'declined', 'cancelled', 'canceled'].includes(normalized);
 }
 
 function getEasterSunday(year) {
