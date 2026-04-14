@@ -43,6 +43,19 @@ export async function getEmployeeVacationSummary(employeeId, year) {
   return out;
 }
 
+export async function getEmployeeTimeOffHistory(employeeId, { type, year } = {}) {
+  const params = new URLSearchParams();
+  if (type) params.set('type', String(type));
+  if (year) params.set('year', String(year));
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeId)}/time-off-history${params.toString() ? `?${params.toString()}` : ''}`,
+    authOpts()
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee time-off history failed');
+  return out;
+}
+
 export async function updateEmployeeLocalSettings(employeeId, payload) {
   const response = await fetch(
     `${API_BASE}/api/employees/${encodeURIComponent(employeeId)}/local-settings`,
@@ -54,6 +67,9 @@ export async function updateEmployeeLocalSettings(employeeId, payload) {
         vacationDaysOverrideYear: payload?.vacationDaysOverrideYear ?? null,
         totalYearVacation: payload?.totalYearVacation ?? payload?.vacationDaysOverride ?? null,
         totalYearVacationYear: payload?.totalYearVacationYear ?? payload?.vacationDaysOverrideYear ?? null,
+        currentRemainingVacation: payload?.currentRemainingVacation ?? null,
+        currentRemainingVacationYear: payload?.currentRemainingVacationYear ?? null,
+        currentRemainingVacationSetOn: payload?.currentRemainingVacationSetOn ?? null,
       }),
     })
   );

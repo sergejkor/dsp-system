@@ -4,6 +4,7 @@ import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmploy
 import {
   getEmployee,
   getEmployeeVacationSummary,
+  getEmployeeTimeOffHistory,
   getEmployeeContracts,
   getEmployeeRescues,
   getEmployeeDocuments,
@@ -401,6 +402,14 @@ function formatDaysValue(value) {
   });
 }
 
+function buildHistoryYearOptions(startYear = 2025, endYear = 2028) {
+  const list = [];
+  for (let year = startYear; year <= endYear; year += 1) {
+    list.push({ value: year, label: String(year).slice(2) });
+  }
+  return list;
+}
+
 function getCustomFieldNumericValue(customFields, keys = []) {
   const normalizedKeys = Array.isArray(keys)
     ? keys.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
@@ -419,6 +428,9 @@ function buildVacationBalanceSnapshot({
   carryOverDays,
   approvedVacationDaysYear,
   approvedVacationDaysUntilMarch31,
+  currentRemainingVacationSeed,
+  currentRemainingVacationSeedDate,
+  approvedVacationDaysAfterSeed,
   year,
   now = new Date(),
 }) {
@@ -427,6 +439,13 @@ function buildVacationBalanceSnapshot({
   const carryOver = roundDays(carryOverDays);
   const usedYear = roundDays(approvedVacationDaysYear);
   const usedUntilMarch31 = roundDays(approvedVacationDaysUntilMarch31);
+  const seedStartingBalance =
+    currentRemainingVacationSeed != null && Number.isFinite(Number(currentRemainingVacationSeed))
+      ? roundDays(currentRemainingVacationSeed)
+      : null;
+  const seedDateIso = currentRemainingVacationSeedDate ? String(currentRemainingVacationSeedDate).slice(0, 10) : '';
+  const seedApplied = seedStartingBalance != null && !!seedDateIso;
+  const usedAfterSeed = seedApplied ? roundDays(approvedVacationDaysAfterSeed) : 0;
   const marchDeadline = new Date(safeYear, 2, 31, 23, 59, 59, 999);
   const carryConsumedByDeadline = Math.min(carryOver, usedUntilMarch31);
   const afterCarryDeadline = now.getFullYear() > safeYear || (now.getFullYear() === safeYear && now > marchDeadline);
@@ -435,9 +454,11 @@ function buildVacationBalanceSnapshot({
   const chargedCurrentYearVacation = afterCarryDeadline
     ? Math.max(usedYear - carryConsumedByDeadline, 0)
     : Math.max(usedYear - Math.min(carryOver, usedYear), 0);
-  const remainingVacationDays = afterCarryDeadline
-    ? Math.max(baseTotalYearVacation - chargedCurrentYearVacation, 0)
-    : Math.max(baseTotalYearVacation + carryOver - usedYear, 0);
+  const remainingVacationDays = seedApplied
+    ? Math.max(seedStartingBalance - usedAfterSeed, 0)
+    : afterCarryDeadline
+      ? Math.max(baseTotalYearVacation - chargedCurrentYearVacation, 0)
+      : Math.max(baseTotalYearVacation + carryOver - usedYear, 0);
   return {
     totalYearVacation: baseTotalYearVacation,
     carryOver,
@@ -448,6 +469,10 @@ function buildVacationBalanceSnapshot({
     usedUntilMarch31,
     chargedCurrentYearVacation,
     remainingVacationDays,
+    seedApplied,
+    seedStartingBalance,
+    seedDateIso,
+    usedAfterSeed,
     afterCarryDeadline,
     carryDeadlineIso: `${safeYear}-03-31`,
   };
@@ -527,9 +552,17 @@ export default function EmployeeProfilePage() {
   const [vacationDaysOverrideDraft, setVacationDaysOverrideDraft] = useState('');
   const [vacationDaysOverrideSaving, setVacationDaysOverrideSaving] = useState(false);
   const [vacationDaysOverrideError, setVacationDaysOverrideError] = useState('');
+  const [currentVacationBalanceDraft, setCurrentVacationBalanceDraft] = useState('');
+  const [currentVacationBalanceSaving, setCurrentVacationBalanceSaving] = useState(false);
+  const [currentVacationBalanceError, setCurrentVacationBalanceError] = useState('');
   const [vacationSummary, setVacationSummary] = useState(null);
   const [vacationSummaryLoading, setVacationSummaryLoading] = useState(false);
   const [vacationSummaryError, setVacationSummaryError] = useState('');
+  const [timeOffHistoryModal, setTimeOffHistoryModal] = useState(null);
+  const [timeOffHistoryYear, setTimeOffHistoryYear] = useState(currentVacationYear);
+  const [timeOffHistoryRows, setTimeOffHistoryRows] = useState([]);
+  const [timeOffHistoryLoading, setTimeOffHistoryLoading] = useState(false);
+  const [timeOffHistoryError, setTimeOffHistoryError] = useState('');
   const [lastMonthPayrollCards, setLastMonthPayrollCards] = useState(null);
   const contractFileInputRef = useRef(null);
   const terminateContractFileInputRef = useRef(null);
@@ -598,6 +631,16 @@ export default function EmployeeProfilePage() {
     localEmployee?.total_year_vacation_year,
     localEmployee?.vacation_days_override,
     localEmployee?.vacation_days_override_year,
+  ]);
+
+  useEffect(() => {
+    const hasCurrentYearBalance = Number(localEmployee?.current_remaining_vacation_year) === currentVacationYear;
+    const value = hasCurrentYearBalance ? localEmployee?.current_remaining_vacation : '';
+    setCurrentVacationBalanceDraft(value == null || value === '' ? '' : String(value));
+  }, [
+    currentVacationYear,
+    localEmployee?.current_remaining_vacation,
+    localEmployee?.current_remaining_vacation_year,
   ]);
 
   useEffect(() => {
@@ -890,12 +933,45 @@ export default function EmployeeProfilePage() {
     }
   };
 
+  const saveCurrentVacationBalance = async () => {
+    const employeeRef = String(localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || '').trim();
+    if (!employeeRef) {
+      setCurrentVacationBalanceError('Employee reference is missing.');
+      return;
+    }
+    setCurrentVacationBalanceSaving(true);
+    setCurrentVacationBalanceError('');
+    try {
+      const payloadValue = String(currentVacationBalanceDraft || '').trim();
+      const updated = await updateEmployeeLocalSettings(employeeRef, {
+        currentRemainingVacation: payloadValue === '' ? null : payloadValue,
+        currentRemainingVacationYear: currentVacationYear,
+        currentRemainingVacationSetOn: new Date().toISOString().slice(0, 10),
+      });
+      setLocalEmployee(updated);
+      setCurrentVacationBalanceDraft(
+        updated?.current_remaining_vacation == null || updated?.current_remaining_vacation === ''
+          ? ''
+          : String(updated.current_remaining_vacation)
+      );
+      const refreshedSummary = await getEmployeeVacationSummary(employeeRef, currentVacationYear);
+      setVacationSummary(refreshedSummary);
+    } catch (e) {
+      setCurrentVacationBalanceError(String(e?.message || e));
+    } finally {
+      setCurrentVacationBalanceSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!kenjoEmployeeId) return;
     getPaveSessions({ driver_id: kenjoEmployeeId }).then(setPaveSessions).catch(() => setPaveSessions([]));
   }, [kenjoEmployeeId]);
 
   const employeeDocRef = String(kenjoEmployeeId || localEmployee?.employee_id || localEmployeeId || '').trim();
+  const employeeVacationRef = String(
+    localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || ''
+  ).trim();
   const contractUi =
     language === 'de'
       ? {
@@ -984,6 +1060,88 @@ export default function EmployeeProfilePage() {
           uploadingContract: 'Uploading...',
           uploadSuccess: 'The new contract was saved under document type "Vertrag".',
         };
+
+  const timeOffUi =
+    language === 'de'
+      ? {
+          currentRemainingLabel: `Aktueller Resturlaub (${currentVacationYear})`,
+          currentRemainingHint:
+            'Diesen Wert bitte einmal als aktuellen Resturlaub setzen. Alle spaeteren genehmigten Urlaube werden dann automatisch davon abgezogen.',
+          currentRemainingSeedInfo: (date) => `Aktueller Startsaldo gespeichert am ${date}.`,
+          vacationHistoryButton: 'Vacation history',
+          sicknessHistoryButton: 'Sickness history',
+          vacationHistoryTitle: 'Urlaubshistorie',
+          sicknessHistoryTitle: 'Krankheitshistorie',
+          yearLabel: 'Jahr',
+          from: 'Von',
+          to: 'Bis',
+          workingDays: 'Arbeitstage',
+          noRows: 'Keine Eintraege fuer dieses Jahr gefunden.',
+          loading: 'Historie wird geladen...',
+          close: 'Close',
+        }
+      : {
+          currentRemainingLabel: `Current remaining vacation (${currentVacationYear})`,
+          currentRemainingHint:
+            'Set the actual remaining vacation once. Future approved vacations are then subtracted automatically from this balance.',
+          currentRemainingSeedInfo: (date) => `Current starting balance saved on ${date}.`,
+          vacationHistoryButton: 'Vacation history',
+          sicknessHistoryButton: 'Sickness history',
+          vacationHistoryTitle: 'Vacation history',
+          sicknessHistoryTitle: 'Sickness history',
+          yearLabel: 'Year',
+          from: 'From',
+          to: 'To',
+          workingDays: 'Working days',
+          noRows: 'No entries found for this year.',
+          loading: 'Loading history...',
+          close: 'Close',
+        };
+
+  const openTimeOffHistoryModal = (type) => {
+    setTimeOffHistoryModal(type);
+    setTimeOffHistoryYear(currentVacationYear);
+    setTimeOffHistoryRows([]);
+    setTimeOffHistoryError('');
+  };
+
+  const closeTimeOffHistoryModal = () => {
+    setTimeOffHistoryModal(null);
+    setTimeOffHistoryRows([]);
+    setTimeOffHistoryError('');
+  };
+
+  useEffect(() => {
+    if (!timeOffHistoryModal) return;
+    if (!employeeVacationRef) {
+      setTimeOffHistoryRows([]);
+      setTimeOffHistoryError('Employee reference is missing.');
+      return;
+    }
+    let cancelled = false;
+    setTimeOffHistoryLoading(true);
+    setTimeOffHistoryError('');
+    getEmployeeTimeOffHistory(employeeVacationRef, {
+      type: timeOffHistoryModal,
+      year: timeOffHistoryYear,
+    })
+      .then((data) => {
+        if (cancelled) return;
+        setTimeOffHistoryRows(Array.isArray(data?.rows) ? data.rows : []);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setTimeOffHistoryRows([]);
+        setTimeOffHistoryError(String(e?.message || e));
+      })
+      .finally(() => {
+        if (!cancelled) setTimeOffHistoryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeVacationRef, timeOffHistoryModal, timeOffHistoryYear]);
 
   useEffect(() => {
     if (!employeeDocRef) return;
@@ -1155,6 +1313,7 @@ export default function EmployeeProfilePage() {
       ...employeeDocs.map((doc) => String(doc?.document_type || '').trim()).filter(Boolean),
     ])
   );
+  const historyYearOptions = buildHistoryYearOptions();
   const carryOverDays = getCustomFieldNumericValue(current?.customFields, ['c_CarryOverDays', 'Carry over days']);
   const vacationBalance = buildVacationBalanceSnapshot({
     totalYearVacation:
@@ -1165,6 +1324,9 @@ export default function EmployeeProfilePage() {
     carryOverDays,
     approvedVacationDaysYear: vacationSummary?.approved_vacation_days_year ?? 0,
     approvedVacationDaysUntilMarch31: vacationSummary?.approved_vacation_days_until_march_31 ?? 0,
+    currentRemainingVacationSeed: vacationSummary?.current_remaining_vacation_seed,
+    currentRemainingVacationSeedDate: vacationSummary?.current_remaining_vacation_seed_date,
+    approvedVacationDaysAfterSeed: vacationSummary?.approved_vacation_days_after_seed ?? 0,
     year: currentVacationYear,
   });
   const isActive = typeof localEmployee?.is_active === 'boolean' ? localEmployee.is_active : (account?.isActive ?? false);
@@ -2682,15 +2844,65 @@ export default function EmployeeProfilePage() {
                 {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
               </button>
             </div>
+            <p style={{ margin: '0.85rem 0 0.35rem', color: isDark ? '#d7e5ff' : '#111827', fontWeight: 600 }}>
+              {timeOffUi.currentRemainingLabel}
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 180px) auto', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={currentVacationBalanceDraft}
+                onChange={(e) => setCurrentVacationBalanceDraft(e.target.value)}
+                placeholder={formatDaysValue(vacationBalance.remainingVacationDays)}
+                style={{ padding: '0.5rem' }}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={saveCurrentVacationBalance}
+                disabled={currentVacationBalanceSaving}
+                style={{ justifySelf: 'start', width: 'fit-content', minWidth: 96 }}
+              >
+                {currentVacationBalanceSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
             <p style={{ margin: '0.45rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
               Standard entitlement is 20 days. Carry over from the previous year is added first and expires after 31.03 if unused.
             </p>
+            <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+              {timeOffUi.currentRemainingHint}
+            </p>
+            {vacationBalance.seedApplied ? (
+              <p style={{ margin: '0.35rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+                {timeOffUi.currentRemainingSeedInfo(formatDate(vacationBalance.seedDateIso))}
+              </p>
+            ) : null}
             {vacationDaysOverrideError ? (
               <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationDaysOverrideError}</p>
+            ) : null}
+            {currentVacationBalanceError ? (
+              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{currentVacationBalanceError}</p>
             ) : null}
             {vacationSummaryError ? (
               <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationSummaryError}</p>
             ) : null}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => openTimeOffHistoryModal('vacation')}
+              >
+                {timeOffUi.vacationHistoryButton}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => openTimeOffHistoryModal('sick')}
+              >
+                {timeOffUi.sicknessHistoryButton}
+              </button>
+            </div>
             <div
               style={{
                 display: 'grid',
@@ -2711,20 +2923,30 @@ export default function EmployeeProfilePage() {
                 <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Remaining vacation</div>
                 <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.remainingVacationDays)}</strong>
               </div>
-              <div style={employeeSectionStyle}>
-                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>
-                  {vacationBalance.afterCarryDeadline ? 'Carry over expired' : `Carry over valid until ${vacationBalance.carryDeadlineIso}`}
+              {vacationBalance.seedApplied ? (
+                <div style={employeeSectionStyle}>
+                  <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Starting balance</div>
+                  <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.seedStartingBalance)}</strong>
+                  <div style={{ marginTop: '0.25rem', color: employeeMutedTextStyle.color, fontSize: '0.82rem' }}>
+                    {vacationSummaryLoading ? '...' : formatDate(vacationBalance.seedDateIso)}
+                  </div>
                 </div>
-                <strong>
-                  {vacationSummaryLoading
-                    ? '...'
-                    : formatDaysValue(
-                        vacationBalance.afterCarryDeadline
-                          ? vacationBalance.carryExpired
-                          : vacationBalance.carryAvailableNow
-                      )}
-                </strong>
-              </div>
+              ) : (
+                <div style={employeeSectionStyle}>
+                  <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>
+                    {vacationBalance.afterCarryDeadline ? 'Carry over expired' : `Carry over valid until ${vacationBalance.carryDeadlineIso}`}
+                  </div>
+                  <strong>
+                    {vacationSummaryLoading
+                      ? '...'
+                      : formatDaysValue(
+                          vacationBalance.afterCarryDeadline
+                            ? vacationBalance.carryExpired
+                            : vacationBalance.carryAvailableNow
+                        )}
+                  </strong>
+                </div>
+              )}
             </div>
           </div>
           <div style={{ marginBottom: '1rem' }}>
@@ -2887,6 +3109,115 @@ export default function EmployeeProfilePage() {
           )}
         </div>
       </div>
+
+      {timeOffHistoryModal && (
+        <div style={modalOverlayStyle} onClick={closeTimeOffHistoryModal}>
+          <div
+            style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 760 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '1rem',
+                flexWrap: 'wrap',
+                marginBottom: '1rem',
+              }}
+            >
+              <div>
+                <h3 style={{ margin: 0, color: isDark ? '#f8fbff' : '#111827' }}>
+                  {timeOffHistoryModal === 'sick' ? timeOffUi.sicknessHistoryTitle : timeOffUi.vacationHistoryTitle}
+                </h3>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: isDark ? '#d7e5ff' : '#111827' }}>
+                <span>{timeOffUi.yearLabel}</span>
+                <select
+                  value={timeOffHistoryYear}
+                  onChange={(e) => setTimeOffHistoryYear(Number(e.target.value) || currentVacationYear)}
+                  style={modalInputStyle}
+                >
+                  {historyYearOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {timeOffHistoryError ? (
+              <p className="error-text" style={{ margin: '0 0 0.75rem' }}>{timeOffHistoryError}</p>
+            ) : null}
+
+            <div
+              style={{
+                border: isDark ? '1px solid rgba(132, 162, 214, 0.25)' : '1px solid #d8dde6',
+                borderRadius: 10,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, 160px)',
+                  gap: '0.75rem',
+                  padding: '0.75rem 1rem',
+                  background: isDark ? 'rgba(16, 32, 56, 0.96)' : '#f8fafc',
+                  borderBottom: isDark ? '1px solid rgba(132, 162, 214, 0.2)' : '1px solid #e5e7eb',
+                  fontWeight: 600,
+                }}
+              >
+                <span>{timeOffUi.from}</span>
+                <span>{timeOffUi.to}</span>
+                <span>{timeOffUi.workingDays}</span>
+              </div>
+
+              {timeOffHistoryLoading ? (
+                <div style={{ padding: '1rem', color: employeeMutedTextStyle.color }}>
+                  {timeOffUi.loading}
+                </div>
+              ) : timeOffHistoryRows.length ? (
+                <div style={{ display: 'grid' }}>
+                  {timeOffHistoryRows.map((row, index) => (
+                    <div
+                      key={row.id}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, 160px)',
+                        gap: '0.75rem',
+                        padding: '0.75rem 1rem',
+                        background: index % 2 === 0
+                          ? (isDark ? 'rgba(10, 20, 37, 0.96)' : '#ffffff')
+                          : (isDark ? 'rgba(15, 28, 48, 0.96)' : '#f8fafc'),
+                        borderBottom:
+                          index === timeOffHistoryRows.length - 1
+                            ? 'none'
+                            : (isDark ? '1px solid rgba(132, 162, 214, 0.16)' : '1px solid #eef2f7'),
+                      }}
+                    >
+                      <span>{formatDate(row.start_date)}</span>
+                      <span>{formatDate(row.end_date)}</span>
+                      <strong>{formatDaysValue(row.working_days)}</strong>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ padding: '1rem', color: employeeMutedTextStyle.color }}>
+                  {timeOffUi.noRows}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button type="button" className="btn-secondary" onClick={closeTimeOffHistoryModal}>
+                {timeOffUi.close}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showRescueModal && (
         <div style={modalOverlayStyle}>

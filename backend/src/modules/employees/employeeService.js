@@ -1,5 +1,6 @@
 import { query } from '../../db.js';
 import settingsService from '../settings/settingsService.js';
+import { getTimeOffRequests } from '../kenjo/kenjoClient.js';
 
 let docsTableReady = false;
 let contractExtensionsTableReady = false;
@@ -7,6 +8,8 @@ let employeeContractsTableReady = false;
 let employeeContractTerminationColumnsReady = false;
 let rescueTableReady = false;
 let employeeVacationColumnsReady = false;
+let kenjoTimeOffTableReady = false;
+let kenjoTimeOffSyncLogReady = false;
 
 function looksLikeKenjoId(value) {
   return /^[a-f0-9]{24}$/i.test(String(value || '').trim());
@@ -109,7 +112,46 @@ async function ensureEmployeeVacationColumns() {
   if (employeeVacationColumnsReady) return;
   await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_days_override NUMERIC(10,2)`);
   await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_days_override_year INTEGER`);
+  await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_balance_seed NUMERIC(10,2)`);
+  await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_balance_seed_year INTEGER`);
+  await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS vacation_balance_seed_date DATE`);
   employeeVacationColumnsReady = true;
+}
+
+async function ensureKenjoTimeOffTable() {
+  if (kenjoTimeOffTableReady) return;
+  await query(`
+    CREATE TABLE IF NOT EXISTS kenjo_time_off (
+      id SERIAL PRIMARY KEY,
+      kenjo_request_id VARCHAR(255) NOT NULL UNIQUE,
+      kenjo_user_id VARCHAR(255),
+      employee_name VARCHAR(255),
+      start_date DATE,
+      end_date DATE,
+      time_off_type VARCHAR(255),
+      time_off_type_name VARCHAR(255),
+      status VARCHAR(64),
+      part_of_day_from VARCHAR(64),
+      part_of_day_to VARCHAR(64),
+      synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_kenjo_time_off_dates ON kenjo_time_off (start_date, end_date)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_kenjo_time_off_user ON kenjo_time_off (kenjo_user_id)`);
+  kenjoTimeOffTableReady = true;
+}
+
+async function ensureKenjoTimeOffSyncLogTable() {
+  if (kenjoTimeOffSyncLogReady) return;
+  await query(`
+    CREATE TABLE IF NOT EXISTS kenjo_time_off_sync_log (
+      sync_key VARCHAR(32) PRIMARY KEY,
+      period_month VARCHAR(7) NOT NULL,
+      synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_kenjo_time_off_sync_log_period ON kenjo_time_off_sync_log (period_month)`);
+  kenjoTimeOffSyncLogReady = true;
 }
 
 function buildEmployeeTerminationJoin(employeeAlias = 'e') {
@@ -175,6 +217,9 @@ async function listEmployees({ search, onlyActive } = {}) {
       e.vacation_days_override_year,
       e.vacation_days_override AS total_year_vacation,
       e.vacation_days_override_year AS total_year_vacation_year,
+      e.vacation_balance_seed AS current_remaining_vacation,
+      e.vacation_balance_seed_year AS current_remaining_vacation_year,
+      e.vacation_balance_seed_date AS current_remaining_vacation_set_on,
       employee_contract_state.latest_termination_date,
       ${effectiveActiveSql} AS is_active
     FROM employees e
@@ -210,6 +255,9 @@ async function getEmployeeById(employeeId) {
       e.vacation_days_override_year,
       e.vacation_days_override AS total_year_vacation,
       e.vacation_days_override_year AS total_year_vacation_year,
+      e.vacation_balance_seed AS current_remaining_vacation,
+      e.vacation_balance_seed_year AS current_remaining_vacation_year,
+      e.vacation_balance_seed_date AS current_remaining_vacation_set_on,
       employee_contract_state.latest_termination_date,
       ${effectiveActiveSql} AS is_active
      FROM employees e
@@ -228,7 +276,8 @@ async function updateEmployeeLocalSettings(employeeId, payload = {}) {
 
   const hasVacationOverride = Object.prototype.hasOwnProperty.call(payload || {}, 'vacationDaysOverride');
   const hasTotalYearVacation = Object.prototype.hasOwnProperty.call(payload || {}, 'totalYearVacation');
-  if (!hasVacationOverride && !hasTotalYearVacation) {
+  const hasCurrentRemainingVacation = Object.prototype.hasOwnProperty.call(payload || {}, 'currentRemainingVacation');
+  if (!hasVacationOverride && !hasTotalYearVacation && !hasCurrentRemainingVacation) {
     throw new Error('No supported local settings provided');
   }
 
@@ -249,6 +298,31 @@ async function updateEmployeeLocalSettings(employeeId, payload = {}) {
         : Number(new Date().getFullYear());
   }
 
+  let vacationBalanceSeed = null;
+  let vacationBalanceSeedYear = null;
+  let vacationBalanceSeedDate = null;
+  if (hasCurrentRemainingVacation) {
+    const rawCurrentRemaining = payload?.currentRemainingVacation;
+    if (rawCurrentRemaining !== '' && rawCurrentRemaining != null) {
+      const parsed = Number(rawCurrentRemaining);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error('Current remaining vacation must be a non-negative number');
+      }
+      vacationBalanceSeed = Math.round(parsed * 100) / 100;
+      const rawSeedYear = payload?.currentRemainingVacationYear;
+      const parsedSeedYear = Number(rawSeedYear || new Date().getFullYear());
+      vacationBalanceSeedYear =
+        Number.isInteger(parsedSeedYear) && parsedSeedYear >= 2000 && parsedSeedYear <= 3000
+          ? parsedSeedYear
+          : Number(new Date().getFullYear());
+      vacationBalanceSeedDate = normalizeDateOnly(payload?.currentRemainingVacationSetOn) || new Date().toISOString().slice(0, 10);
+    } else {
+      vacationBalanceSeed = null;
+      vacationBalanceSeedYear = null;
+      vacationBalanceSeedDate = null;
+    }
+  }
+
   await ensureEmployeeContractTerminationColumns();
   const effectiveActiveSql = buildEmployeeEffectiveActiveSql('e');
   const res = await query(
@@ -256,6 +330,9 @@ async function updateEmployeeLocalSettings(employeeId, payload = {}) {
        UPDATE employees
        SET vacation_days_override = $2,
            vacation_days_override_year = $3,
+           vacation_balance_seed = CASE WHEN $4::boolean THEN $5 ELSE vacation_balance_seed END,
+           vacation_balance_seed_year = CASE WHEN $4::boolean THEN $6 ELSE vacation_balance_seed_year END,
+           vacation_balance_seed_date = CASE WHEN $4::boolean THEN $7 ELSE vacation_balance_seed_date END,
            updated_at = NOW()
        WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
        RETURNING *
@@ -277,12 +354,23 @@ async function updateEmployeeLocalSettings(employeeId, payload = {}) {
        e.vacation_days_override_year,
        e.vacation_days_override AS total_year_vacation,
        e.vacation_days_override_year AS total_year_vacation_year,
+       e.vacation_balance_seed AS current_remaining_vacation,
+       e.vacation_balance_seed_year AS current_remaining_vacation_year,
+       e.vacation_balance_seed_date AS current_remaining_vacation_set_on,
        employee_contract_state.latest_termination_date,
        ${effectiveActiveSql} AS is_active
      FROM updated_employee e
      ${buildEmployeeTerminationJoin('e')}
      LIMIT 1`,
-    [id, vacationDaysOverride, vacationDaysOverrideYear]
+    [
+      id,
+      vacationDaysOverride,
+      vacationDaysOverrideYear,
+      hasCurrentRemainingVacation,
+      vacationBalanceSeed,
+      vacationBalanceSeedYear,
+      vacationBalanceSeedDate,
+    ]
   );
   return res.rows[0] || null;
 }
@@ -485,6 +573,100 @@ function countVacationDaysInRange(rows, rangeStart, rangeEnd, holidaySet) {
     total += countBusinessDaysExcludingBavariaHolidays(effectiveStart, effectiveEnd, holidaySet);
   }
   return total;
+}
+
+function countWeekdaysInclusive(startIso, endIso) {
+  const start = normalizeDateOnly(startIso);
+  const end = normalizeDateOnly(endIso);
+  if (!start || !end || start > end) return 0;
+  let count = 0;
+  const cursor = new Date(`${start}T12:00:00Z`);
+  const limit = new Date(`${end}T12:00:00Z`);
+  while (cursor <= limit) {
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6) count += 1;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return count;
+}
+
+function getMonthBounds(year, month) {
+  const from = `${year}-${String(month).padStart(2, '0')}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  return { from, to, monthKey: `${year}-${String(month).padStart(2, '0')}` };
+}
+
+async function syncKenjoTimeOffMonthToCache(year, month) {
+  await ensureKenjoTimeOffTable();
+  await ensureKenjoTimeOffSyncLogTable();
+  const { from, to, monthKey } = getMonthBounds(year, month);
+  await query(
+    `DELETE FROM kenjo_time_off
+     WHERE start_date <= $2::date AND end_date >= $1::date`,
+    [from, to]
+  );
+  const list = await getTimeOffRequests(from, to);
+  for (const item of list || []) {
+    const reqId = String(item._id || item.id || '').trim();
+    if (!reqId) continue;
+    const userId = String(item._userId ?? item.userId ?? item.user_id ?? '').trim() || null;
+    const startDate = normalizeDateOnly(item.from ?? item.startDate ?? item.start);
+    const endDate = normalizeDateOnly(item.to ?? item.endDate ?? item.end);
+    const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
+    const typeName = String(item._timeOffType?.name ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item.type ?? item.description ?? '').trim() || null;
+    const status = String(item.status ?? '').trim() || null;
+    const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
+    const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;
+    await query(
+      `INSERT INTO kenjo_time_off (
+        kenjo_request_id, kenjo_user_id, employee_name, start_date, end_date,
+        time_off_type, time_off_type_name, status, part_of_day_from, part_of_day_to, synced_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+      ON CONFLICT (kenjo_request_id) DO UPDATE SET
+        kenjo_user_id = EXCLUDED.kenjo_user_id,
+        start_date = EXCLUDED.start_date,
+        end_date = EXCLUDED.end_date,
+        time_off_type = EXCLUDED.time_off_type,
+        time_off_type_name = EXCLUDED.time_off_type_name,
+        status = EXCLUDED.status,
+        part_of_day_from = EXCLUDED.part_of_day_from,
+        part_of_day_to = EXCLUDED.part_of_day_to,
+        synced_at = NOW()`,
+      [reqId, userId, null, startDate, endDate, typeId, typeName, status, partFrom, partTo]
+    );
+  }
+  await query(
+    `INSERT INTO kenjo_time_off_sync_log (sync_key, period_month, synced_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (sync_key) DO UPDATE SET synced_at = NOW(), period_month = EXCLUDED.period_month`,
+    [monthKey, monthKey]
+  );
+}
+
+async function ensureEmployeeTimeOffYearCache(target, year) {
+  await ensureKenjoTimeOffTable();
+  await ensureKenjoTimeOffSyncLogTable();
+  if (!target?.kenjoEmployeeId) return;
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  const lastMonth = year === currentYear ? currentMonth : 12;
+
+  const syncLogRes = await query(
+    `SELECT sync_key, synced_at
+     FROM kenjo_time_off_sync_log
+     WHERE period_month >= $1 AND period_month <= $2`,
+    [`${year}-01`, `${year}-12`]
+  ).catch(() => ({ rows: [] }));
+  const syncedKeys = new Set((syncLogRes.rows || []).map((row) => String(row.sync_key || '').trim()));
+
+  for (let month = 1; month <= lastMonth; month += 1) {
+    const { monthKey } = getMonthBounds(year, month);
+    const shouldRefreshCurrentMonth = year === currentYear && month === currentMonth;
+    if (!shouldRefreshCurrentMonth && syncedKeys.has(monthKey)) continue;
+    await syncKenjoTimeOffMonthToCache(year, month);
+  }
 }
 
 function sortEmployeeContractRows(rows = []) {
@@ -840,6 +1022,7 @@ async function getEmployeeVacationSummary(employeeRef, yearValue) {
 
   const employee = await getEmployeeById(employeeRef);
   const target = await resolveEmployeeRescueTarget(employeeRef);
+  await ensureEmployeeTimeOffYearCache(target, selectedYear);
 
   let rows = [];
   if (target.kenjoEmployeeId) {
@@ -876,6 +1059,23 @@ async function getEmployeeVacationSummary(employeeRef, yearValue) {
     employee?.vacation_days_override_year === selectedYear
       ? Number(employee?.vacation_days_override)
       : null;
+  const currentRemainingSeed =
+    employee?.current_remaining_vacation_year === selectedYear
+      ? Number(employee?.current_remaining_vacation)
+      : null;
+  const currentRemainingSeedDate =
+    employee?.current_remaining_vacation_year === selectedYear
+      ? normalizeDateOnly(employee?.current_remaining_vacation_set_on)
+      : null;
+  const approvedVacationDaysAfterSeed =
+    currentRemainingSeed != null && currentRemainingSeedDate
+      ? countVacationDaysInRange(
+          rows,
+          currentRemainingSeedDate,
+          `${selectedYear}-12-31`,
+          holidaySet
+        )
+      : 0;
 
   return {
     year: selectedYear,
@@ -884,10 +1084,69 @@ async function getEmployeeVacationSummary(employeeRef, yearValue) {
         ? Math.round(storedTotalYearVacation * 100) / 100
         : null,
     total_year_vacation_year: employee?.vacation_days_override_year ?? null,
+    current_remaining_vacation_seed:
+      currentRemainingSeed != null && Number.isFinite(currentRemainingSeed)
+        ? Math.round(currentRemainingSeed * 100) / 100
+        : null,
+    current_remaining_vacation_seed_date: currentRemainingSeedDate,
+    approved_vacation_days_after_seed: approvedVacationDaysAfterSeed,
     approved_vacation_days_year: approvedVacationDaysYear,
     approved_vacation_days_until_march_31: approvedVacationDaysUntilMarch31,
     default_total_year_vacation: 20,
   };
+}
+
+async function getEmployeeTimeOffHistory(employeeRef, type, yearValue) {
+  await ensureEmployeeVacationColumns();
+  const normalizedType = String(type || '').trim().toLowerCase();
+  if (!['vacation', 'sick'].includes(normalizedType)) {
+    throw new Error('Valid time off history type is required');
+  }
+  const year = Number(yearValue || new Date().getFullYear());
+  const selectedYear =
+    Number.isInteger(year) && year >= 2000 && year <= 3000
+      ? year
+      : new Date().getFullYear();
+  const target = await resolveEmployeeRescueTarget(employeeRef);
+  await ensureEmployeeTimeOffYearCache(target, selectedYear);
+  if (!target.kenjoEmployeeId) {
+    return { year: selectedYear, type: normalizedType, rows: [] };
+  }
+
+  const res = await query(
+    `SELECT kenjo_request_id, start_date, end_date, time_off_type, time_off_type_name, status
+     FROM kenjo_time_off
+     WHERE kenjo_user_id = $1
+       AND start_date <= $3::date
+       AND end_date >= $2::date
+     ORDER BY start_date DESC, end_date DESC, kenjo_request_id DESC`,
+    [target.kenjoEmployeeId, `${selectedYear}-01-01`, `${selectedYear}-12-31`]
+  ).catch(() => ({ rows: [] }));
+
+  const rows = (res.rows || [])
+    .filter((row) => {
+      if (!isApprovedTimeOffStatus(row?.status)) return false;
+      const typeKey = normalizeTimeOffType(row?.time_off_type, row?.time_off_type_name);
+      if (normalizedType === 'vacation') return typeKey === 'vacation';
+      const typeName = String(row?.time_off_type_name || '').trim().toLowerCase();
+      return typeKey !== 'vacation' && (typeName.includes('krank') || typeName.includes('sick'));
+    })
+    .map((row) => {
+      const startDate = normalizeDbDateOutput(row.start_date);
+      const endDate = normalizeDbDateOutput(row.end_date);
+      const rangeStart = startDate < `${selectedYear}-01-01` ? `${selectedYear}-01-01` : startDate;
+      const rangeEnd = endDate > `${selectedYear}-12-31` ? `${selectedYear}-12-31` : endDate;
+      return {
+        id: String(row.kenjo_request_id || `${startDate}-${endDate}`),
+        start_date: startDate,
+        end_date: endDate,
+        working_days: countWeekdaysInclusive(rangeStart, rangeEnd),
+        status: String(row.status || '').trim() || null,
+        type_name: String(row.time_off_type_name || '').trim() || null,
+      };
+    });
+
+  return { year: selectedYear, type: normalizedType, rows };
 }
 
 async function listEmployeeRescues(employeeRef) {
@@ -1075,6 +1334,7 @@ const employeeService = {
   getEmployeeById,
   updateEmployeeLocalSettings,
   getEmployeeVacationSummary,
+  getEmployeeTimeOffHistory,
   listEmployeeDocuments,
   listEmployeeRescues,
   listEmployeeContracts,

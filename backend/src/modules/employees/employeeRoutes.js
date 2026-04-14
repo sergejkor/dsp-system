@@ -27,6 +27,9 @@ router.put('/:id/local-settings', async (req, res) => {
       vacationDaysOverrideYear: req.body?.vacationDaysOverrideYear,
       totalYearVacation: req.body?.totalYearVacation,
       totalYearVacationYear: req.body?.totalYearVacationYear,
+      currentRemainingVacation: req.body?.currentRemainingVacation,
+      currentRemainingVacationYear: req.body?.currentRemainingVacationYear,
+      currentRemainingVacationSetOn: req.body?.currentRemainingVacationSetOn,
     });
     if (!row) {
       return res.status(404).json({ error: 'Employee not found' });
@@ -37,7 +40,8 @@ router.put('/:id/local-settings', async (req, res) => {
     if (
       message === 'employee_id is required' ||
       message === 'No supported local settings provided' ||
-      message === 'Vacation days override must be a non-negative number'
+      message === 'Vacation days override must be a non-negative number' ||
+      message === 'Current remaining vacation must be a non-negative number'
     ) {
       return res.status(400).json({ error: message });
     }
@@ -53,6 +57,20 @@ router.get('/:id/vacation-summary', async (req, res) => {
   } catch (error) {
     console.error('GET /api/employees/:id/vacation-summary error', error);
     res.status(500).json({ error: 'Failed to load employee vacation summary' });
+  }
+});
+
+router.get('/:id/time-off-history', async (req, res) => {
+  try {
+    const history = await employeeService.getEmployeeTimeOffHistory(req.params.id, req.query?.type, req.query?.year);
+    res.json(history);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (message === 'Valid time off history type is required') {
+      return res.status(400).json({ error: message });
+    }
+    console.error('GET /api/employees/:id/time-off-history error', error);
+    res.status(500).json({ error: 'Failed to load employee time off history' });
   }
 });
 
