@@ -1028,15 +1028,15 @@ async function updateEmployeeContract(employeeRef, contractId, { source, startDa
 
   const target = await resolveEmployeeRescueTarget(ref);
   const refs = [...new Set([ref, ...(target.refs || [])].filter(Boolean))];
-  const params = [id, normalizedStartDate, normalizedEndDate];
   const where = [];
+  const matchParams = [id];
   if (refs.length) {
-    params.push(refs);
-    where.push(`employee_ref = ANY($${params.length}::text[])`);
+    matchParams.push(refs);
+    where.push(`employee_ref = ANY($${matchParams.length}::text[])`);
   }
   if (target.kenjoEmployeeId) {
-    params.push(target.kenjoEmployeeId);
-    where.push(`kenjo_employee_id = $${params.length}`);
+    matchParams.push(target.kenjoEmployeeId);
+    where.push(`kenjo_employee_id = $${matchParams.length}`);
   }
   if (!where.length) throw new Error('Contract not found');
 
@@ -1046,7 +1046,7 @@ async function updateEmployeeContract(employeeRef, contractId, { source, startDa
      WHERE id = $1
        AND (${where.join(' OR ')})
      LIMIT 1`,
-    params
+    matchParams
   );
   const currentRow = existing.rows?.[0];
   if (!currentRow) throw new Error('Contract not found');
@@ -1058,15 +1058,26 @@ async function updateEmployeeContract(employeeRef, contractId, { source, startDa
     throw new Error('End date must not be before termination date');
   }
 
+  const updateParams = [id, normalizedStartDate, normalizedEndDate];
+  const updateWhere = [];
+  if (refs.length) {
+    updateParams.push(refs);
+    updateWhere.push(`employee_ref = ANY($${updateParams.length}::text[])`);
+  }
+  if (target.kenjoEmployeeId) {
+    updateParams.push(target.kenjoEmployeeId);
+    updateWhere.push(`kenjo_employee_id = $${updateParams.length}`);
+  }
+
   const res = await query(
     `UPDATE employee_contracts
      SET start_date = $2,
          end_date = $3,
          updated_at = NOW()
      WHERE id = $1
-       AND (${where.join(' OR ')})
+       AND (${updateWhere.join(' OR ')})
      RETURNING id, employee_ref, kenjo_employee_id, start_date, end_date, termination_date, termination_type, termination_initiator, termination_document_id, termination_document_name, created_at, updated_at`,
-    params
+    updateParams
   );
   const row = res.rows?.[0];
   if (!row) throw new Error('Contract not found');
