@@ -20,19 +20,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
-  try {
-    const employee = await employeeService.getEmployeeById(req.params.id);
-    if (!employee) {
-      return res.status(404).json({ error: 'Employee not found' });
-    }
-    res.json(employee);
-  } catch (error) {
-    console.error('GET /api/employees/:id error', error);
-    res.status(500).json({ error: 'Failed to load employee' });
-  }
-});
-
 router.put('/:id/local-settings', async (req, res) => {
   try {
     const row = await employeeService.updateEmployeeLocalSettings(req.params.id, {
@@ -116,6 +103,19 @@ router.post('/:id/contracts', async (req, res) => {
     }
     console.error('POST /api/employees/:id/contracts error', error);
     res.status(500).json({ error: 'Failed to save contract' });
+  }
+});
+
+router.get('/:id', async (req, res) => {
+  try {
+    const employee = await employeeService.getEmployeeById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+    res.json(employee);
+  } catch (error) {
+    console.error('GET /api/employees/:id error', error);
+    res.status(500).json({ error: 'Failed to load employee' });
   }
 });
 
