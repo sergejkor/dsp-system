@@ -50,6 +50,12 @@ function formatIsoDate(value) {
   return value.toISOString().slice(0, 10);
 }
 
+function addDays(value, amount) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
 async function getKenjoAttendancesForPayrollRange(fromDate, toDate) {
   const from = parseIsoDate(fromDate);
   const to = parseIsoDate(toDate);
@@ -68,8 +74,24 @@ async function getKenjoAttendancesForPayrollRange(fromDate, toDate) {
 
   const merged = [];
   for (const [chunkFrom, chunkTo] of ranges) {
-    const rows = await getKenjoAttendances(chunkFrom, chunkTo);
-    if (Array.isArray(rows) && rows.length) merged.push(...rows);
+    try {
+      const rows = await getKenjoAttendances(chunkFrom, chunkTo);
+      if (Array.isArray(rows) && rows.length) merged.push(...rows);
+    } catch (error) {
+      const msg = String(error?.message || error || '');
+      const isRangeLimitError =
+        msg.includes('/attendances') &&
+        msg.includes('400') &&
+        msg.toLowerCase().includes('cannot be greater than 31 days');
+      if (!isRangeLimitError) throw error;
+
+      // Extra safety for Payroll: if Kenjo still rejects a chunk, fall back to day-by-day fetches.
+      for (let day = parseIsoDate(chunkFrom); day && day <= parseIsoDate(chunkTo); day = addDays(day, 1)) {
+        const isoDay = formatIsoDate(day);
+        const dayRows = await getKenjoAttendances(isoDay, isoDay);
+        if (Array.isArray(dayRows) && dayRows.length) merged.push(...dayRows);
+      }
+    }
   }
   return merged;
 }
