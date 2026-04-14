@@ -3,10 +3,10 @@ import { useLocation, useSearchParams, Link } from 'react-router-dom';
 import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmployeeInKenjo } from '../services/kenjoApi';
 import {
   getEmployee,
-  getEmployeeContractExtensions,
+  getEmployeeContracts,
   getEmployeeRescues,
   getEmployeeDocuments,
-  addEmployeeContractExtension,
+  addEmployeeContract,
   addEmployeeRescue,
   updateEmployeeLocalSettings,
   uploadEmployeeDocument,
@@ -355,6 +355,36 @@ function buildEmployeePayrollCardsFromRow(row) {
   };
 }
 
+function normalizeContractDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const iso = raw.includes('T') ? raw.slice(0, 10) : raw;
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
+}
+
+function addDaysToContractDate(value, days) {
+  const iso = normalizeContractDate(value);
+  if (!iso || !Number.isFinite(days)) return '';
+  const date = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function sortContractTimelineRows(rows = []) {
+  return [...rows].sort((a, b) => {
+    const startA = normalizeContractDate(a?.start_date) || '9999-12-31';
+    const startB = normalizeContractDate(b?.start_date) || '9999-12-31';
+    if (startA !== startB) return startA.localeCompare(startB);
+
+    const endA = normalizeContractDate(a?.end_date) || '9999-12-31';
+    const endB = normalizeContractDate(b?.end_date) || '9999-12-31';
+    if (endA !== endB) return endA.localeCompare(endB);
+
+    return String(a?.row_key || a?.id || '').localeCompare(String(b?.row_key || b?.id || ''));
+  });
+}
+
 export default function EmployeeProfilePage() {
   const { language, isDark } = useAppSettings();
   const location = useLocation();
@@ -402,13 +432,13 @@ export default function EmployeeProfilePage() {
   const [employeeContractTemplateDate, setEmployeeContractTemplateDate] = useState('');
   const [showEmployeeDocsList, setShowEmployeeDocsList] = useState(false);
   const [employeeDocsFilterType, setEmployeeDocsFilterType] = useState('');
-  const [contractExtensions, setContractExtensions] = useState([]);
-  const [contractExtensionsLoading, setContractExtensionsLoading] = useState(false);
-  const [contractExtensionError, setContractExtensionError] = useState('');
-  const [showContractExtensionForm, setShowContractExtensionForm] = useState(false);
-  const [contractExtensionDraft, setContractExtensionDraft] = useState({ startDate: '', endDate: '' });
-  const [contractExtensionSaving, setContractExtensionSaving] = useState(false);
-  const [contractExtensionModal, setContractExtensionModal] = useState(null);
+  const [contracts, setContracts] = useState([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [contractError, setContractError] = useState('');
+  const [showContractForm, setShowContractForm] = useState(false);
+  const [contractDraft, setContractDraft] = useState({ startDate: '', endDate: '', type: 'fixed' });
+  const [contractSaving, setContractSaving] = useState(false);
+  const [contractModal, setContractModal] = useState(null);
   const [contractFileUploading, setContractFileUploading] = useState(false);
   const [rescues, setRescues] = useState([]);
   const [rescuesLoading, setRescuesLoading] = useState(false);
@@ -756,15 +786,24 @@ export default function EmployeeProfilePage() {
   const contractUi =
     language === 'de'
       ? {
-          extendButton: 'Vertrag verlaengern',
-          loading: 'Vertragsverlaengerungen werden geladen...',
+          extendButton: 'Weiteren Vertrag hinzufuegen',
+          unlimitedButton: 'Unbefristed',
+          loading: 'Vertragshistorie wird geladen...',
+          historyTitle: 'Vertragshistorie',
+          historyHint: 'Hier koennen fruehere Vertraege manuell nachgetragen werden. Start date und Contract end oben werden automatisch aus der Historie berechnet.',
+          managedSummaryHint: 'Diese Felder werden jetzt aus der Vertragshistorie berechnet.',
           reminderTitle: 'Hinweis',
           reminderMessage: 'Bitte nicht vergessen, dass der naechste Vertrag unbefristet sein wird.',
           missingEmployeeRef: 'Mitarbeiterreferenz fehlt.',
-          chooseDates: 'Bitte waehlen Sie beide Daten aus.',
-          extensionLabel: (n) => `Verlaengerung ${n}`,
+          chooseDates: 'Bitte waehlen Sie ein Start- und Enddatum aus.',
+          chooseStartDate: 'Bitte waehlen Sie ein Startdatum aus.',
+          contractLabel: (n) => `Vertrag ${n}`,
+          currentBadge: 'Aktuell',
+          unlimitedLabel: 'Unbefristed',
           from: 'Von',
           to: 'Bis',
+          fixedType: 'Befristet',
+          unlimitedType: 'Unbefristet',
           cancel: 'Abbrechen',
           save: 'Speichern',
           saving: 'Speichert...',
@@ -773,15 +812,24 @@ export default function EmployeeProfilePage() {
           uploadSuccess: 'Der neue Vertrag wurde unter Dokumenttyp "Vertrag" gespeichert.',
         }
       : {
-          extendButton: 'Extend contract',
-          loading: 'Loading contract extensions...',
+          extendButton: 'Add fixed contract',
+          unlimitedButton: 'Unbefristed',
+          loading: 'Loading contract history...',
+          historyTitle: 'Contract history',
+          historyHint: 'You can backfill older contracts here. Start date and Contract end above are calculated automatically from the history.',
+          managedSummaryHint: 'These fields are now calculated from contract history.',
           reminderTitle: 'Reminder',
           reminderMessage: 'Please do not forget that the next contract will be unlimited.',
           missingEmployeeRef: 'Employee reference is missing.',
-          chooseDates: 'Please choose both dates.',
-          extensionLabel: (n) => `Extension ${n}`,
+          chooseDates: 'Please choose both start and end dates.',
+          chooseStartDate: 'Please choose a start date.',
+          contractLabel: (n) => `Contract ${n}`,
+          currentBadge: 'Current',
+          unlimitedLabel: 'Unbefristed',
           from: 'From',
           to: 'To',
+          fixedType: 'Fixed-term',
+          unlimitedType: 'Unlimited',
           cancel: 'Cancel',
           save: 'Save',
           saving: 'Saving...',
@@ -802,12 +850,12 @@ export default function EmployeeProfilePage() {
 
   useEffect(() => {
     if (!employeeDocRef) return;
-    setContractExtensionsLoading(true);
-    setContractExtensionError('');
-    getEmployeeContractExtensions(employeeDocRef)
-      .then((rows) => setContractExtensions(Array.isArray(rows) ? rows : []))
-      .catch((e) => setContractExtensionError(String(e?.message || e)))
-      .finally(() => setContractExtensionsLoading(false));
+    setContractsLoading(true);
+    setContractError('');
+    getEmployeeContracts(employeeDocRef)
+      .then((rows) => setContracts(Array.isArray(rows) ? rows : []))
+      .catch((e) => setContractError(String(e?.message || e)))
+      .finally(() => setContractsLoading(false));
   }, [employeeDocRef]);
 
   useEffect(() => {
@@ -1049,17 +1097,17 @@ export default function EmployeeProfilePage() {
       setSaving(true);
       setError('');
       try {
-        const personal = draft.personal ? { ...draft.personal, lastName: draft.lastName ?? draft.personal.lastName } : undefined;
-        const work = draft.work ? { ...draft.work } : undefined;
-        const address = draft.address ? { ...draft.address } : undefined;
-        const home = draft.home ? { ...draft.home } : undefined;
-        const financial = draft.financial ? { ...draft.financial } : undefined;
+        const nextPersonal = draft.personal ? { ...draft.personal, lastName: draft.lastName ?? draft.personal.lastName } : undefined;
+        const nextWork = draft.work ? { ...draft.work } : undefined;
+        const nextAddress = draft.address ? { ...draft.address } : undefined;
+        const nextHome = draft.home ? { ...draft.home } : undefined;
+        const nextFinancial = draft.financial ? { ...draft.financial } : undefined;
         await updateEmployeeProfileInKenjo(kenjoEmployeeId, {
-          personal: personal && Object.keys(personal).length ? personal : undefined,
-          work: work && Object.keys(work).length ? work : undefined,
-          address: address && Object.keys(address).length ? address : undefined,
-          home: home && Object.keys(home).length ? home : undefined,
-          financial: financial && Object.keys(financial).length ? financial : undefined,
+          personal: nextPersonal && Object.keys(nextPersonal).length ? nextPersonal : undefined,
+          work: nextWork && Object.keys(nextWork).length ? nextWork : undefined,
+          address: nextAddress && Object.keys(nextAddress).length ? nextAddress : undefined,
+          home: nextHome && Object.keys(nextHome).length ? nextHome : undefined,
+          financial: nextFinancial && Object.keys(nextFinancial).length ? nextFinancial : undefined,
           dspLocal: draft.dspLocal || undefined,
         });
         setEmployee(draft);
@@ -1075,6 +1123,66 @@ export default function EmployeeProfilePage() {
       setIsEditing(false);
     }
   };
+  const currentContractStart = normalizeContractDate(work?.startDate || localEmployee?.start_date);
+  const currentContractEnd = normalizeContractDate(work?.contractEnd || localEmployee?.contract_end);
+  const normalizedContracts = sortContractTimelineRows(Array.isArray(contracts) ? contracts : []);
+  const derivedCurrentContract =
+    currentContractStart &&
+    !normalizedContracts.some(
+      (row) =>
+        normalizeContractDate(row?.start_date) === currentContractStart &&
+        normalizeContractDate(row?.end_date) === currentContractEnd
+    )
+      ? {
+          id: 'current-derived',
+          row_key: 'current-derived',
+          source: 'current_profile',
+          start_date: currentContractStart,
+          end_date: currentContractEnd,
+          isDerived: true,
+        }
+      : null;
+
+  const rawContractTimeline = sortContractTimelineRows(
+    derivedCurrentContract ? [...normalizedContracts, derivedCurrentContract] : normalizedContracts
+  );
+  let fixedContractOrdinal = 0;
+  const contractTimeline = rawContractTimeline.map((row) => {
+    const isUnlimited = !normalizeContractDate(row?.end_date);
+    const isCurrentProfile =
+      normalizeContractDate(row?.start_date) === currentContractStart &&
+      normalizeContractDate(row?.end_date) === currentContractEnd;
+    const contractNumber = isUnlimited ? null : ++fixedContractOrdinal;
+    return {
+      ...row,
+      isUnlimited,
+      isCurrentProfile,
+      contractNumber,
+      label: isUnlimited ? contractUi.unlimitedLabel : contractUi.contractLabel(contractNumber),
+    };
+  });
+
+  const fixedContractCount = contractTimeline.filter((row) => !row.isUnlimited).length;
+  const hasUnlimitedContract = contractTimeline.some((row) => row.isUnlimited);
+  const canAddAnotherFixedContract = !hasUnlimitedContract && fixedContractCount < 3;
+  const canAddUnlimitedContract = !hasUnlimitedContract && fixedContractCount >= 3;
+  const nextFixedContractStartDate = (() => {
+    const latestFixedWithEnd = [...contractTimeline]
+      .filter((row) => !row.isUnlimited && normalizeContractDate(row?.end_date))
+      .sort((a, b) => String(a?.end_date || '').localeCompare(String(b?.end_date || '')))
+      .at(-1);
+    return latestFixedWithEnd ? addDaysToContractDate(latestFixedWithEnd.end_date, 1) : '';
+  })();
+  const contractStartSummary = contractTimeline[0]?.start_date || currentContractStart;
+  const contractEndSummary = (() => {
+    if (hasUnlimitedContract) return contractUi.unlimitedLabel;
+    const latestEnd = contractTimeline
+      .map((row) => normalizeContractDate(row?.end_date))
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+    return latestEnd || currentContractEnd || '';
+  })();
 
   const openDeactivateConfirm = () => {
     setDeactivateError('');
@@ -1124,51 +1232,66 @@ export default function EmployeeProfilePage() {
     }
   };
 
-  const closeContractExtensionModal = () => {
-    setContractExtensionModal(null);
+  const closeContractModal = () => {
+    setContractModal(null);
   };
 
-  const openContractExtensionForm = () => {
-    if (contractExtensions.length >= 2) return;
-    setContractExtensionError('');
-    setShowContractExtensionForm(true);
-    setContractExtensionDraft({ startDate: '', endDate: '' });
-    if (contractExtensions.length === 1) {
-      setContractExtensionModal({
+  const closeContractForm = () => {
+    setShowContractForm(false);
+    setContractDraft({ startDate: '', endDate: '', type: 'fixed' });
+    setContractError('');
+  };
+
+  const openContractForm = (type = 'fixed') => {
+    if (type === 'fixed' && !canAddAnotherFixedContract) return;
+    if (type === 'unlimited' && !canAddUnlimitedContract) return;
+    setContractError('');
+    setShowContractForm(true);
+    setContractDraft({
+      startDate: nextFixedContractStartDate || currentContractStart || '',
+      endDate: '',
+      type,
+    });
+    if (type === 'fixed' && fixedContractCount === 2) {
+      setContractModal({
         title: contractUi.reminderTitle,
         message: contractUi.reminderMessage,
       });
     }
   };
 
-  const saveContractExtension = async () => {
+  const saveContract = async () => {
     if (!employeeDocRef) {
-      setContractExtensionError(contractUi.missingEmployeeRef);
+      setContractError(contractUi.missingEmployeeRef);
       return;
     }
-    if (!contractExtensionDraft.startDate || !contractExtensionDraft.endDate) {
-      setContractExtensionError(contractUi.chooseDates);
+    if (!contractDraft.startDate) {
+      setContractError(contractUi.chooseStartDate);
       return;
     }
-    setContractExtensionSaving(true);
-    setContractExtensionError('');
+    if (contractDraft.type !== 'unlimited' && !contractDraft.endDate) {
+      setContractError(contractUi.chooseDates);
+      return;
+    }
+    setContractSaving(true);
+    setContractError('');
     try {
-      const created = await addEmployeeContractExtension(employeeDocRef, contractExtensionDraft);
-      setContractExtensions((prev) =>
-        [...prev, created].sort((a, b) => Number(a?.extension_index || 0) - Number(b?.extension_index || 0))
-      );
-      setShowContractExtensionForm(false);
-      setContractExtensionDraft({ startDate: '', endDate: '' });
+      const created = await addEmployeeContract(employeeDocRef, {
+        startDate: contractDraft.startDate,
+        endDate: contractDraft.type === 'unlimited' ? null : contractDraft.endDate,
+      });
+      setContracts((prev) => sortContractTimelineRows([...(prev || []), created].filter(Boolean)));
+      closeContractForm();
     } catch (e) {
-      setContractExtensionError(String(e?.message || e));
+      setContractError(String(e?.message || e));
     } finally {
-      setContractExtensionSaving(false);
+      setContractSaving(false);
     }
   };
 
   const handleUploadNewContractClick = () => {
     if (!employeeDocRef) {
-      setContractExtensionError(contractUi.missingEmployeeRef);
+      setContractError(contractUi.missingEmployeeRef);
       return;
     }
     contractFileInputRef.current?.click();
@@ -1179,23 +1302,23 @@ export default function EmployeeProfilePage() {
     event.target.value = '';
     if (!file) return;
     if (!employeeDocRef) {
-      setContractExtensionError(contractUi.missingEmployeeRef);
+      setContractError(contractUi.missingEmployeeRef);
       return;
     }
     setContractFileUploading(true);
-    setContractExtensionError('');
+    setContractError('');
     setEmployeeDocError('');
     try {
       await uploadEmployeeDocument(employeeDocRef, file, 'Vertrag');
       const refreshed = await getEmployeeDocuments(employeeDocRef);
       setEmployeeDocs(Array.isArray(refreshed) ? refreshed : []);
       setShowEmployeeDocsList(true);
-      setContractExtensionModal({
+      setContractModal({
         title: contractUi.save,
         message: contractUi.uploadSuccess,
       });
     } catch (e) {
-      setContractExtensionError(String(e?.message || e));
+      setContractError(String(e?.message || e));
     } finally {
       setContractFileUploading(false);
     }
@@ -1372,13 +1495,13 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
-      {contractExtensionModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 460, width: 'calc(100% - 2rem)', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
-            <h3 style={{ margin: '0 0 0.75rem' }}>{contractExtensionModal.title}</h3>
-            <p style={{ margin: '0 0 1rem', whiteSpace: 'pre-wrap' }}>{contractExtensionModal.message}</p>
+      {contractModal && (
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 460, width: 'calc(100% - 2rem)' }}>
+            <h3 style={{ margin: '0 0 0.75rem' }}>{contractModal.title}</h3>
+            <p style={{ margin: '0 0 1rem', whiteSpace: 'pre-wrap' }}>{contractModal.message}</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button type="button" className="btn-primary" onClick={closeContractExtensionModal}>
+              <button type="button" className="btn-primary" onClick={closeContractModal}>
                 OK
               </button>
             </div>
@@ -1946,7 +2069,7 @@ export default function EmployeeProfilePage() {
           {renderText('First Name', firstName)}
           {renderText('Last Name', lastName, (v) => onFieldChange('lastName', v))}
           {renderText('Email', email || personal?.email || account?.email, (v) => onFieldChange('email', v))}
-          {renderText('Start date', formatDate(work?.startDate), (v) => onNestedChange('work', 'startDate', v))}
+          {renderText('Start date', formatDate(contractStartSummary))}
           {renderText('Birth day', formatDate(personal?.birthdate))}
           {renderText(
             'Address',
@@ -1982,55 +2105,95 @@ export default function EmployeeProfilePage() {
             onNestedChange('work', 'probationUntil', v),
           )}
           <div style={{ marginBottom: '1rem' }}>
-            {renderText('Contract end', formatDate(work?.contractEnd), (v) => onNestedChange('work', 'contractEnd', v))}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '-0.35rem', marginBottom: contractExtensions.length || showContractExtensionForm || contractExtensionError ? '0.5rem' : 0 }}>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={openContractExtensionForm}
-                disabled={contractExtensions.length >= 2 || contractExtensionSaving}
-              >
-                {contractUi.extendButton}
-              </button>
-              <span style={{ color: '#666', fontSize: '0.9rem' }}>
-                {contractExtensions.length}/2
-              </span>
+            {renderText(
+              'Contract end',
+              contractEndSummary === contractUi.unlimitedLabel ? contractUi.unlimitedLabel : formatDate(contractEndSummary)
+            )}
+            <p style={{ margin: '-0.35rem 0 0.5rem', color: employeeMutedTextStyle.color, fontSize: '0.85rem' }}>
+              {contractUi.managedSummaryHint}
+            </p>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+                marginTop: '-0.15rem',
+                marginBottom: contractTimeline.length || showContractForm || contractError ? '0.5rem' : 0,
+              }}
+            >
+              {canAddAnotherFixedContract ? (
+                <button type="button" className="btn-primary" onClick={() => openContractForm('fixed')} disabled={contractSaving}>
+                  {contractUi.extendButton}
+                </button>
+              ) : null}
+              {canAddUnlimitedContract ? (
+                <button type="button" className="btn-secondary" onClick={() => openContractForm('unlimited')} disabled={contractSaving}>
+                  {contractUi.unlimitedButton}
+                </button>
+              ) : null}
+              <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>{fixedContractCount}/3</span>
             </div>
-            {contractExtensionsLoading ? (
-              <p style={{ margin: '0.25rem 0 0', color: '#666' }}>{contractUi.loading}</p>
-            ) : null}
-            {contractExtensionError ? (
-              <p className="error-text" style={{ margin: '0.25rem 0 0' }}>{contractExtensionError}</p>
-            ) : null}
-            {contractExtensions.map((row) => (
+            <p style={{ margin: '0.25rem 0 0.2rem' }}>
+              <strong>{contractUi.historyTitle}</strong>
+            </p>
+            <p style={{ margin: '0 0 0.45rem', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+              {contractUi.historyHint}
+            </p>
+            {contractsLoading ? <p style={{ margin: '0.25rem 0 0', color: employeeMutedTextStyle.color }}>{contractUi.loading}</p> : null}
+            {contractError ? <p className="error-text" style={{ margin: '0.25rem 0 0' }}>{contractError}</p> : null}
+            {contractTimeline.map((row) => (
               <div
-                key={row.id}
+                key={row.row_key || row.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'auto 1fr',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto',
                   gap: '0.35rem 0.75rem',
                   padding: '0.65rem 0.8rem',
-                  border: '1px solid #d8dde6',
+                  border: isDark ? '1px solid rgba(132, 162, 214, 0.3)' : '1px solid #d8dde6',
                   borderRadius: 10,
-                  background: '#f8fafc',
+                  background: isDark ? 'rgba(10, 20, 37, 0.84)' : '#f8fafc',
                   marginTop: '0.5rem',
+                  alignItems: 'center',
                 }}
               >
-                <strong>{contractUi.extensionLabel(row.extension_index)}</strong>
-                <span>{formatDate(row.start_date)} - {formatDate(row.end_date)}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <strong>{row.label}</strong>
+                  {row.isCurrentProfile ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '0.1rem 0.45rem',
+                        borderRadius: 999,
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        color: isDark ? '#dbeafe' : '#1d4ed8',
+                        background: isDark ? 'rgba(37, 99, 235, 0.2)' : 'rgba(59, 130, 246, 0.12)',
+                      }}
+                    >
+                      {contractUi.currentBadge}
+                    </span>
+                  ) : null}
+                </div>
+                <span>
+                  {row.isUnlimited
+                    ? `${formatDate(row.start_date)} - ${contractUi.unlimitedLabel}`
+                    : `${formatDate(row.start_date)} - ${formatDate(row.end_date)}`}
+                </span>
               </div>
             ))}
-            {showContractExtensionForm && (
+            {showContractForm && (
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 1fr auto',
+                  gridTemplateColumns: contractDraft.type === 'unlimited' ? '1fr auto' : '1fr 1fr auto',
                   gap: '0.5rem',
                   alignItems: 'end',
                   padding: '0.75rem',
-                  border: '1px solid #d8dde6',
+                  border: isDark ? '1px solid rgba(132, 162, 214, 0.3)' : '1px solid #d8dde6',
                   borderRadius: 10,
-                  background: '#f8fafc',
+                  background: isDark ? 'rgba(10, 20, 37, 0.84)' : '#f8fafc',
                   marginTop: '0.5rem',
                 }}
               >
@@ -2045,28 +2208,28 @@ export default function EmployeeProfilePage() {
                   <span>{contractUi.from}</span>
                   <input
                     type="date"
-                    value={contractExtensionDraft.startDate}
-                    onChange={(e) => setContractExtensionDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+                    value={contractDraft.startDate}
+                    onChange={(e) => setContractDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+                    style={modalInputStyle}
                   />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  <span>{contractUi.to}</span>
-                  <input
-                    type="date"
-                    value={contractExtensionDraft.endDate}
-                    onChange={(e) => setContractExtensionDraft((prev) => ({ ...prev, endDate: e.target.value }))}
-                  />
-                </label>
+                {contractDraft.type !== 'unlimited' ? (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <span>{contractUi.to}</span>
+                    <input
+                      type="date"
+                      value={contractDraft.endDate}
+                      onChange={(e) => setContractDraft((prev) => ({ ...prev, endDate: e.target.value }))}
+                      style={modalInputStyle}
+                    />
+                  </label>
+                ) : null}
                 <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                   <button
                     type="button"
                     className="btn-secondary"
-                    onClick={() => {
-                      setShowContractExtensionForm(false);
-                      setContractExtensionDraft({ startDate: '', endDate: '' });
-                      setContractExtensionError('');
-                    }}
-                    disabled={contractExtensionSaving}
+                    onClick={closeContractForm}
+                    disabled={contractSaving}
                   >
                     {contractUi.cancel}
                   </button>
@@ -2078,8 +2241,8 @@ export default function EmployeeProfilePage() {
                   >
                     {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadNewContract}
                   </button>
-                  <button type="button" className="btn-primary" onClick={saveContractExtension} disabled={contractExtensionSaving}>
-                    {contractExtensionSaving ? contractUi.saving : contractUi.save}
+                  <button type="button" className="btn-primary" onClick={saveContract} disabled={contractSaving}>
+                    {contractSaving ? contractUi.saving : contractUi.save}
                   </button>
                 </div>
               </div>

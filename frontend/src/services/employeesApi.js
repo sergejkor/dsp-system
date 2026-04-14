@@ -73,6 +73,32 @@ export async function addEmployeeContractExtension(employeeRef, payload) {
   return out;
 }
 
+export async function getEmployeeContracts(employeeRef) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts`,
+    authOpts()
+  );
+  if (!response.ok) throw new Error('Employee contracts load failed');
+  return response.json();
+}
+
+export async function addEmployeeContract(employeeRef, payload) {
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts`,
+    authOpts({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startDate: payload?.startDate || '',
+        endDate: payload?.endDate ?? null,
+      }),
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee contract save failed');
+  return out;
+}
+
 export async function getEmployeeRescues(employeeRef) {
   const response = await fetch(
     `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/rescues`,

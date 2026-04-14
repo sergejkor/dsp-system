@@ -88,6 +88,37 @@ router.post('/:id/contract-extensions', async (req, res) => {
   }
 });
 
+router.get('/:id/contracts', async (req, res) => {
+  try {
+    const rows = await employeeService.listEmployeeContracts(req.params.id);
+    res.json(rows);
+  } catch (error) {
+    console.error('GET /api/employees/:id/contracts error', error);
+    res.status(500).json({ error: 'Failed to load contracts' });
+  }
+});
+
+router.post('/:id/contracts', async (req, res) => {
+  try {
+    const row = await employeeService.addEmployeeContract(req.params.id, {
+      startDate: req.body?.startDate,
+      endDate: req.body?.endDate ?? null,
+    });
+    res.status(201).json(row);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_ref is required' ||
+      message === 'Valid start date is required' ||
+      message === 'End date must be on or after start date'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('POST /api/employees/:id/contracts error', error);
+    res.status(500).json({ error: 'Failed to save contract' });
+  }
+});
+
 router.get('/:id/rescues', async (req, res) => {
   try {
     const rows = await employeeService.listEmployeeRescues(req.params.id);

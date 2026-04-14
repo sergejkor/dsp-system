@@ -3,6 +3,7 @@ import settingsService from '../settings/settingsService.js';
 
 let docsTableReady = false;
 let contractExtensionsTableReady = false;
+let employeeContractsTableReady = false;
 let rescueTableReady = false;
 let employeeVacationColumnsReady = false;
 
@@ -50,6 +51,27 @@ async function ensureEmployeeContractExtensionsTable() {
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_employee_contract_extensions_ref ON employee_contract_extensions (employee_ref, extension_index ASC)`);
   contractExtensionsTableReady = true;
+}
+
+async function ensureEmployeeContractsTable() {
+  if (employeeContractsTableReady) return;
+  await query(`
+    CREATE TABLE IF NOT EXISTS employee_contracts (
+      id SERIAL PRIMARY KEY,
+      employee_ref VARCHAR(128),
+      kenjo_employee_id VARCHAR(128),
+      start_date DATE NOT NULL,
+      end_date DATE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+  await query(`ALTER TABLE employee_contracts ADD COLUMN IF NOT EXISTS employee_ref VARCHAR(128)`);
+  await query(`ALTER TABLE employee_contracts ADD COLUMN IF NOT EXISTS kenjo_employee_id VARCHAR(128)`);
+  await query(`ALTER TABLE employee_contracts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_employee_contracts_ref ON employee_contracts (employee_ref, start_date ASC, id ASC)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_employee_contracts_kenjo_id ON employee_contracts (kenjo_employee_id, start_date ASC, id ASC)`);
+  employeeContractsTableReady = true;
 }
 
 export async function ensureEmployeeRescuesTable() {
@@ -294,6 +316,20 @@ function normalizeDbDateOutput(value) {
   return normalizeDateOnly(value);
 }
 
+function sortEmployeeContractRows(rows = []) {
+  return [...rows].sort((a, b) => {
+    const startA = normalizeDateOnly(a?.start_date) || '9999-12-31';
+    const startB = normalizeDateOnly(b?.start_date) || '9999-12-31';
+    if (startA !== startB) return startA.localeCompare(startB);
+
+    const endA = normalizeDateOnly(a?.end_date) || '9999-12-31';
+    const endB = normalizeDateOnly(b?.end_date) || '9999-12-31';
+    if (endA !== endB) return endA.localeCompare(endB);
+
+    return String(a?.row_key || a?.id || '').localeCompare(String(b?.row_key || b?.id || ''));
+  });
+}
+
 async function listEmployeeContractExtensions(employeeRef) {
   await ensureEmployeeContractExtensionsTable();
   const refs = await resolveEmployeeRefs(employeeRef);
@@ -341,6 +377,98 @@ async function addEmployeeContractExtension(employeeRef, { startDate, endDate })
     [ref, nextIndex, normalizedStartDate, normalizedEndDate]
   );
   return res.rows[0] || null;
+}
+
+async function listEmployeeContracts(employeeRef) {
+  await ensureEmployeeContractsTable();
+  await ensureEmployeeContractExtensionsTable();
+  const target = await resolveEmployeeRescueTarget(employeeRef);
+
+  const params = [];
+  const where = [];
+  if (target.refs.length) {
+    params.push(target.refs);
+    where.push(`employee_ref = ANY($${params.length}::text[])`);
+  }
+  if (target.kenjoEmployeeId) {
+    params.push(target.kenjoEmployeeId);
+    where.push(`kenjo_employee_id = $${params.length}`);
+  }
+
+  let historyRows = [];
+  if (where.length) {
+    const res = await query(
+      `SELECT id, employee_ref, kenjo_employee_id, start_date, end_date, created_at, updated_at
+       FROM employee_contracts
+       WHERE ${where.join(' OR ')}
+       ORDER BY start_date ASC, end_date ASC NULLS LAST, id ASC`,
+      params
+    );
+    historyRows = (res.rows || []).map((row) => ({
+      id: row.id,
+      row_key: `history-${row.id}`,
+      source: 'history',
+      employee_ref: String(row.employee_ref || '').trim() || null,
+      kenjo_employee_id: String(row.kenjo_employee_id || '').trim() || null,
+      start_date: normalizeDbDateOutput(row.start_date),
+      end_date: normalizeDbDateOutput(row.end_date),
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
+  }
+
+  const legacyExtensions = await listEmployeeContractExtensions(employeeRef);
+  const legacyRows = (legacyExtensions || []).map((row) => ({
+    id: row.id,
+    row_key: `legacy-extension-${row.id}`,
+    source: 'legacy_extension',
+    employee_ref: String(row.employee_ref || '').trim() || null,
+    kenjo_employee_id: target.kenjoEmployeeId || null,
+    start_date: normalizeDbDateOutput(row.start_date),
+    end_date: normalizeDbDateOutput(row.end_date),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
+
+  return sortEmployeeContractRows([...historyRows, ...legacyRows]);
+}
+
+async function addEmployeeContract(employeeRef, { startDate, endDate }) {
+  await ensureEmployeeContractsTable();
+  const ref = String(employeeRef || '').trim();
+  if (!ref) throw new Error('employee_ref is required');
+
+  const normalizedStartDate = normalizeDateOnly(startDate);
+  const normalizedEndDate = endDate == null || endDate === '' ? null : normalizeDateOnly(endDate);
+
+  if (!normalizedStartDate) {
+    throw new Error('Valid start date is required');
+  }
+  if (normalizedEndDate && normalizedStartDate > normalizedEndDate) {
+    throw new Error('End date must be on or after start date');
+  }
+
+  const target = await resolveEmployeeRescueTarget(ref);
+  const res = await query(
+    `INSERT INTO employee_contracts (employee_ref, kenjo_employee_id, start_date, end_date, updated_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     RETURNING id, employee_ref, kenjo_employee_id, start_date, end_date, created_at, updated_at`,
+    [ref, target.kenjoEmployeeId || null, normalizedStartDate, normalizedEndDate]
+  );
+
+  const row = res.rows?.[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    row_key: `history-${row.id}`,
+    source: 'history',
+    employee_ref: String(row.employee_ref || '').trim() || null,
+    kenjo_employee_id: String(row.kenjo_employee_id || '').trim() || null,
+    start_date: normalizeDbDateOutput(row.start_date),
+    end_date: normalizeDbDateOutput(row.end_date),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 async function listEmployeeRescues(employeeRef) {
@@ -529,7 +657,9 @@ const employeeService = {
   updateEmployeeLocalSettings,
   listEmployeeDocuments,
   listEmployeeRescues,
+  listEmployeeContracts,
   listEmployeeContractExtensions,
+  addEmployeeContract,
   addEmployeeContractExtension,
   addEmployeeRescue,
   addEmployeeDocument,
