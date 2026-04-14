@@ -1,9 +1,12 @@
 import { query } from '../../db.js';
-import { getKenjoUsersList, getKenjoAttendances } from '../kenjo/kenjoClient.js';
+import { getKenjoUsersList } from '../kenjo/kenjoClient.js';
+import { getAuthHeader } from '../kenjo/kenjoAuth.js';
 import settingsService from '../settings/settingsService.js';
 import { PDFDocument } from 'pdf-lib';
 import { PDFParse } from 'pdf-parse';
 import employeeService from '../employees/employeeService.js';
+
+const KENJO_BASE_URL = 'https://api.kenjo.io/api/v1';
 
 /**
  * Get ISO year and week number for a date string YYYY-MM-DD.
@@ -56,42 +59,52 @@ function addDays(value, amount) {
   return next;
 }
 
+function normalizeKenjoAttendancePayload(json) {
+  if (Array.isArray(json)) return json;
+  if (Array.isArray(json?.data)) return json.data;
+  if (Array.isArray(json?.items)) return json.items;
+  return [];
+}
+
+async function fetchKenjoAttendancesForDay(isoDay) {
+  const authHeader = await getAuthHeader();
+  const qs = new URLSearchParams({ from: isoDay, to: isoDay }).toString();
+  const resp = await fetch(`${KENJO_BASE_URL}/attendances?${qs}`, {
+    method: 'GET',
+    headers: {
+      Authorization: authHeader,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const text = await resp.text();
+  if (!resp.ok) {
+    const msg = String(text || '');
+    if (resp.status === 404 && msg.toLowerCase().includes('could not find attendance entries')) {
+      return [];
+    }
+    throw new Error(`Kenjo GET /attendances failed ${resp.status}: ${text}`);
+  }
+
+  if (!text) return [];
+
+  try {
+    return normalizeKenjoAttendancePayload(JSON.parse(text));
+  } catch {
+    throw new Error('Kenjo GET /attendances returned invalid JSON');
+  }
+}
+
 async function getKenjoAttendancesForPayrollRange(fromDate, toDate) {
   const from = parseIsoDate(fromDate);
   const to = parseIsoDate(toDate);
   if (!from || !to || from > to) return [];
 
-  const ranges = [];
-  let cursor = new Date(from.getFullYear(), from.getMonth(), 1, 12, 0, 0, 0);
-  while (cursor <= to) {
-    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 12, 0, 0, 0);
-    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 12, 0, 0, 0);
-    const chunkStart = monthStart < from ? new Date(from) : monthStart;
-    const chunkEnd = monthEnd > to ? new Date(to) : monthEnd;
-    ranges.push([formatIsoDate(chunkStart), formatIsoDate(chunkEnd)]);
-    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1, 12, 0, 0, 0);
-  }
-
   const merged = [];
-  for (const [chunkFrom, chunkTo] of ranges) {
-    try {
-      const rows = await getKenjoAttendances(chunkFrom, chunkTo);
-      if (Array.isArray(rows) && rows.length) merged.push(...rows);
-    } catch (error) {
-      const msg = String(error?.message || error || '');
-      const isRangeLimitError =
-        msg.includes('/attendances') &&
-        msg.includes('400') &&
-        msg.toLowerCase().includes('cannot be greater than 31 days');
-      if (!isRangeLimitError) throw error;
-
-      // Extra safety for Payroll: if Kenjo still rejects a chunk, fall back to day-by-day fetches.
-      for (let day = parseIsoDate(chunkFrom); day && day <= parseIsoDate(chunkTo); day = addDays(day, 1)) {
-        const isoDay = formatIsoDate(day);
-        const dayRows = await getKenjoAttendances(isoDay, isoDay);
-        if (Array.isArray(dayRows) && dayRows.length) merged.push(...dayRows);
-      }
-    }
+  for (let day = new Date(from); day <= to; day = addDays(day, 1)) {
+    const isoDay = formatIsoDate(day);
+    const rows = await fetchKenjoAttendancesForDay(isoDay);
+    if (Array.isArray(rows) && rows.length) merged.push(...rows);
   }
   return merged;
 }
