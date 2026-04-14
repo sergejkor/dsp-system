@@ -1,6 +1,6 @@
 import { query } from '../../db.js';
 import settingsService from '../settings/settingsService.js';
-import { getTimeOffRequests } from '../kenjo/kenjoClient.js';
+import { getKenjoUsersList, getTimeOffRequests } from '../kenjo/kenjoClient.js';
 
 let docsTableReady = false;
 let contractExtensionsTableReady = false;
@@ -633,10 +633,29 @@ function getMonthBounds(year, month) {
   return { from, to, monthKey: `${year}-${String(month).padStart(2, '0')}` };
 }
 
-async function syncKenjoTimeOffMonthToCache(year, month) {
+async function buildKenjoTimeOffNameMap() {
+  const users = await getKenjoUsersList().catch(() => []);
+  const map = new Map();
+  for (const user of users || []) {
+    const id = String(user?._id || user?.id || '').trim();
+    if (!id) continue;
+    const displayName =
+      String(
+        user?.displayName ||
+        [user?.firstName, user?.lastName].filter(Boolean).join(' ')
+      ).trim();
+    if (displayName) {
+      map.set(id, displayName);
+    }
+  }
+  return map;
+}
+
+async function syncKenjoTimeOffMonthToCache(year, month, nameById = null) {
   await ensureKenjoTimeOffTable();
   await ensureKenjoTimeOffSyncLogTable();
   const { from, to, monthKey } = getMonthBounds(year, month);
+  const resolvedNameById = nameById instanceof Map ? nameById : await buildKenjoTimeOffNameMap();
   await query(
     `DELETE FROM kenjo_time_off
      WHERE start_date <= $2::date AND end_date >= $1::date`,
@@ -647,6 +666,7 @@ async function syncKenjoTimeOffMonthToCache(year, month) {
     const reqId = String(item._id || item.id || '').trim();
     if (!reqId) continue;
     const userId = String(item._userId ?? item.userId ?? item.user_id ?? '').trim() || null;
+    const employeeName = (userId && resolvedNameById.get(userId)) || null;
     const startDate = normalizeDateOnly(item.from ?? item.startDate ?? item.start);
     const endDate = normalizeDateOnly(item.to ?? item.endDate ?? item.end);
     const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
@@ -661,6 +681,7 @@ async function syncKenjoTimeOffMonthToCache(year, month) {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
       ON CONFLICT (kenjo_request_id) DO UPDATE SET
         kenjo_user_id = EXCLUDED.kenjo_user_id,
+        employee_name = EXCLUDED.employee_name,
         start_date = EXCLUDED.start_date,
         end_date = EXCLUDED.end_date,
         time_off_type = EXCLUDED.time_off_type,
@@ -669,7 +690,7 @@ async function syncKenjoTimeOffMonthToCache(year, month) {
         part_of_day_from = EXCLUDED.part_of_day_from,
         part_of_day_to = EXCLUDED.part_of_day_to,
         synced_at = NOW()`,
-      [reqId, userId, null, startDate, endDate, typeId, typeName, status, partFrom, partTo]
+      [reqId, userId, employeeName, startDate, endDate, typeId, typeName, status, partFrom, partTo]
     );
   }
   await query(
@@ -683,11 +704,11 @@ async function syncKenjoTimeOffMonthToCache(year, month) {
 async function ensureEmployeeTimeOffYearCache(target, year) {
   await ensureKenjoTimeOffTable();
   await ensureKenjoTimeOffSyncLogTable();
-  if (!target?.kenjoEmployeeId) return;
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
   const lastMonth = year === currentYear ? currentMonth : 12;
+  const nameById = await buildKenjoTimeOffNameMap();
 
   const syncLogRes = await query(
     `SELECT sync_key, synced_at
@@ -701,39 +722,85 @@ async function ensureEmployeeTimeOffYearCache(target, year) {
     const { monthKey } = getMonthBounds(year, month);
     const shouldRefreshCurrentMonth = year === currentYear && month === currentMonth;
     if (!shouldRefreshCurrentMonth && syncedKeys.has(monthKey)) continue;
-    await syncKenjoTimeOffMonthToCache(year, month);
+    await syncKenjoTimeOffMonthToCache(year, month, nameById);
   }
 }
 
-async function loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty = false } = {}) {
-  if (!target?.kenjoEmployeeId) return [];
+async function loadEmployeeYearTimeOffRows(
+  target,
+  selectedYear,
+  { forceRefreshOnEmpty = false, forceResyncAllMonths = false } = {}
+) {
   await ensureEmployeeTimeOffYearCache(target, selectedYear);
 
   async function queryRows() {
     const res = await query(
       `SELECT kenjo_request_id, start_date, end_date, time_off_type, time_off_type_name, status
+              , kenjo_user_id, employee_name
        FROM kenjo_time_off
-       WHERE kenjo_user_id = $1
-         AND start_date <= $3::date
-         AND end_date >= $2::date
+       WHERE start_date <= $2::date
+         AND end_date >= $1::date
        ORDER BY start_date DESC, end_date DESC, kenjo_request_id DESC`,
-      [target.kenjoEmployeeId, `${selectedYear}-01-01`, `${selectedYear}-12-31`]
+      [`${selectedYear}-01-01`, `${selectedYear}-12-31`]
     ).catch(() => ({ rows: [] }));
     return res.rows || [];
   }
 
   let rows = await queryRows();
-  if (!rows.length && forceRefreshOnEmpty) {
+  if ((!rows.length && forceRefreshOnEmpty) || forceResyncAllMonths) {
     const now = new Date();
     const currentYear = now.getFullYear();
     const lastMonth = selectedYear === currentYear ? now.getMonth() + 1 : 12;
+    const nameById = await buildKenjoTimeOffNameMap();
     for (let month = 1; month <= lastMonth; month += 1) {
-      await syncKenjoTimeOffMonthToCache(selectedYear, month);
+      await syncKenjoTimeOffMonthToCache(selectedYear, month, nameById);
     }
     rows = await queryRows();
   }
 
   return rows;
+}
+
+async function buildEmployeeTimeOffNameCandidates(employee, target) {
+  const names = new Set();
+  const addName = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized) names.add(normalized);
+  };
+
+  addName(employee?.display_name);
+  addName([employee?.first_name, employee?.last_name].filter(Boolean).join(' '));
+
+  const refs = [...new Set([
+    String(target?.kenjoEmployeeId || '').trim(),
+    ...(Array.isArray(target?.refs) ? target.refs : []),
+  ].map((item) => String(item || '').trim()).filter(Boolean))];
+
+  if (refs.length) {
+    const res = await query(
+      `SELECT display_name, first_name, last_name
+       FROM kenjo_employees
+       WHERE kenjo_user_id = ANY($1::text[])
+          OR employee_number = ANY($1::text[])
+          OR transporter_id = ANY($1::text[])`,
+      [refs]
+    ).catch(() => ({ rows: [] }));
+    for (const row of res.rows || []) {
+      addName(row.display_name);
+      addName([row.first_name, row.last_name].filter(Boolean).join(' '));
+    }
+  }
+
+  return names;
+}
+
+function filterEmployeeTimeOffRows(rows, target, nameCandidates) {
+  return (rows || []).filter((row) => {
+    const rowUserId = String(row?.kenjo_user_id || '').trim();
+    if (target?.kenjoEmployeeId && rowUserId && rowUserId === target.kenjoEmployeeId) return true;
+    const rowName = String(row?.employee_name || '').trim().toLowerCase();
+    return !!rowName && nameCandidates.has(rowName);
+  });
 }
 
 function sortEmployeeContractRows(rows = []) {
@@ -1089,7 +1156,19 @@ async function getEmployeeVacationSummary(employeeRef, yearValue) {
 
   const employee = await getEmployeeById(employeeRef);
   const target = await resolveEmployeeRescueTarget(employeeRef);
-  const rows = await loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty: true });
+  const nameCandidates = await buildEmployeeTimeOffNameCandidates(employee, target);
+  let rows = filterEmployeeTimeOffRows(
+    await loadEmployeeYearTimeOffRows(target, selectedYear),
+    target,
+    nameCandidates
+  );
+  if (!rows.length) {
+    rows = filterEmployeeTimeOffRows(
+      await loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty: true, forceResyncAllMonths: true }),
+      target,
+      nameCandidates
+    );
+  }
 
   const holidaySet = getBavariaHolidaySet(selectedYear);
   const approvedVacationDaysYear = countVacationDaysInRange(
@@ -1158,10 +1237,21 @@ async function getEmployeeTimeOffHistory(employeeRef, type, yearValue) {
       ? year
       : new Date().getFullYear();
   const target = await resolveEmployeeRescueTarget(employeeRef);
-  if (!target.kenjoEmployeeId) {
-    return { year: selectedYear, type: normalizedType, rows: [] };
+  const employee = await getEmployeeById(employeeRef);
+  const nameCandidates = await buildEmployeeTimeOffNameCandidates(employee, target);
+  let rows = filterEmployeeTimeOffRows(
+    await loadEmployeeYearTimeOffRows(target, selectedYear),
+    target,
+    nameCandidates
+  );
+  if (!rows.length) {
+    rows = filterEmployeeTimeOffRows(
+      await loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty: true, forceResyncAllMonths: true }),
+      target,
+      nameCandidates
+    );
   }
-  const rows = (await loadEmployeeYearTimeOffRows(target, selectedYear, { forceRefreshOnEmpty: true }))
+  rows = rows
     .filter((row) => {
       if (!isApprovedTimeOffStatus(row?.status)) return false;
       const typeKey = normalizeTimeOffType(row?.time_off_type, row?.time_off_type_name);
