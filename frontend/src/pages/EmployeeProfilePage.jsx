@@ -402,6 +402,15 @@ function formatDaysValue(value) {
   });
 }
 
+function formatDateDayMonthYear(value) {
+  if (!value) return '—';
+  const s = String(value).trim();
+  const iso = s.includes('T') ? s.slice(0, 10) : s.slice(0, 10);
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '—';
+  return `${match[3]}-${match[2]}-${match[1]}`;
+}
+
 function buildHistoryYearOptions(startYear = 2025, endYear = 2028) {
   const list = [];
   for (let year = startYear; year <= endYear; year += 1) {
@@ -1085,6 +1094,7 @@ export default function EmployeeProfilePage() {
           from: 'Von',
           to: 'Bis',
           workingDays: 'Arbeitstage',
+          totalInYear: 'Summe im Jahr',
           noRows: 'Keine Eintraege fuer dieses Jahr gefunden.',
           loading: 'Historie wird geladen...',
           close: 'Close',
@@ -1102,6 +1112,7 @@ export default function EmployeeProfilePage() {
           from: 'From',
           to: 'To',
           workingDays: 'Working days',
+          totalInYear: 'Total in year',
           noRows: 'No entries found for this year.',
           loading: 'Loading history...',
           close: 'Close',
@@ -1324,6 +1335,10 @@ export default function EmployeeProfilePage() {
   );
   const historyYearOptions = buildHistoryYearOptions();
   const carryOverDays = getCustomFieldNumericValue(current?.customFields, ['c_CarryOverDays', 'Carry over days']);
+  const timeOffHistoryTotalDays = (timeOffHistoryRows || []).reduce(
+    (sum, row) => sum + (Number(row?.working_days) || 0),
+    0
+  );
   const vacationBalance = buildVacationBalanceSnapshot({
     totalYearVacation:
       vacationSummary?.total_year_vacation ??
@@ -3206,11 +3221,26 @@ export default function EmployeeProfilePage() {
                             : (isDark ? '1px solid rgba(132, 162, 214, 0.16)' : '1px solid #eef2f7'),
                       }}
                     >
-                      <span>{formatDate(row.start_date)}</span>
-                      <span>{formatDate(row.end_date)}</span>
+                      <span>{formatDateDayMonthYear(row.start_date)}</span>
+                      <span>{formatDateDayMonthYear(row.end_date)}</span>
                       <strong>{formatDaysValue(row.working_days)}</strong>
                     </div>
                   ))}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, 160px)',
+                      gap: '0.75rem',
+                      padding: '0.85rem 1rem',
+                      background: isDark ? 'rgba(18, 36, 60, 0.98)' : '#eef4ff',
+                      borderTop: isDark ? '1px solid rgba(132, 162, 214, 0.24)' : '1px solid #d7e5ff',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span>{timeOffUi.totalInYear}</span>
+                    <span />
+                    <strong>{formatDaysValue(timeOffHistoryTotalDays)}</strong>
+                  </div>
                 </div>
               ) : (
                 <div style={{ padding: '1rem', color: employeeMutedTextStyle.color }}>
