@@ -99,6 +99,33 @@ export async function addEmployeeContract(employeeRef, payload) {
   return out;
 }
 
+export async function terminateEmployeeContract(employeeRef, payload) {
+  const form = new FormData();
+  form.append('contractStartDate', payload?.contractStartDate || '');
+  if (payload?.contractEndDate != null) {
+    form.append('contractEndDate', payload.contractEndDate);
+  }
+  form.append('terminationDate', payload?.terminationDate || '');
+  form.append('terminationType', payload?.terminationType || '');
+  if (payload?.terminationInitiator) {
+    form.append('terminationInitiator', payload.terminationInitiator);
+  }
+  if (payload?.file) {
+    form.append('file', payload.file);
+  }
+
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts/terminate`,
+    authOpts({
+      method: 'POST',
+      body: form,
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee contract termination failed');
+  return out;
+}
+
 export async function getEmployeeRescues(employeeRef) {
   const response = await fetch(
     `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/rescues`,

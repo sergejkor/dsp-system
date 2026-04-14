@@ -7,6 +7,7 @@ import {
   getEmployeeRescues,
   getEmployeeDocuments,
   addEmployeeContract,
+  terminateEmployeeContract,
   addEmployeeRescue,
   updateEmployeeLocalSettings,
   uploadEmployeeDocument,
@@ -440,6 +441,15 @@ export default function EmployeeProfilePage() {
   const [contractSaving, setContractSaving] = useState(false);
   const [contractModal, setContractModal] = useState(null);
   const [contractFileUploading, setContractFileUploading] = useState(false);
+  const [terminateContractTarget, setTerminateContractTarget] = useState(null);
+  const [terminateContractDraft, setTerminateContractDraft] = useState({
+    terminationDate: '',
+    terminationType: '',
+    terminationInitiator: '',
+    file: null,
+  });
+  const [terminateContractSaving, setTerminateContractSaving] = useState(false);
+  const [terminateContractError, setTerminateContractError] = useState('');
   const [rescues, setRescues] = useState([]);
   const [rescuesLoading, setRescuesLoading] = useState(false);
   const [rescueError, setRescueError] = useState('');
@@ -451,6 +461,7 @@ export default function EmployeeProfilePage() {
   const [vacationDaysOverrideError, setVacationDaysOverrideError] = useState('');
   const [lastMonthPayrollCards, setLastMonthPayrollCards] = useState(null);
   const contractFileInputRef = useRef(null);
+  const terminateContractFileInputRef = useRef(null);
   const employeeDocFileInputRef = useRef(null);
 
   useEffect(() => {
@@ -800,6 +811,23 @@ export default function EmployeeProfilePage() {
           contractLabel: (n) => `Vertrag ${n}`,
           currentBadge: 'Aktuell',
           unlimitedLabel: 'Unbefristed',
+          terminateButton: 'Terminate contract',
+          terminateTitle: 'Vertrag kuendigen',
+          terminationDate: 'Termination date',
+          mutualTermination: 'Aufhebungsvertrag',
+          ordinaryTermination: 'Ordentliche Kuendigung',
+          extraordinaryTermination: 'Fristlose Kuendigung',
+          employerTermination: 'Kuendigung durch Arbeitgeber',
+          employeeTermination: 'Kuendigung durch Arbeitnehmer',
+          uploadDocument: 'Upload document',
+          saveTermination: 'Save',
+          cancelTermination: 'Cancel',
+          terminationDocumentSelected: (name) => `Dokument: ${name}`,
+          chooseTerminationType: 'Bitte waehlen Sie einen Kuendigungsgrund aus.',
+          chooseTerminationDate: 'Bitte waehlen Sie ein Kuendigungsdatum aus.',
+          chooseOrdinaryInitiator: 'Bitte waehlen Sie aus, wer die ordentliche Kuendigung ausgeloest hat.',
+          terminationSaved: 'Contract termination saved.',
+          terminationBadge: 'Termination',
           from: 'Von',
           to: 'Bis',
           fixedType: 'Befristet',
@@ -826,6 +854,23 @@ export default function EmployeeProfilePage() {
           contractLabel: (n) => `Contract ${n}`,
           currentBadge: 'Current',
           unlimitedLabel: 'Unbefristed',
+          terminateButton: 'Terminate contract',
+          terminateTitle: 'Terminate contract',
+          terminationDate: 'Termination date',
+          mutualTermination: 'Aufhebungsvertrag',
+          ordinaryTermination: 'Ordentliche Kuendigung',
+          extraordinaryTermination: 'Fristlose Kuendigung',
+          employerTermination: 'Kuendigung durch Arbeitgeber',
+          employeeTermination: 'Kuendigung durch Arbeitnehmer',
+          uploadDocument: 'Upload document',
+          saveTermination: 'Save',
+          cancelTermination: 'Cancel',
+          terminationDocumentSelected: (name) => `Document: ${name}`,
+          chooseTerminationType: 'Please choose a termination type.',
+          chooseTerminationDate: 'Please choose a termination date.',
+          chooseOrdinaryInitiator: 'Please choose who initiated the ordinary termination.',
+          terminationSaved: 'Contract termination saved.',
+          terminationBadge: 'Termination',
           from: 'From',
           to: 'To',
           fixedType: 'Fixed-term',
@@ -1148,15 +1193,18 @@ export default function EmployeeProfilePage() {
   );
   let fixedContractOrdinal = 0;
   const contractTimeline = rawContractTimeline.map((row) => {
-    const isUnlimited = !normalizeContractDate(row?.end_date);
+    const effectiveEndDate = normalizeContractDate(row?.termination_date) || normalizeContractDate(row?.end_date);
+    const isUnlimited = !effectiveEndDate;
     const isCurrentProfile =
       normalizeContractDate(row?.start_date) === currentContractStart &&
       normalizeContractDate(row?.end_date) === currentContractEnd;
     const contractNumber = isUnlimited ? null : ++fixedContractOrdinal;
     return {
       ...row,
+      effectiveEndDate,
       isUnlimited,
       isCurrentProfile,
+      canTerminate: isCurrentProfile && !normalizeContractDate(row?.termination_date),
       contractNumber,
       label: isUnlimited ? contractUi.unlimitedLabel : contractUi.contractLabel(contractNumber),
     };
@@ -1177,7 +1225,7 @@ export default function EmployeeProfilePage() {
   const contractEndSummary = (() => {
     if (hasUnlimitedContract) return contractUi.unlimitedLabel;
     const latestEnd = contractTimeline
-      .map((row) => normalizeContractDate(row?.end_date))
+      .map((row) => normalizeContractDate(row?.effectiveEndDate))
       .filter(Boolean)
       .sort()
       .at(-1);
@@ -1234,6 +1282,31 @@ export default function EmployeeProfilePage() {
 
   const closeContractModal = () => {
     setContractModal(null);
+  };
+
+  const closeTerminateContractModal = () => {
+    setTerminateContractTarget(null);
+    setTerminateContractDraft({
+      terminationDate: '',
+      terminationType: '',
+      terminationInitiator: '',
+      file: null,
+    });
+    setTerminateContractError('');
+    if (terminateContractFileInputRef.current) {
+      terminateContractFileInputRef.current.value = '';
+    }
+  };
+
+  const openTerminateContractModal = (row) => {
+    setTerminateContractTarget(row);
+    setTerminateContractDraft({
+      terminationDate: row?.effectiveEndDate || '',
+      terminationType: '',
+      terminationInitiator: '',
+      file: null,
+    });
+    setTerminateContractError('');
   };
 
   const closeContractForm = () => {
@@ -1297,6 +1370,15 @@ export default function EmployeeProfilePage() {
     contractFileInputRef.current?.click();
   };
 
+  const handleUploadTerminationDocumentClick = () => {
+    terminateContractFileInputRef.current?.click();
+  };
+
+  const handleTerminateContractFileChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    setTerminateContractDraft((prev) => ({ ...prev, file }));
+  };
+
   const handleContractFileChange = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -1321,6 +1403,57 @@ export default function EmployeeProfilePage() {
       setContractError(String(e?.message || e));
     } finally {
       setContractFileUploading(false);
+    }
+  };
+
+  const saveTerminatedContract = async () => {
+    if (!employeeDocRef || !terminateContractTarget) {
+      setTerminateContractError(contractUi.missingEmployeeRef);
+      return;
+    }
+    if (!terminateContractDraft.terminationDate) {
+      setTerminateContractError(contractUi.chooseTerminationDate);
+      return;
+    }
+    if (!terminateContractDraft.terminationType) {
+      setTerminateContractError(contractUi.chooseTerminationType);
+      return;
+    }
+    if (
+      terminateContractDraft.terminationType === 'ordinary' &&
+      !terminateContractDraft.terminationInitiator
+    ) {
+      setTerminateContractError(contractUi.chooseOrdinaryInitiator);
+      return;
+    }
+    setTerminateContractSaving(true);
+    setTerminateContractError('');
+    try {
+      const saved = await terminateEmployeeContract(employeeDocRef, {
+        contractStartDate: terminateContractTarget.start_date,
+        contractEndDate: terminateContractTarget.end_date ?? null,
+        terminationDate: terminateContractDraft.terminationDate,
+        terminationType: terminateContractDraft.terminationType,
+        terminationInitiator:
+          terminateContractDraft.terminationType === 'ordinary'
+            ? terminateContractDraft.terminationInitiator
+            : null,
+        file: terminateContractDraft.file,
+      });
+      if (terminateContractDraft.file) {
+        const refreshedDocs = await getEmployeeDocuments(employeeDocRef);
+        setEmployeeDocs(Array.isArray(refreshedDocs) ? refreshedDocs : []);
+      }
+      setContracts((prev) => sortContractTimelineRows([...(prev || []).filter((row) => row?.id !== saved?.id), saved].filter(Boolean)));
+      closeTerminateContractModal();
+      setContractModal({
+        title: contractUi.saveTermination,
+        message: contractUi.terminationSaved,
+      });
+    } catch (e) {
+      setTerminateContractError(String(e?.message || e));
+    } finally {
+      setTerminateContractSaving(false);
     }
   };
 
@@ -1503,6 +1636,131 @@ export default function EmployeeProfilePage() {
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button type="button" className="btn-primary" onClick={closeContractModal}>
                 OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {terminateContractTarget && (
+        <div style={modalOverlayStyle} onClick={() => !terminateContractSaving && closeTerminateContractModal()}>
+          <div
+            style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 560, width: 'calc(100% - 2rem)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 1rem' }}>{contractUi.terminateTitle}</h3>
+            <input
+              ref={terminateContractFileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+              style={{ display: 'none' }}
+              onChange={handleTerminateContractFileChange}
+            />
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '1rem' }}>
+              <span>{contractUi.terminationDate}</span>
+              <input
+                type="date"
+                value={terminateContractDraft.terminationDate}
+                onChange={(e) => setTerminateContractDraft((prev) => ({ ...prev, terminationDate: e.target.value }))}
+                style={{ ...modalInputStyle, width: '100%' }}
+              />
+            </label>
+
+            <div style={{ display: 'grid', gap: '0.45rem', marginBottom: '1rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={terminateContractDraft.terminationType === 'mutual'}
+                  onChange={() =>
+                    setTerminateContractDraft((prev) => ({
+                      ...prev,
+                      terminationType: prev.terminationType === 'mutual' ? '' : 'mutual',
+                      terminationInitiator: '',
+                    }))
+                  }
+                />
+                <span>{contractUi.mutualTermination}</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={terminateContractDraft.terminationType === 'ordinary'}
+                  onChange={() =>
+                    setTerminateContractDraft((prev) => ({
+                      ...prev,
+                      terminationType: prev.terminationType === 'ordinary' ? '' : 'ordinary',
+                      terminationInitiator: '',
+                    }))
+                  }
+                />
+                <span>{contractUi.ordinaryTermination}</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={terminateContractDraft.terminationType === 'extraordinary'}
+                  onChange={() =>
+                    setTerminateContractDraft((prev) => ({
+                      ...prev,
+                      terminationType: prev.terminationType === 'extraordinary' ? '' : 'extraordinary',
+                      terminationInitiator: '',
+                    }))
+                  }
+                />
+                <span>{contractUi.extraordinaryTermination}</span>
+              </label>
+            </div>
+
+            {terminateContractDraft.terminationType === 'ordinary' ? (
+              <div style={{ display: 'grid', gap: '0.45rem', marginBottom: '1rem', paddingLeft: '1.5rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={terminateContractDraft.terminationInitiator === 'employer'}
+                    onChange={() =>
+                      setTerminateContractDraft((prev) => ({
+                        ...prev,
+                        terminationInitiator: prev.terminationInitiator === 'employer' ? '' : 'employer',
+                      }))
+                    }
+                  />
+                  <span>{contractUi.employerTermination}</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={terminateContractDraft.terminationInitiator === 'employee'}
+                    onChange={() =>
+                      setTerminateContractDraft((prev) => ({
+                        ...prev,
+                        terminationInitiator: prev.terminationInitiator === 'employee' ? '' : 'employee',
+                      }))
+                    }
+                  />
+                  <span>{contractUi.employeeTermination}</span>
+                </label>
+              </div>
+            ) : null}
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '1rem' }}>
+              <button type="button" className="btn-secondary" onClick={handleUploadTerminationDocumentClick}>
+                {contractUi.uploadDocument}
+              </button>
+              {terminateContractDraft.file ? (
+                <span style={{ color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+                  {contractUi.terminationDocumentSelected(terminateContractDraft.file.name)}
+                </span>
+              ) : null}
+            </div>
+
+            {terminateContractError ? <p className="error-text" style={{ margin: '0 0 0.9rem' }}>{terminateContractError}</p> : null}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button type="button" className="btn-secondary" onClick={closeTerminateContractModal} disabled={terminateContractSaving}>
+                {contractUi.cancelTermination}
+              </button>
+              <button type="button" className="btn-primary" onClick={saveTerminatedContract} disabled={terminateContractSaving}>
+                {terminateContractSaving ? contractUi.saving : contractUi.saveTermination}
               </button>
             </div>
           </div>
@@ -2175,12 +2433,47 @@ export default function EmployeeProfilePage() {
                       {contractUi.currentBadge}
                     </span>
                   ) : null}
+                  {row.termination_date ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '0.1rem 0.45rem',
+                        borderRadius: 999,
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        color: '#fff',
+                        background: '#dc2626',
+                      }}
+                    >
+                      {contractUi.terminationBadge}
+                    </span>
+                  ) : null}
                 </div>
-                <span>
-                  {row.isUnlimited
-                    ? `${formatDate(row.start_date)} - ${contractUi.unlimitedLabel}`
-                    : `${formatDate(row.start_date)} - ${formatDate(row.end_date)}`}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <span>
+                    {row.isUnlimited
+                      ? `${formatDate(row.start_date)} - ${contractUi.unlimitedLabel}`
+                      : `${formatDate(row.start_date)} - ${formatDate(row.effectiveEndDate)}`}
+                  </span>
+                  {row.canTerminate ? (
+                    <button
+                      type="button"
+                      onClick={() => openTerminateContractModal(row)}
+                      style={{
+                        border: 'none',
+                        borderRadius: 999,
+                        padding: '0.45rem 0.85rem',
+                        background: '#dc2626',
+                        color: '#fff',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {contractUi.terminateButton}
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ))}
             {showContractForm && (
@@ -2273,7 +2566,7 @@ export default function EmployeeProfilePage() {
               </button>
             </div>
             <p style={{ margin: '0.45rem 0 0', color: '#666', fontSize: '0.9rem' }}>
-              Leave empty to calculate automatically from start date, contract end, and saved extensions.
+              Leave empty to calculate automatically from start date, contract end, and saved contract history.
             </p>
             {vacationDaysOverrideError ? (
               <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationDaysOverrideError}</p>

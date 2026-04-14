@@ -106,6 +106,41 @@ router.post('/:id/contracts', async (req, res) => {
   }
 });
 
+router.post('/:id/contracts/terminate', upload.single('file'), async (req, res) => {
+  try {
+    const row = await employeeService.terminateEmployeeContract(req.params.id, {
+      contractStartDate: req.body?.contractStartDate,
+      contractEndDate: req.body?.contractEndDate ?? null,
+      terminationDate: req.body?.terminationDate,
+      terminationType: req.body?.terminationType,
+      terminationInitiator: req.body?.terminationInitiator ?? null,
+      documentFile: req.file?.buffer
+        ? {
+            fileName: req.file.originalname || 'termination-document.bin',
+            mimeType: req.file.mimetype || 'application/octet-stream',
+            fileContent: req.file.buffer,
+          }
+        : null,
+    });
+    res.status(201).json(row);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_ref is required' ||
+      message === 'Valid contract start date is required' ||
+      message === 'Valid termination date is required' ||
+      message === 'Valid termination type is required' ||
+      message === 'Valid ordinary termination initiator is required' ||
+      message === 'Termination date must be on or after contract start date' ||
+      message === 'Termination date must not be after contract end date'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('POST /api/employees/:id/contracts/terminate error', error);
+    res.status(500).json({ error: 'Failed to terminate contract' });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const employee = await employeeService.getEmployeeById(req.params.id);
