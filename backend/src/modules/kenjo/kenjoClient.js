@@ -584,10 +584,44 @@ export async function getKenjoAttendances(fromDate, toDate) {
   const from = typeof fromDate === 'string' ? fromDate.slice(0, 10) : '';
   const to = typeof toDate === 'string' ? toDate.slice(0, 10) : '';
   if (!from || !to) return [];
+  const parseIsoDate = (value) => {
+    const date = new Date(`${value}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+  const formatIsoDate = (value) => value.toISOString().slice(0, 10);
+  const addDays = (value, amount) => {
+    const next = new Date(value);
+    next.setDate(next.getDate() + amount);
+    return next;
+  };
   try {
-    const data = await kenjoGet('/attendances', { from, to });
-    const list = normalizeArrayPayload(data);
-    return Array.isArray(list) ? list : [];
+    const fromDateObj = parseIsoDate(from);
+    const toDateObj = parseIsoDate(to);
+    if (!fromDateObj || !toDateObj) return [];
+
+    // Kenjo rejects attendance requests when the date difference exceeds 31 days.
+    // We split longer ranges into safe 31-day windows (30-day difference) and merge results.
+    const attendanceRows = [];
+    for (let cursor = new Date(fromDateObj); cursor <= toDateObj; cursor = addDays(cursor, 31)) {
+      const chunkFrom = formatIsoDate(cursor);
+      const chunkTo = formatIsoDate(addDays(cursor, 30) < toDateObj ? addDays(cursor, 30) : toDateObj);
+      try {
+        const data = await kenjoGet('/attendances', { from: chunkFrom, to: chunkTo });
+        const list = normalizeArrayPayload(data);
+        if (Array.isArray(list) && list.length) attendanceRows.push(...list);
+      } catch (chunkErr) {
+        const chunkMsg = String(chunkErr?.message || chunkErr || '');
+        if (
+          chunkMsg.includes('/attendances') &&
+          chunkMsg.includes('404') &&
+          chunkMsg.toLowerCase().includes('could not find attendance entries')
+        ) {
+          continue;
+        }
+        throw chunkErr;
+      }
+    }
+    return attendanceRows;
   } catch (err) {
     const msg = String(err?.message || err || '');
     // Kenjo returns 404 with message "Could not find attendance entries." when there are simply no rows.
