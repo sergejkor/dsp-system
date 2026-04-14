@@ -112,14 +112,41 @@ async function ensureEmployeeVacationColumns() {
   employeeVacationColumnsReady = true;
 }
 
+function buildEmployeeTerminationJoin(employeeAlias = 'e') {
+  return `
+    LEFT JOIN LATERAL (
+      SELECT MAX(c.termination_date) AS latest_termination_date
+      FROM employee_contracts c
+      WHERE c.termination_date IS NOT NULL
+        AND (
+          c.employee_ref = ${employeeAlias}.employee_id
+          OR c.employee_ref = ${employeeAlias}.kenjo_user_id
+          OR c.employee_ref = ${employeeAlias}.id::text
+          OR (${employeeAlias}.kenjo_user_id IS NOT NULL AND c.kenjo_employee_id = ${employeeAlias}.kenjo_user_id)
+        )
+    ) employee_contract_state ON TRUE
+  `;
+}
+
+function buildEmployeeEffectiveActiveSql(employeeAlias = 'e', terminationAlias = 'employee_contract_state') {
+  return `CASE
+    WHEN ${terminationAlias}.latest_termination_date IS NOT NULL
+      AND ${terminationAlias}.latest_termination_date <= CURRENT_DATE
+    THEN FALSE
+    ELSE COALESCE(${employeeAlias}.is_active, FALSE)
+  END`;
+}
+
 async function listEmployees({ search, onlyActive } = {}) {
   await ensureEmployeeVacationColumns();
+  await ensureEmployeeContractTerminationColumns();
   const params = [];
   const where = [];
+  const effectiveActiveSql = buildEmployeeEffectiveActiveSql('e');
 
   if (onlyActive) {
     params.push(true);
-    where.push(`is_active = $${params.length}`);
+    where.push(`${effectiveActiveSql} = $${params.length}`);
   }
 
   if (search && String(search).trim()) {
@@ -132,24 +159,28 @@ async function listEmployees({ search, onlyActive } = {}) {
 
   const sql = `
     SELECT
-      id,
-      employee_id,
-      pn,
-      first_name,
-      last_name,
-      display_name,
-      email,
-      phone,
-      start_date,
-      contract_end,
-      transporter_id,
-      kenjo_user_id,
-      vacation_days_override,
-      vacation_days_override_year,
-      is_active
-    FROM employees
+      e.id,
+      e.employee_id,
+      e.pn,
+      e.first_name,
+      e.last_name,
+      e.display_name,
+      e.email,
+      e.phone,
+      e.start_date,
+      e.contract_end,
+      e.transporter_id,
+      e.kenjo_user_id,
+      e.vacation_days_override,
+      e.vacation_days_override_year,
+      e.vacation_days_override AS total_year_vacation,
+      e.vacation_days_override_year AS total_year_vacation_year,
+      employee_contract_state.latest_termination_date,
+      ${effectiveActiveSql} AS is_active
+    FROM employees e
+    ${buildEmployeeTerminationJoin('e')}
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    ORDER BY is_active DESC, last_name ASC, first_name ASC
+    ORDER BY ${effectiveActiveSql} DESC, e.last_name ASC, e.first_name ASC
     LIMIT 500
   `;
 
@@ -159,25 +190,31 @@ async function listEmployees({ search, onlyActive } = {}) {
 
 async function getEmployeeById(employeeId) {
   await ensureEmployeeVacationColumns();
+  await ensureEmployeeContractTerminationColumns();
+  const effectiveActiveSql = buildEmployeeEffectiveActiveSql('e');
   const res = await query(
     `SELECT
-      id,
-      employee_id,
-      pn,
-      first_name,
-      last_name,
-      display_name,
-      email,
-      phone,
-      start_date,
-      contract_end,
-      transporter_id,
-      kenjo_user_id,
-      vacation_days_override,
-      vacation_days_override_year,
-      is_active
-     FROM employees
-     WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
+      e.id,
+      e.employee_id,
+      e.pn,
+      e.first_name,
+      e.last_name,
+      e.display_name,
+      e.email,
+      e.phone,
+      e.start_date,
+      e.contract_end,
+      e.transporter_id,
+      e.kenjo_user_id,
+      e.vacation_days_override,
+      e.vacation_days_override_year,
+      e.vacation_days_override AS total_year_vacation,
+      e.vacation_days_override_year AS total_year_vacation_year,
+      employee_contract_state.latest_termination_date,
+      ${effectiveActiveSql} AS is_active
+     FROM employees e
+     ${buildEmployeeTerminationJoin('e')}
+     WHERE e.employee_id = $1 OR e.id::text = $1 OR e.kenjo_user_id = $1
      LIMIT 1`,
     [String(employeeId)]
   );
@@ -189,44 +226,62 @@ async function updateEmployeeLocalSettings(employeeId, payload = {}) {
   const id = String(employeeId || '').trim();
   if (!id) throw new Error('employee_id is required');
 
-  if (!Object.prototype.hasOwnProperty.call(payload || {}, 'vacationDaysOverride')) {
+  const hasVacationOverride = Object.prototype.hasOwnProperty.call(payload || {}, 'vacationDaysOverride');
+  const hasTotalYearVacation = Object.prototype.hasOwnProperty.call(payload || {}, 'totalYearVacation');
+  if (!hasVacationOverride && !hasTotalYearVacation) {
     throw new Error('No supported local settings provided');
   }
 
   let vacationDaysOverride = null;
   let vacationDaysOverrideYear = null;
-  const rawOverride = payload?.vacationDaysOverride;
+  const rawOverride = hasTotalYearVacation ? payload?.totalYearVacation : payload?.vacationDaysOverride;
   if (rawOverride !== '' && rawOverride != null) {
     const parsed = Number(rawOverride);
     if (!Number.isFinite(parsed) || parsed < 0) {
       throw new Error('Vacation days override must be a non-negative number');
     }
     vacationDaysOverride = Math.round(parsed * 100) / 100;
-    vacationDaysOverrideYear = Number(new Date().getFullYear());
+    const rawYear = hasTotalYearVacation ? payload?.totalYearVacationYear : payload?.vacationDaysOverrideYear;
+    const parsedYear = Number(rawYear || new Date().getFullYear());
+    vacationDaysOverrideYear =
+      Number.isInteger(parsedYear) && parsedYear >= 2000 && parsedYear <= 3000
+        ? parsedYear
+        : Number(new Date().getFullYear());
   }
 
+  await ensureEmployeeContractTerminationColumns();
+  const effectiveActiveSql = buildEmployeeEffectiveActiveSql('e');
   const res = await query(
-    `UPDATE employees
-     SET vacation_days_override = $2,
-         vacation_days_override_year = $3,
-         updated_at = NOW()
-     WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
-     RETURNING
-       id,
-       employee_id,
-       pn,
-       first_name,
-       last_name,
-       display_name,
-       email,
-       phone,
-       start_date,
-       contract_end,
-       transporter_id,
-       kenjo_user_id,
-       vacation_days_override,
-       vacation_days_override_year,
-       is_active`,
+    `WITH updated_employee AS (
+       UPDATE employees
+       SET vacation_days_override = $2,
+           vacation_days_override_year = $3,
+           updated_at = NOW()
+       WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1
+       RETURNING *
+     )
+     SELECT
+       e.id,
+       e.employee_id,
+       e.pn,
+       e.first_name,
+       e.last_name,
+       e.display_name,
+       e.email,
+       e.phone,
+       e.start_date,
+       e.contract_end,
+       e.transporter_id,
+       e.kenjo_user_id,
+       e.vacation_days_override,
+       e.vacation_days_override_year,
+       e.vacation_days_override AS total_year_vacation,
+       e.vacation_days_override_year AS total_year_vacation_year,
+       employee_contract_state.latest_termination_date,
+       ${effectiveActiveSql} AS is_active
+     FROM updated_employee e
+     ${buildEmployeeTerminationJoin('e')}
+     LIMIT 1`,
     [id, vacationDaysOverride, vacationDaysOverrideYear]
   );
   return res.rows[0] || null;
@@ -326,6 +381,110 @@ function normalizeDbDateOutput(value) {
     return `${y}-${m}-${d}`;
   }
   return normalizeDateOnly(value);
+}
+
+function normalizeTimeOffType(typeId, typeName) {
+  const id = String(typeId || '').trim();
+  if (id === '685e7223e6bac64cb0a27e38') return 'vacation';
+  const normalizedName = String(typeName || '').trim().toLowerCase();
+  if (normalizedName.includes('vacation') || normalizedName.includes('urlaub') || normalizedName.includes('holiday')) {
+    return 'vacation';
+  }
+  return null;
+}
+
+function normalizeTimeOffStatus(status) {
+  return String(status || '').trim().toLowerCase();
+}
+
+function isApprovedTimeOffStatus(status) {
+  const normalized = normalizeTimeOffStatus(status);
+  return normalized === 'processed' || normalized === 'approved' || normalized === 'accepted';
+}
+
+function getEasterSunday(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function addUtcDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function formatUtcIsoDate(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getBavariaHolidaySet(year) {
+  const easterSunday = getEasterSunday(year);
+  return new Set([
+    `${year}-01-01`,
+    `${year}-01-06`,
+    `${year}-05-01`,
+    `${year}-08-15`,
+    `${year}-10-03`,
+    `${year}-11-01`,
+    `${year}-12-25`,
+    `${year}-12-26`,
+    formatUtcIsoDate(addUtcDays(easterSunday, -2)),
+    formatUtcIsoDate(addUtcDays(easterSunday, 1)),
+    formatUtcIsoDate(addUtcDays(easterSunday, 39)),
+    formatUtcIsoDate(addUtcDays(easterSunday, 50)),
+    formatUtcIsoDate(addUtcDays(easterSunday, 60)),
+  ]);
+}
+
+function countBusinessDaysExcludingBavariaHolidays(startIso, endIso, holidaySet) {
+  const start = normalizeDateOnly(startIso);
+  const end = normalizeDateOnly(endIso);
+  if (!start || !end || start > end) return 0;
+  let count = 0;
+  const cursor = new Date(`${start}T12:00:00Z`);
+  const limit = new Date(`${end}T12:00:00Z`);
+  while (cursor <= limit) {
+    const iso = cursor.toISOString().slice(0, 10);
+    const day = cursor.getUTCDay();
+    const isWeekend = day === 0 || day === 6;
+    if (!isWeekend && !holidaySet.has(iso)) {
+      count += 1;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return count;
+}
+
+function countVacationDaysInRange(rows, rangeStart, rangeEnd, holidaySet) {
+  let total = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (normalizeTimeOffType(row?.time_off_type, row?.time_off_type_name) !== 'vacation') continue;
+    if (!isApprovedTimeOffStatus(row?.status)) continue;
+    const start = normalizeDateOnly(row?.start_date);
+    const end = normalizeDateOnly(row?.end_date);
+    if (!start || !end) continue;
+    const effectiveStart = start > rangeStart ? start : rangeStart;
+    const effectiveEnd = end < rangeEnd ? end : rangeEnd;
+    if (effectiveStart > effectiveEnd) continue;
+    total += countBusinessDaysExcludingBavariaHolidays(effectiveStart, effectiveEnd, holidaySet);
+  }
+  return total;
 }
 
 function sortEmployeeContractRows(rows = []) {
@@ -626,6 +785,8 @@ async function terminateEmployeeContract(
         ]
       );
 
+  await updateEmployeeEffectiveContractState(ref, normalizedTerminationDate);
+
   const row = persisted.rows?.[0];
   if (!row) return null;
   return {
@@ -643,6 +804,89 @@ async function terminateEmployeeContract(
     termination_document_name: String(row.termination_document_name || '').trim() || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+async function updateEmployeeEffectiveContractState(employeeRef, terminationDate) {
+  const normalizedTerminationDate = normalizeDateOnly(terminationDate);
+  if (!normalizedTerminationDate) return;
+
+  const refs = await resolveEmployeeRefs(employeeRef);
+  const allRefs = [...new Set([String(employeeRef || '').trim(), ...refs].filter(Boolean))];
+  if (!allRefs.length) return;
+
+  await query(
+    `UPDATE employees
+     SET contract_end = $2,
+         is_active = CASE
+           WHEN $2::date <= CURRENT_DATE THEN FALSE
+           ELSE is_active
+         END,
+         updated_at = NOW()
+     WHERE employee_id = ANY($1::text[])
+        OR id::text = ANY($1::text[])
+        OR kenjo_user_id = ANY($1::text[])`,
+    [allRefs, normalizedTerminationDate]
+  ).catch(() => null);
+}
+
+async function getEmployeeVacationSummary(employeeRef, yearValue) {
+  await ensureEmployeeVacationColumns();
+  const year = Number(yearValue || new Date().getFullYear());
+  const selectedYear =
+    Number.isInteger(year) && year >= 2000 && year <= 3000
+      ? year
+      : new Date().getFullYear();
+
+  const employee = await getEmployeeById(employeeRef);
+  const target = await resolveEmployeeRescueTarget(employeeRef);
+
+  let rows = [];
+  if (target.kenjoEmployeeId) {
+    try {
+      const res = await query(
+        `SELECT start_date, end_date, time_off_type, time_off_type_name, status
+         FROM kenjo_time_off
+         WHERE kenjo_user_id = $1
+           AND start_date <= $3::date
+           AND end_date >= $2::date`,
+        [target.kenjoEmployeeId, `${selectedYear}-01-01`, `${selectedYear}-12-31`]
+      );
+      rows = res.rows || [];
+    } catch {
+      rows = [];
+    }
+  }
+
+  const holidaySet = getBavariaHolidaySet(selectedYear);
+  const approvedVacationDaysYear = countVacationDaysInRange(
+    rows,
+    `${selectedYear}-01-01`,
+    `${selectedYear}-12-31`,
+    holidaySet
+  );
+  const approvedVacationDaysUntilMarch31 = countVacationDaysInRange(
+    rows,
+    `${selectedYear}-01-01`,
+    `${selectedYear}-03-31`,
+    holidaySet
+  );
+
+  const storedTotalYearVacation =
+    employee?.vacation_days_override_year === selectedYear
+      ? Number(employee?.vacation_days_override)
+      : null;
+
+  return {
+    year: selectedYear,
+    total_year_vacation:
+      storedTotalYearVacation != null && Number.isFinite(storedTotalYearVacation)
+        ? Math.round(storedTotalYearVacation * 100) / 100
+        : null,
+    total_year_vacation_year: employee?.vacation_days_override_year ?? null,
+    approved_vacation_days_year: approvedVacationDaysYear,
+    approved_vacation_days_until_march_31: approvedVacationDaysUntilMarch31,
+    default_total_year_vacation: 20,
   };
 }
 
@@ -830,6 +1074,7 @@ const employeeService = {
   listEmployees,
   getEmployeeById,
   updateEmployeeLocalSettings,
+  getEmployeeVacationSummary,
   listEmployeeDocuments,
   listEmployeeRescues,
   listEmployeeContracts,

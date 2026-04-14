@@ -31,6 +31,18 @@ export async function getEmployee(employeeId) {
   return response.json();
 }
 
+export async function getEmployeeVacationSummary(employeeId, year) {
+  const params = new URLSearchParams();
+  if (year) params.set('year', String(year));
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeId)}/vacation-summary${params.toString() ? `?${params.toString()}` : ''}`,
+    authOpts()
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee vacation summary failed');
+  return out;
+}
+
 export async function updateEmployeeLocalSettings(employeeId, payload) {
   const response = await fetch(
     `${API_BASE}/api/employees/${encodeURIComponent(employeeId)}/local-settings`,
@@ -39,6 +51,9 @@ export async function updateEmployeeLocalSettings(employeeId, payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         vacationDaysOverride: payload?.vacationDaysOverride ?? null,
+        vacationDaysOverrideYear: payload?.vacationDaysOverrideYear ?? null,
+        totalYearVacation: payload?.totalYearVacation ?? payload?.vacationDaysOverride ?? null,
+        totalYearVacationYear: payload?.totalYearVacationYear ?? payload?.vacationDaysOverrideYear ?? null,
       }),
     })
   );

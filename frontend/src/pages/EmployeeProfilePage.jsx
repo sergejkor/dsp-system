@@ -3,6 +3,7 @@ import { useLocation, useSearchParams, Link } from 'react-router-dom';
 import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmployeeInKenjo } from '../services/kenjoApi';
 import {
   getEmployee,
+  getEmployeeVacationSummary,
   getEmployeeContracts,
   getEmployeeRescues,
   getEmployeeDocuments,
@@ -386,6 +387,72 @@ function sortContractTimelineRows(rows = []) {
   });
 }
 
+function roundDays(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.round(parsed * 100) / 100;
+}
+
+function formatDaysValue(value) {
+  const rounded = roundDays(value);
+  return rounded.toLocaleString('de-DE', {
+    minimumFractionDigits: Number.isInteger(rounded) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function getCustomFieldNumericValue(customFields, keys = []) {
+  const normalizedKeys = Array.isArray(keys)
+    ? keys.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  for (const field of Array.isArray(customFields) ? customFields : []) {
+    const key = String(field?.key || field?.name || field?.label || '').trim().toLowerCase();
+    if (!normalizedKeys.includes(key)) continue;
+    const parsed = Number(field?.value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function buildVacationBalanceSnapshot({
+  totalYearVacation,
+  carryOverDays,
+  approvedVacationDaysYear,
+  approvedVacationDaysUntilMarch31,
+  year,
+  now = new Date(),
+}) {
+  const safeYear = Number.isInteger(Number(year)) ? Number(year) : now.getFullYear();
+  const baseTotalYearVacation = roundDays(totalYearVacation || 20);
+  const carryOver = roundDays(carryOverDays);
+  const usedYear = roundDays(approvedVacationDaysYear);
+  const usedUntilMarch31 = roundDays(approvedVacationDaysUntilMarch31);
+  const marchDeadline = new Date(safeYear, 2, 31, 23, 59, 59, 999);
+  const carryConsumedByDeadline = Math.min(carryOver, usedUntilMarch31);
+  const afterCarryDeadline = now.getFullYear() > safeYear || (now.getFullYear() === safeYear && now > marchDeadline);
+  const carryExpired = afterCarryDeadline ? Math.max(carryOver - carryConsumedByDeadline, 0) : 0;
+  const carryAvailableNow = afterCarryDeadline ? 0 : Math.max(carryOver - usedYear, 0);
+  const chargedCurrentYearVacation = afterCarryDeadline
+    ? Math.max(usedYear - carryConsumedByDeadline, 0)
+    : Math.max(usedYear - Math.min(carryOver, usedYear), 0);
+  const remainingVacationDays = afterCarryDeadline
+    ? Math.max(baseTotalYearVacation - chargedCurrentYearVacation, 0)
+    : Math.max(baseTotalYearVacation + carryOver - usedYear, 0);
+  return {
+    totalYearVacation: baseTotalYearVacation,
+    carryOver,
+    carryConsumedByDeadline,
+    carryAvailableNow,
+    carryExpired,
+    usedYear,
+    usedUntilMarch31,
+    chargedCurrentYearVacation,
+    remainingVacationDays,
+    afterCarryDeadline,
+    carryDeadlineIso: `${safeYear}-03-31`,
+  };
+}
+
 export default function EmployeeProfilePage() {
   const { language, isDark } = useAppSettings();
   const location = useLocation();
@@ -394,6 +461,7 @@ export default function EmployeeProfilePage() {
   const localEmployeeId = location.state?.employeeId;
   const payrollRowFromState = location.state?.payrollRow ?? null;
   const payrollContextMonthFromState = String(location.state?.payrollContext?.month || '').slice(0, 7);
+  const currentVacationYear = new Date().getFullYear();
   const [employee, setEmployee] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(null);
@@ -459,6 +527,9 @@ export default function EmployeeProfilePage() {
   const [vacationDaysOverrideDraft, setVacationDaysOverrideDraft] = useState('');
   const [vacationDaysOverrideSaving, setVacationDaysOverrideSaving] = useState(false);
   const [vacationDaysOverrideError, setVacationDaysOverrideError] = useState('');
+  const [vacationSummary, setVacationSummary] = useState(null);
+  const [vacationSummaryLoading, setVacationSummaryLoading] = useState(false);
+  const [vacationSummaryError, setVacationSummaryError] = useState('');
   const [lastMonthPayrollCards, setLastMonthPayrollCards] = useState(null);
   const contractFileInputRef = useRef(null);
   const terminateContractFileInputRef = useRef(null);
@@ -515,9 +586,37 @@ export default function EmployeeProfilePage() {
   }, [employee]);
 
   useEffect(() => {
-    const value = localEmployee?.vacation_days_override;
+    const hasCurrentYearOverride =
+      Number(localEmployee?.total_year_vacation_year ?? localEmployee?.vacation_days_override_year) === currentVacationYear;
+    const value = hasCurrentYearOverride
+      ? (localEmployee?.total_year_vacation ?? localEmployee?.vacation_days_override)
+      : '';
     setVacationDaysOverrideDraft(value == null || value === '' ? '' : String(value));
-  }, [localEmployee?.vacation_days_override]);
+  }, [
+    currentVacationYear,
+    localEmployee?.total_year_vacation,
+    localEmployee?.total_year_vacation_year,
+    localEmployee?.vacation_days_override,
+    localEmployee?.vacation_days_override_year,
+  ]);
+
+  useEffect(() => {
+    const employeeRef = String(localEmployee?.employee_id || localEmployee?.kenjo_user_id || kenjoEmployeeId || localEmployeeId || '').trim();
+    if (!employeeRef) {
+      setVacationSummary(null);
+      setVacationSummaryError('');
+      return;
+    }
+    setVacationSummaryLoading(true);
+    setVacationSummaryError('');
+    getEmployeeVacationSummary(employeeRef, currentVacationYear)
+      .then((data) => setVacationSummary(data && typeof data === 'object' ? data : null))
+      .catch((e) => {
+        setVacationSummary(null);
+        setVacationSummaryError(String(e?.message || e));
+      })
+      .finally(() => setVacationSummaryLoading(false));
+  }, [currentVacationYear, kenjoEmployeeId, localEmployee?.employee_id, localEmployee?.kenjo_user_id, localEmployeeId]);
 
   useEffect(() => {
     const availableTypes = normalizeEmployeeDocumentTypeSettings(employeeDocumentTypeSettings).map((item) => item.type);
@@ -773,14 +872,17 @@ export default function EmployeeProfilePage() {
     try {
       const payloadValue = String(vacationDaysOverrideDraft || '').trim();
       const updated = await updateEmployeeLocalSettings(employeeRef, {
-        vacationDaysOverride: payloadValue === '' ? null : payloadValue,
+        totalYearVacation: payloadValue === '' ? null : payloadValue,
+        totalYearVacationYear: currentVacationYear,
       });
       setLocalEmployee(updated);
       setVacationDaysOverrideDraft(
-        updated?.vacation_days_override == null || updated?.vacation_days_override === ''
+        updated?.total_year_vacation == null || updated?.total_year_vacation === ''
           ? ''
-          : String(updated.vacation_days_override)
-      );
+          : String(updated.total_year_vacation)
+        );
+      const refreshedSummary = await getEmployeeVacationSummary(employeeRef, currentVacationYear);
+      setVacationSummary(refreshedSummary);
     } catch (e) {
       setVacationDaysOverrideError(String(e?.message || e));
     } finally {
@@ -1022,7 +1124,6 @@ export default function EmployeeProfilePage() {
 
   const fullName =
     displayName || personal?.displayName || [firstName, lastName].filter(Boolean).join(' ');
-  const currentVacationYear = new Date().getFullYear();
   const employeeDocTypeConfigs = normalizeEmployeeDocumentTypeSettings(employeeDocumentTypeSettings);
   const employeeDocTypeOptions = employeeDocTypeConfigs.map((item) => item.type);
   const selectedEmployeeDocTypeConfig =
@@ -1054,7 +1155,19 @@ export default function EmployeeProfilePage() {
       ...employeeDocs.map((doc) => String(doc?.document_type || '').trim()).filter(Boolean),
     ])
   );
-  const isActive = account?.isActive ?? false;
+  const carryOverDays = getCustomFieldNumericValue(current?.customFields, ['c_CarryOverDays', 'Carry over days']);
+  const vacationBalance = buildVacationBalanceSnapshot({
+    totalYearVacation:
+      vacationSummary?.total_year_vacation ??
+      localEmployee?.total_year_vacation ??
+      localEmployee?.vacation_days_override ??
+      20,
+    carryOverDays,
+    approvedVacationDaysYear: vacationSummary?.approved_vacation_days_year ?? 0,
+    approvedVacationDaysUntilMarch31: vacationSummary?.approved_vacation_days_until_march_31 ?? 0,
+    year: currentVacationYear,
+  });
+  const isActive = typeof localEmployee?.is_active === 'boolean' ? localEmployee.is_active : (account?.isActive ?? false);
   const jobTitle = work?.jobTitle;
   const transportationId = work?.transportationId;
 
@@ -1443,6 +1556,10 @@ export default function EmployeeProfilePage() {
       if (terminateContractDraft.file) {
         const refreshedDocs = await getEmployeeDocuments(employeeDocRef);
         setEmployeeDocs(Array.isArray(refreshedDocs) ? refreshedDocs : []);
+      }
+      const refreshedEmployee = await getEmployee(employeeDocRef).catch(() => null);
+      if (refreshedEmployee) {
+        setLocalEmployee(refreshedEmployee);
       }
       setContracts((prev) => sortContractTimelineRows([...(prev || []).filter((row) => row?.id !== saved?.id), saved].filter(Boolean)));
       closeTerminateContractModal();
@@ -2543,7 +2660,7 @@ export default function EmployeeProfilePage() {
           </div>
           <div style={{ marginBottom: '1rem' }}>
             <p style={{ margin: '0 0 0.35rem' }}>
-              <strong>Urlaub total override ({currentVacationYear})</strong>
+              <strong>Total year vacation ({currentVacationYear})</strong>
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 180px) auto', gap: '0.5rem', alignItems: 'center' }}>
               <input
@@ -2552,7 +2669,7 @@ export default function EmployeeProfilePage() {
                 step="0.01"
                 value={vacationDaysOverrideDraft}
                 onChange={(e) => setVacationDaysOverrideDraft(e.target.value)}
-                placeholder="Auto"
+                placeholder={String(vacationSummary?.default_total_year_vacation || 20)}
                 style={{ padding: '0.5rem' }}
               />
               <button
@@ -2565,12 +2682,50 @@ export default function EmployeeProfilePage() {
                 {vacationDaysOverrideSaving ? 'Saving...' : 'Save'}
               </button>
             </div>
-            <p style={{ margin: '0.45rem 0 0', color: '#666', fontSize: '0.9rem' }}>
-              Leave empty to calculate automatically from start date, contract end, and saved contract history.
+            <p style={{ margin: '0.45rem 0 0', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+              Standard entitlement is 20 days. Carry over from the previous year is added first and expires after 31.03 if unused.
             </p>
             {vacationDaysOverrideError ? (
               <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationDaysOverrideError}</p>
             ) : null}
+            {vacationSummaryError ? (
+              <p className="error-text" style={{ margin: '0.35rem 0 0' }}>{vacationSummaryError}</p>
+            ) : null}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                gap: '0.5rem',
+                marginTop: '0.75rem',
+              }}
+            >
+              <div style={employeeSectionStyle}>
+                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Carry over days</div>
+                <strong>{formatDaysValue(vacationBalance.carryOver)}</strong>
+              </div>
+              <div style={employeeSectionStyle}>
+                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Used vacation ({currentVacationYear})</div>
+                <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.usedYear)}</strong>
+              </div>
+              <div style={employeeSectionStyle}>
+                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>Remaining vacation</div>
+                <strong>{vacationSummaryLoading ? '...' : formatDaysValue(vacationBalance.remainingVacationDays)}</strong>
+              </div>
+              <div style={employeeSectionStyle}>
+                <div style={{ fontSize: '0.82rem', color: employeeMutedTextStyle.color, marginBottom: '0.2rem' }}>
+                  {vacationBalance.afterCarryDeadline ? 'Carry over expired' : `Carry over valid until ${vacationBalance.carryDeadlineIso}`}
+                </div>
+                <strong>
+                  {vacationSummaryLoading
+                    ? '...'
+                    : formatDaysValue(
+                        vacationBalance.afterCarryDeadline
+                          ? vacationBalance.carryExpired
+                          : vacationBalance.carryAvailableNow
+                      )}
+                </strong>
+              </div>
+            </div>
           </div>
           <div style={{ marginBottom: '1rem' }}>
             <p style={{ margin: '0 0 0.35rem' }}>

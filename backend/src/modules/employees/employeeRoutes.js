@@ -24,6 +24,9 @@ router.put('/:id/local-settings', async (req, res) => {
   try {
     const row = await employeeService.updateEmployeeLocalSettings(req.params.id, {
       vacationDaysOverride: req.body?.vacationDaysOverride,
+      vacationDaysOverrideYear: req.body?.vacationDaysOverrideYear,
+      totalYearVacation: req.body?.totalYearVacation,
+      totalYearVacationYear: req.body?.totalYearVacationYear,
     });
     if (!row) {
       return res.status(404).json({ error: 'Employee not found' });
@@ -40,6 +43,16 @@ router.put('/:id/local-settings', async (req, res) => {
     }
     console.error('PUT /api/employees/:id/local-settings error', error);
     res.status(500).json({ error: 'Failed to update employee local settings' });
+  }
+});
+
+router.get('/:id/vacation-summary', async (req, res) => {
+  try {
+    const summary = await employeeService.getEmployeeVacationSummary(req.params.id, req.query?.year);
+    res.json(summary);
+  } catch (error) {
+    console.error('GET /api/employees/:id/vacation-summary error', error);
+    res.status(500).json({ error: 'Failed to load employee vacation summary' });
   }
 });
 
