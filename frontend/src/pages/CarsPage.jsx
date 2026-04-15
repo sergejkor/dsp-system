@@ -917,6 +917,7 @@ export default function CarsPage() {
           width: min(960px, 100%);
           max-height: min(86vh, 900px);
           background: #fff;
+          color: #0f172a;
           border-radius: 16px;
           box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
           overflow: hidden;
@@ -952,6 +953,12 @@ export default function CarsPage() {
           overflow: auto;
         }
         .cars-kpi-modal-table-wrap { overflow: auto; }
+        .cars-kpi-modal .cars-table th,
+        .cars-kpi-modal .cars-table td {
+          background: transparent;
+          color: inherit;
+        }
+        .cars-kpi-modal .cars-link { color: #1976d2; }
         .cars-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
         .cars-search { padding: 0.5rem 0.75rem; width: 180px; max-width: 100%; border: 1px solid #ccc; border-radius: 6px; }
         .cars-toolbar-right { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; position: relative; }
@@ -1043,6 +1050,35 @@ export default function CarsPage() {
         body.dark .cars-action-menu-trigger:hover {
           background: rgba(111,166,255,0.34);
           border-color: rgba(162,200,255,0.64);
+        }
+        body.dark .cars-kpi-modal {
+          background: #0f172a;
+          color: #e2e8f0;
+          border: 1px solid rgba(148, 163, 184, 0.2);
+          box-shadow: 0 24px 70px rgba(2, 8, 23, 0.62);
+        }
+        body.dark .cars-kpi-modal-header {
+          border-bottom-color: rgba(100, 116, 139, 0.45);
+        }
+        body.dark .cars-kpi-modal-subtitle,
+        body.dark .cars-kpi-modal .muted {
+          color: #94a3b8;
+        }
+        body.dark .cars-kpi-modal-close {
+          background: #111827;
+          color: #e2e8f0;
+          border-color: rgba(100, 116, 139, 0.55);
+        }
+        body.dark .cars-kpi-modal .cars-table th {
+          background: rgba(30, 41, 59, 0.92);
+          color: #e2e8f0;
+          border-color: rgba(71, 85, 105, 0.75);
+        }
+        body.dark .cars-kpi-modal .cars-table td {
+          border-color: rgba(71, 85, 105, 0.65);
+        }
+        body.dark .cars-kpi-modal .cars-link {
+          color: #93c5fd;
         }
         @media (max-width: 780px) {
           .cars-kpi-modal-backdrop { padding: 0.75rem; }

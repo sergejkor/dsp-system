@@ -149,6 +149,7 @@ async function getCars(filters = {}) {
             c.status, c.station, c.fleet_provider, c.assigned_driver_id, c.mileage,
             c.last_maintenance_date, c.next_maintenance_date, c.next_maintenance_mileage,
             c.safety_score, c.incidents, c.registration_expiry, c.insurance_expiry, c.lease_expiry,
+            c.planned_defleeting_date,
             c.created_at, c.updated_at,
             k.first_name AS driver_first_name, k.last_name AS driver_last_name,
             p_today.driver_identifier AS today_planning_driver,
