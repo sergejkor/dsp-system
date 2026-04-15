@@ -96,9 +96,7 @@ router.get('/employees/:id', async (req, res) => {
     );
     const row = locRes.rows[0];
     const dspLocal = {
-      fuehrerschein_aufstellungsdatum: row?.fuehrerschein_aufstellungsdatum
-        ? String(row.fuehrerschein_aufstellungsdatum).slice(0, 10)
-        : '',
+      fuehrerschein_aufstellungsdatum: formatDateOnlyForClient(row?.fuehrerschein_aufstellungsdatum),
       fuehrerschein_aufstellungsbehoerde: row?.fuehrerschein_aufstellungsbehoerde
         ? String(row.fuehrerschein_aufstellungsbehoerde)
         : '',
@@ -178,15 +176,46 @@ function toDateOnly(v) {
   return iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : undefined;
 }
 
+function formatDateOnlyForClient(value) {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(value.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const normalized = toDateOnly(value);
+  if (normalized) return normalized;
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getUTCFullYear();
+    const m = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return '';
+}
+
+function resolveDateOnlyForDb(value) {
+  if (value === '' || value == null) {
+    return { mode: 'clear', value: null };
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return { mode: 'set', value: formatDateOnlyForClient(value) };
+  }
+  const normalized = toDateOnly(value);
+  if (normalized) {
+    return { mode: 'set', value: normalized };
+  }
+  return { mode: 'keep', value: null };
+}
+
 async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
   await ensureKenjoEmployeeLocalColumns();
   const rawD = dspLocal?.fuehrerschein_aufstellungsdatum;
   const rawB = dspLocal?.fuehrerschein_aufstellungsbehoerde;
   const rawW = dspLocal?.whatsapp_number;
-  const dateVal =
-    rawD === '' || rawD == null
-      ? null
-      : String(rawD).trim().slice(0, 10);
+  const { mode: dateMode, value: dateVal } = resolveDateOnlyForDb(rawD);
   const behVal =
     rawB === '' || rawB == null ? null : String(rawB).trim().slice(0, 2000);
   const whatsappVal =
@@ -203,13 +232,16 @@ async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
        fuehrerschein_aufstellungsbehoerde,
        whatsapp_number,
        updated_at
-     ) VALUES ($1, '', '', '', true, $2::date, $3, $4, NOW())
+     ) VALUES ($1, '', '', '', true, CASE WHEN $5 = 'keep' THEN NULL ELSE $2::date END, $3, $4, NOW())
      ON CONFLICT (kenjo_user_id) DO UPDATE SET
-       fuehrerschein_aufstellungsdatum = EXCLUDED.fuehrerschein_aufstellungsdatum,
+       fuehrerschein_aufstellungsdatum = CASE
+         WHEN $5 = 'keep' THEN kenjo_employees.fuehrerschein_aufstellungsdatum
+         ELSE EXCLUDED.fuehrerschein_aufstellungsdatum
+       END,
        fuehrerschein_aufstellungsbehoerde = EXCLUDED.fuehrerschein_aufstellungsbehoerde,
        whatsapp_number = EXCLUDED.whatsapp_number,
        updated_at = NOW()`,
-    [kenjoUserId, dateVal, behVal, whatsappVal]
+    [kenjoUserId, dateVal, behVal, whatsappVal, dateMode]
   );
 }
 
