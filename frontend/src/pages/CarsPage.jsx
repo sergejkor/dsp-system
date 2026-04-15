@@ -54,6 +54,89 @@ function formatMileage(n) {
   return Number.isFinite(num) ? `${num.toLocaleString('de-DE')} km` : '—';
 }
 
+function getCarDriverLabel(car) {
+  if (!car) return '—';
+  return (
+    car.today_planning_driver ||
+    [car.driver_first_name, car.driver_last_name].filter(Boolean).join(' ') ||
+    car.assigned_driver_id ||
+    '—'
+  );
+}
+
+function isCarWithoutDriver(car) {
+  return !Boolean(car?.today_planning_driver || car?.assigned_driver_id);
+}
+
+function isRegistrationExpiringSoon(car) {
+  const expiryDate = parseDateOnlyAsLocal(car?.registration_expiry);
+  if (!expiryDate) return false;
+  const today = parseDateOnlyAsLocal(getLocalToday());
+  if (!today) return false;
+  const diffMs = expiryDate.getTime() - today.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  return diffDays >= 0 && diffDays <= 30;
+}
+
+const KPI_CARD_CONFIG = [
+  {
+    key: 'totalVehicles',
+    label: 'Total Vehicles',
+    subtitle: 'All vehicles in the fleet',
+    getValue: (kpis) => kpis?.totalVehicles ?? 0,
+    filter: () => true,
+  },
+  {
+    key: 'activeVehicles',
+    label: 'Active',
+    subtitle: 'Vehicles currently active',
+    getValue: (kpis) => kpis?.activeVehicles ?? 0,
+    filter: (car) => car?.status === 'Active',
+  },
+  {
+    key: 'inMaintenance',
+    label: 'In Maintenance',
+    subtitle: 'Vehicles under maintenance',
+    getValue: (kpis) => kpis?.inMaintenance ?? 0,
+    filter: (car) => car?.status === 'Maintenance',
+  },
+  {
+    key: 'outOfService',
+    label: 'Out of Service',
+    subtitle: 'Vehicles not available for operations',
+    getValue: (kpis) => kpis?.outOfService ?? 0,
+    filter: (car) => car?.status === 'Out of Service',
+  },
+  {
+    key: 'withoutDriver',
+    label: 'Without Driver',
+    subtitle: 'Vehicles without assigned or planned driver',
+    getValue: (kpis, fallback) => kpis?.withoutDriver ?? fallback ?? 0,
+    filter: (car) => isCarWithoutDriver(car),
+  },
+  {
+    key: 'expiringDocuments',
+    label: 'Expiring Documents',
+    subtitle: 'Registration expiry within 30 days',
+    getValue: (kpis) => kpis?.expiringDocuments ?? 0,
+    filter: (car) => isRegistrationExpiringSoon(car),
+  },
+  {
+    key: 'defleetingCandidates',
+    label: 'Defleeting Candidates',
+    subtitle: 'Vehicles marked for defleeting',
+    getValue: (kpis) => kpis?.defleetingCandidates ?? 0,
+    filter: (car) => car?.status === 'Defleeting candidate',
+  },
+  {
+    key: 'groundedCars',
+    label: 'Grounded Cars',
+    subtitle: 'Vehicles with grounded status',
+    getValue: (kpis) => kpis?.groundedCars ?? 0,
+    filter: (car) => car?.status === 'Grounded',
+  },
+];
+
 export default function CarsPage() {
   const navigate = useNavigate();
   const [kpis, setKpis] = useState(null);
@@ -77,6 +160,10 @@ export default function CarsPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [qrVin, setQrVin] = useState('');
+  const [kpiModal, setKpiModal] = useState(null);
+  const [kpiModalRows, setKpiModalRows] = useState([]);
+  const [kpiModalLoading, setKpiModalLoading] = useState(false);
+  const [kpiModalError, setKpiModalError] = useState('');
   const [sortKey, setSortKey] = useState('license_plate');
   const [sortDir, setSortDir] = useState('asc');
 
@@ -226,6 +313,39 @@ export default function CarsPage() {
     setQrVin(vin);
   }
 
+  function closeKpiModal() {
+    setKpiModal(null);
+    setKpiModalRows([]);
+    setKpiModalLoading(false);
+    setKpiModalError('');
+  }
+
+  async function openKpiModal(config) {
+    if (!config) return;
+    setKpiModal(config);
+    setKpiModalRows([]);
+    setKpiModalError('');
+    setKpiModalLoading(true);
+    try {
+      const allCars = await getCars();
+      const rows = Array.isArray(allCars)
+        ? allCars
+            .filter((car) => config.filter(car))
+            .sort((a, b) =>
+              String(a?.license_plate || '').localeCompare(String(b?.license_plate || ''), undefined, {
+                sensitivity: 'base',
+                numeric: true,
+              }),
+            )
+        : [];
+      setKpiModalRows(rows);
+    } catch (modalError) {
+      setKpiModalError(modalError?.message || 'Failed to load vehicles for this card.');
+    } finally {
+      setKpiModalLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!actionsOpenId) return;
     function close() {
@@ -247,6 +367,16 @@ export default function CarsPage() {
     };
   }, [actionsOpenId]);
 
+  useEffect(() => {
+    function handleGlobalEscape(event) {
+      if (event.key === 'Escape') {
+        setSearch('');
+      }
+    }
+    window.addEventListener('keydown', handleGlobalEscape);
+    return () => window.removeEventListener('keydown', handleGlobalEscape);
+  }, []);
+
   return (
     <section className="card cars-page">
       <h2>Cars</h2>
@@ -257,14 +387,18 @@ export default function CarsPage() {
 
       {kpis && (
         <div className="cars-kpis">
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.totalVehicles}</span><span className="cars-kpi-label">Total Vehicles</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.activeVehicles}</span><span className="cars-kpi-label">Active</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.inMaintenance}</span><span className="cars-kpi-label">In Maintenance</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.outOfService}</span><span className="cars-kpi-label">Out of Service</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{withoutDriverInList}</span><span className="cars-kpi-label">Without Driver</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.expiringDocuments}</span><span className="cars-kpi-label">Expiring Documents</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.defleetingCandidates ?? 0}</span><span className="cars-kpi-label">Defleeting Candidates</span></div>
-          <div className="cars-kpi"><span className="cars-kpi-value">{kpis.groundedCars ?? 0}</span><span className="cars-kpi-label">Grounded Cars</span></div>
+          {KPI_CARD_CONFIG.map((card) => (
+            <button
+              key={card.key}
+              type="button"
+              className="cars-kpi cars-kpi--clickable"
+              onClick={() => openKpiModal(card)}
+              title={`Open ${card.label} list`}
+            >
+              <span className="cars-kpi-value">{card.getValue(kpis, withoutDriverInList)}</span>
+              <span className="cars-kpi-label">{card.label}</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -275,6 +409,14 @@ export default function CarsPage() {
           className="cars-search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              setSearch('');
+            }
+          }}
+          title="Press Esc to clear search"
         />
         <div className="cars-toolbar-right">
           <button type="button" className="cars-btn cars-btn--secondary" onClick={() => setFiltersOpen((v) => !v)}>
@@ -575,6 +717,73 @@ export default function CarsPage() {
         <VinQrModal vin={qrVin} onClose={() => setQrVin('')} />
       )}
 
+      {kpiModal && typeof document !== 'undefined' && createPortal(
+        <div className="cars-kpi-modal-backdrop" onClick={closeKpiModal}>
+          <div className="cars-kpi-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cars-kpi-modal-header">
+              <div>
+                <h3>{kpiModal.label}</h3>
+                <p className="cars-kpi-modal-subtitle">
+                  {kpiModalLoading ? 'Loading vehicles…' : `${kpiModalRows.length} vehicles`}
+                  {kpiModal.subtitle ? ` • ${kpiModal.subtitle}` : ''}
+                </p>
+              </div>
+              <button type="button" className="cars-kpi-modal-close" onClick={closeKpiModal}>×</button>
+            </div>
+            <div className="cars-kpi-modal-body">
+              {kpiModalLoading ? (
+                <p className="muted">Loading vehicles…</p>
+              ) : kpiModalError ? (
+                <p className="cars-message cars-message--error">{kpiModalError}</p>
+              ) : kpiModalRows.length === 0 ? (
+                <p className="muted">No vehicles found for this card.</p>
+              ) : (
+                <div className="cars-kpi-modal-table-wrap">
+                  <table className="cars-table">
+                    <thead>
+                      <tr>
+                        <th>License Plate</th>
+                        <th>VIN</th>
+                        <th>Vehicle Model</th>
+                        <th>Status</th>
+                        <th>Driver</th>
+                        <th>Station</th>
+                        <th>Registration Expiry</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {kpiModalRows.map((car) => (
+                        <tr key={car.id}>
+                          <td>
+                            <button
+                              type="button"
+                              className="cars-link"
+                              onClick={() => {
+                                closeKpiModal();
+                                openDetails(car.id);
+                              }}
+                            >
+                              {car.license_plate || '—'}
+                            </button>
+                          </td>
+                          <td>{car.vin || '—'}</td>
+                          <td>{car.model || '—'}</td>
+                          <td><span style={statusColor(car.status)}>{car.status || '—'}</span></td>
+                          <td>{getCarDriverLabel(car)}</td>
+                          <td>{car.station || '—'}</td>
+                          <td>{formatDate(car.registration_expiry)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {actionsOpenId && actionsMenuPos && actionsMenuCarRef.current && createPortal(
         <div
           onMouseDown={(e) => {
@@ -676,10 +885,75 @@ export default function CarsPage() {
         .cars-message--ok { background: #e8f5e9; color: #1b5e20; }
         .cars-kpis { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
         .cars-kpi { background: #f5f5f5; padding: 0.75rem 1rem; border-radius: 8px; min-width: 120px; }
+        .cars-kpi--clickable {
+          border: 1px solid #d9e2f2;
+          cursor: pointer;
+          text-align: left;
+          transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+        }
+        .cars-kpi--clickable:hover {
+          background: #edf4ff;
+          border-color: #90caf9;
+          box-shadow: 0 10px 24px rgba(25,118,210,0.12);
+          transform: translateY(-1px);
+        }
+        .cars-kpi--clickable:focus-visible {
+          outline: 3px solid rgba(25,118,210,0.22);
+          outline-offset: 2px;
+        }
         .cars-kpi-value { display: block; font-size: 1.5rem; font-weight: 700; }
         .cars-kpi-label { font-size: 0.85rem; color: #666; }
+        .cars-kpi-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.44);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 1.25rem;
+          z-index: 5600;
+        }
+        .cars-kpi-modal {
+          width: min(960px, 100%);
+          max-height: min(86vh, 900px);
+          background: #fff;
+          border-radius: 16px;
+          box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+        .cars-kpi-modal-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 1rem;
+          padding: 1rem 1.25rem;
+          border-bottom: 1px solid #e5e7eb;
+        }
+        .cars-kpi-modal-header h3 { margin: 0; }
+        .cars-kpi-modal-subtitle {
+          margin: 0.35rem 0 0;
+          color: #64748b;
+          font-size: 0.92rem;
+        }
+        .cars-kpi-modal-close {
+          border: 1px solid #dbe2ea;
+          background: #fff;
+          width: 36px;
+          height: 36px;
+          border-radius: 999px;
+          font-size: 1.3rem;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .cars-kpi-modal-body {
+          padding: 1rem 1.25rem 1.25rem;
+          overflow: auto;
+        }
+        .cars-kpi-modal-table-wrap { overflow: auto; }
         .cars-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
-        .cars-search { padding: 0.5rem 0.75rem; width: 220px; border: 1px solid #ccc; border-radius: 6px; }
+        .cars-search { padding: 0.5rem 0.75rem; width: 180px; max-width: 100%; border: 1px solid #ccc; border-radius: 6px; }
         .cars-toolbar-right { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; position: relative; }
         .cars-filters-panel { position: absolute; top: 100%; left: 0; margin-top: 4px; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; z-index: 10; display: flex; gap: 1rem; }
         .cars-filters-panel label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
@@ -770,6 +1044,19 @@ export default function CarsPage() {
           background: rgba(111,166,255,0.34);
           border-color: rgba(162,200,255,0.64);
         }
+        @media (max-width: 780px) {
+          .cars-kpi-modal-backdrop { padding: 0.75rem; }
+          .cars-kpi-modal {
+            width: 100%;
+            max-height: 90vh;
+            border-radius: 14px;
+          }
+          .cars-kpi-modal-header,
+          .cars-kpi-modal-body {
+            padding-left: 0.9rem;
+            padding-right: 0.9rem;
+          }
+        }
       `}</style>
     </section>
   );
@@ -783,7 +1070,7 @@ function VinQrModal({ vin, onClose }) {
       ? new URL(`/fleet-check?vin=${encodeURIComponent(rawVin)}`, window.location.origin).toString()
       : rawVin;
   const [copyStatus, setCopyStatus] = useState('');
-  return (
+  const modal = (
     <div
       onClick={onClose}
       style={{
@@ -791,10 +1078,10 @@ function VinQrModal({ vin, onClose }) {
         inset: 0,
         background: 'rgba(0,0,0,0.45)',
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'center',
         zIndex: 2000,
-        padding: '8vh 1rem 1rem',
+        padding: '1rem',
       }}
     >
       <div
@@ -807,7 +1094,7 @@ function VinQrModal({ vin, onClose }) {
           border: '1px solid #e5e7eb',
           boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
           overflow: 'auto',
-          maxHeight: '82vh',
+          maxHeight: '88vh',
         }}
       >
         <div
@@ -884,6 +1171,8 @@ function VinQrModal({ vin, onClose }) {
       </div>
     </div>
   );
+  if (typeof document === 'undefined') return modal;
+  return createPortal(modal, document.body);
 }
 
 function AddCarModal({ onClose, onSaved, onError }) {
