@@ -453,6 +453,18 @@ function buildHistoryYearOptions(startYear = 2025, endYear = 2028) {
   return list;
 }
 
+function normalizeLocalDateInputValue(value) {
+  if (!value) return '';
+  const normalized = normalizeContractDate(value);
+  if (normalized) return normalized;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const y = parsed.getUTCFullYear();
+  const m = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function getCustomFieldNumericValue(customFields, keys = []) {
   const normalizedKeys = Array.isArray(keys)
     ? keys.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
@@ -1636,7 +1648,7 @@ export default function EmployeeProfilePage() {
       {isEditing && onChange ? (
         <input
           type="date"
-          value={value ? String(value).slice(0, 10) : ''}
+          value={normalizeLocalDateInputValue(value)}
           onChange={(e) => onChange(e.target.value)}
           style={{ width: '60%' }}
         />
@@ -1707,7 +1719,12 @@ export default function EmployeeProfilePage() {
     setError('');
     setInternalProfileModal(null);
     try {
-      const nextDspLocal = { ...(draft.dspLocal || {}) };
+      const nextDspLocal = {
+        ...(draft.dspLocal || {}),
+        fuehrerschein_aufstellungsdatum: normalizeLocalDateInputValue(
+          draft?.dspLocal?.fuehrerschein_aufstellungsdatum,
+        ),
+      };
       await updateEmployeeInternalProfile(kenjoEmployeeId, {
         dspLocal: nextDspLocal,
       });
