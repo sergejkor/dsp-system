@@ -219,7 +219,7 @@ export default function FleetInspectionsPage() {
           </div>
         </div>
 
-        <div className="fleet-inspection-list" style={{ marginTop: '1rem' }}>
+        <div className="fleet-inspection-list fleet-inspection-list--compact" style={{ marginTop: '1rem' }}>
           {loading ? (
             <div className="fleet-inspection-list__item">Loading reminder tasks...</div>
           ) : tasks.length === 0 ? (
@@ -358,6 +358,52 @@ export default function FleetInspectionsPage() {
           )}
         </div>
       </div>
+
+      <style>{`
+        .fleet-inspection-list--compact .fleet-inspection-list__item {
+          padding: 0.7rem 0.8rem;
+          gap: 0.5rem;
+          border-radius: 15px;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-list__head {
+          gap: 0.55rem;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-list__head h3 {
+          font-size: 0.98rem;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-list__head p {
+          font-size: 0.88rem;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-detail-grid--dense {
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 0.5rem 0.7rem;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-detail-grid--dense .fleet-inspection-label {
+          font-size: 0.69rem;
+          letter-spacing: 0.06em;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-detail-grid--dense p {
+          font-size: 0.9rem;
+          line-height: 1.25;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-actions {
+          gap: 0.45rem;
+          align-items: center;
+        }
+
+        .fleet-inspection-list--compact .fleet-inspection-button--compact {
+          min-height: 34px;
+          padding: 0.48rem 0.8rem;
+          font-size: 0.84rem;
+        }
+      `}</style>
     </section>
   );
 }
