@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { getO2List, createO2Entry, updateO2Entry, deleteO2Entry } from '../services/o2TelefonicaApi';
 import { getKenjoUsers } from '../services/kenjoApi';
 import { useAppSettings } from '../context/AppSettingsContext';
@@ -30,6 +31,7 @@ export default function O2TelefonicaPage() {
   const [employeesList, setEmployeesList] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
   const menuRef = useRef(null);
   const [deleteRow, setDeleteRow] = useState(null);
   const [editRow, setEditRow] = useState(null);
@@ -103,6 +105,57 @@ export default function O2TelefonicaPage() {
         (row.sim_card_number || '').toLowerCase().includes(q)
     );
   }, [list, searchQuery]);
+
+  const sortedList = useMemo(() => {
+    const rows = [...filteredList];
+    const key = sortConfig?.key;
+    const direction = sortConfig?.direction === 'desc' ? 'desc' : 'asc';
+    if (!key) return rows;
+    rows.sort((left, right) => {
+      const leftValue = String(left?.[key] || '').toLowerCase();
+      const rightValue = String(right?.[key] || '').toLowerCase();
+      const result = leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: 'base' });
+      return direction === 'desc' ? -result : result;
+    });
+    return rows;
+  }, [filteredList, sortConfig]);
+
+  const toggleSort = (key) => {
+    setSortConfig((prev) =>
+      prev?.key === key
+        ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: 'asc' }
+    );
+  };
+
+  const renderSortIcon = (key) => {
+    if (sortConfig?.key !== key) {
+      return (
+        <span
+          aria-hidden="true"
+          style={{
+            fontSize: '0.78rem',
+            letterSpacing: '-0.15em',
+            color: isDark ? '#94a3b8' : '#94a3b8',
+          }}
+        >
+          ▲▼
+        </span>
+      );
+    }
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          fontSize: '0.82rem',
+          color: isDark ? '#60a5fa' : '#2563eb',
+          fontWeight: 700,
+        }}
+      >
+        {sortConfig.direction === 'asc' ? '▲' : '▼'}
+      </span>
+    );
+  };
 
   const loadList = async () => {
     setLoading(true);
@@ -216,14 +269,74 @@ export default function O2TelefonicaPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
             <thead>
               <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Name</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>Phone number</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>SIM card number</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleSort('name')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      padding: 0,
+                      border: 'none',
+                      background: 'none',
+                      color: isDark ? '#e5e7eb' : '#111827',
+                      font: 'inherit',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span>Name</span>
+                    {renderSortIcon('name')}
+                  </button>
+                </th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleSort('phone_number')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      padding: 0,
+                      border: 'none',
+                      background: 'none',
+                      color: isDark ? '#e5e7eb' : '#111827',
+                      font: 'inherit',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span>Phone number</span>
+                    {renderSortIcon('phone_number')}
+                  </button>
+                </th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleSort('sim_card_number')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      padding: 0,
+                      border: 'none',
+                      background: 'none',
+                      color: isDark ? '#e5e7eb' : '#111827',
+                      font: 'inherit',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span>SIM card number</span>
+                    {renderSortIcon('sim_card_number')}
+                  </button>
+                </th>
                 <th style={{ width: 48, padding: '0.5rem' }} />
               </tr>
             </thead>
             <tbody>
-              {filteredList.length === 0 ? (
+              {sortedList.length === 0 ? (
                 <tr>
                   <td colSpan={4} style={{ padding: '1.5rem', color: '#666', textAlign: 'center' }}>
                     {list.length === 0
@@ -232,7 +345,7 @@ export default function O2TelefonicaPage() {
                   </td>
                 </tr>
               ) : (
-                filteredList.map((row) => (
+                sortedList.map((row) => (
                   <tr key={row.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '0.5rem 0.75rem' }}>{row.name ?? '—'}</td>
                     <td style={{ padding: '0.5rem 0.75rem' }}>{row.phone_number ?? '—'}</td>
@@ -387,7 +500,7 @@ export default function O2TelefonicaPage() {
           </div>
         </div>
       )}
-      {editRow && (
+      {editRow && createPortal(
         <div
           style={editModalBackdropStyle}
           onClick={() => !editSaving && setEditRow(null)}
@@ -553,7 +666,8 @@ export default function O2TelefonicaPage() {
               </button>
             </div>
           </form>
-        </div>
+        </div>,
+        document.body
       )}
       {deleteRow && (
         <div
