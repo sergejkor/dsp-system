@@ -285,6 +285,20 @@ async function run() {
     console.log('Migration OK: payroll_bonus_items table (or already exists).');
 
     await query(`
+      CREATE TABLE IF NOT EXISTS payroll_history_snapshots (
+        id SERIAL PRIMARY KEY,
+        period_id VARCHAR(7) NOT NULL UNIQUE,
+        period_from DATE,
+        period_to DATE,
+        payload JSONB,
+        saved_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_payroll_history_period ON payroll_history_snapshots (period_id)`);
+    console.log('Migration OK: payroll_history_snapshots table (or already exists).');
+
+    await query(`
       CREATE TABLE IF NOT EXISTS kenjo_time_off (
         id SERIAL PRIMARY KEY,
         kenjo_request_id VARCHAR(255) NOT NULL UNIQUE,

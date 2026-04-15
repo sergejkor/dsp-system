@@ -966,6 +966,80 @@ export async function saveManualEntry(periodId, employeeId, payload) {
   return { ok: true };
 }
 
+export async function listPayrollHistory() {
+  const result = await query(
+    `SELECT period_id, period_from, period_to, saved_at, updated_at,
+            COALESCE(jsonb_array_length(payload->'rows'), 0) AS employee_count
+       FROM payroll_history_snapshots
+      ORDER BY period_id DESC`
+  ).catch(() => ({ rows: [] }));
+
+  return (result.rows || []).map((row) => ({
+    period_id: row.period_id,
+    period_from: row.period_from ? String(row.period_from).slice(0, 10) : null,
+    period_to: row.period_to ? String(row.period_to).slice(0, 10) : null,
+    saved_at: row.saved_at || null,
+    updated_at: row.updated_at || null,
+    employee_count: Number(row.employee_count) || 0,
+  }));
+}
+
+export async function getPayrollHistorySnapshot(periodId) {
+  const period = String(periodId || '').trim().slice(0, 7);
+  if (!period || !/^\d{4}-\d{2}$/.test(period)) throw new Error('period_id (YYYY-MM) is required');
+
+  const result = await query(
+    `SELECT period_id, period_from, period_to, payload, saved_at, updated_at
+       FROM payroll_history_snapshots
+      WHERE period_id = $1
+      LIMIT 1`,
+    [period]
+  ).catch(() => ({ rows: [] }));
+
+  const row = result.rows?.[0];
+  if (!row) {
+    return {
+      period_id: period,
+      period_from: null,
+      period_to: null,
+      payload: null,
+      saved_at: null,
+      updated_at: null,
+    };
+  }
+
+  return {
+    period_id: row.period_id,
+    period_from: row.period_from ? String(row.period_from).slice(0, 10) : null,
+    period_to: row.period_to ? String(row.period_to).slice(0, 10) : null,
+    payload: row.payload || null,
+    saved_at: row.saved_at || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
+export async function savePayrollHistorySnapshot(periodId, payload, periodFrom, periodTo) {
+  const period = String(periodId || '').trim().slice(0, 7);
+  if (!period || !/^\d{4}-\d{2}$/.test(period)) throw new Error('period_id (YYYY-MM) is required');
+
+  const from = periodFrom ? String(periodFrom).slice(0, 10) : null;
+  const to = periodTo ? String(periodTo).slice(0, 10) : null;
+  const snapshotPayload = payload && typeof payload === 'object' ? payload : null;
+
+  await query(
+    `INSERT INTO payroll_history_snapshots (period_id, period_from, period_to, payload, saved_at, updated_at)
+     VALUES ($1, $2::date, $3::date, $4::jsonb, NOW(), NOW())
+     ON CONFLICT (period_id) DO UPDATE SET
+       period_from = EXCLUDED.period_from,
+       period_to = EXCLUDED.period_to,
+       payload = EXCLUDED.payload,
+       updated_at = NOW()`,
+    [period, from, to, JSON.stringify(snapshotPayload)]
+  );
+
+  return { ok: true };
+}
+
 /**
  * Get KPI data by weeks for an employee. Matches by kenjo_employee_id, transporter_id (from kenjo_employees), or employee_number (PN).
  */
