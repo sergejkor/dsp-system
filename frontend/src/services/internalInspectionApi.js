@@ -132,6 +132,14 @@ export async function deleteFleetInspection(id) {
   return ensureOk(res, 'Failed to delete inspection report');
 }
 
+export async function deleteFleetInspectionTask(id) {
+  const res = await fetch(
+    `${API_BASE}/api/fleet-inspections/tasks/${id}`,
+    authOpts({ method: 'DELETE' }),
+  );
+  return ensureOk(res, 'Failed to delete inspection task');
+}
+
 export async function getInspectionPhotoBlob(inspectionId, photoId) {
   const res = await fetch(
     `${API_BASE}/api/fleet-inspections/${inspectionId}/photos/${photoId}/download`,

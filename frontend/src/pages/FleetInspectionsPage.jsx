@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   deleteFleetInspection,
+  deleteFleetInspectionTask,
   listFleetInspectionTasks,
   listFleetInspections,
 } from '../services/internalInspectionApi.js';
@@ -85,6 +86,7 @@ export default function FleetInspectionsPage() {
   const [taskStatus, setTaskStatus] = useState('');
   const [result, setResult] = useState('');
   const [deletingInspectionId, setDeletingInspectionId] = useState(null);
+  const [deletingTaskId, setDeletingTaskId] = useState(null);
 
   const carId = searchParams.get('carId') || '';
 
@@ -155,6 +157,30 @@ export default function FleetInspectionsPage() {
       setError(deleteError.message || 'Failed to delete inspection report');
     } finally {
       setDeletingInspectionId(null);
+    }
+  }
+
+  async function handleDeleteTask(taskId) {
+    const confirmed = window.confirm('Delete this inspection task from the queue?');
+    if (!confirmed) return;
+
+    setDeletingTaskId(taskId);
+    setError('');
+    setMessage('');
+
+    try {
+      await deleteFleetInspectionTask(taskId);
+      const [taskRows, inspectionRows] = await Promise.all([
+        listFleetInspectionTasks({ search, status: taskStatus, carId, limit: 120 }),
+        listFleetInspections({ search, result, carId, limit: 120 }),
+      ]);
+      setTasks(Array.isArray(taskRows) ? taskRows : []);
+      setInspections(Array.isArray(inspectionRows) ? inspectionRows : []);
+      setMessage('Inspection task deleted.');
+    } catch (deleteError) {
+      setError(deleteError.message || 'Failed to delete inspection task');
+    } finally {
+      setDeletingTaskId(null);
     }
   }
 
@@ -330,7 +356,22 @@ export default function FleetInspectionsPage() {
                         {deletingInspectionId === task.completed_inspection_id ? 'Deleting...' : 'Delete report'}
                       </button>
                     </>
-                  ) : null}
+                  ) : (
+                    <button
+                      type="button"
+                      className="fleet-inspection-button fleet-inspection-button--compact"
+                      onClick={() => handleDeleteTask(task.id)}
+                      disabled={deletingTaskId === task.id}
+                      style={{
+                        background: '#fef2f2',
+                        color: '#b91c1c',
+                        boxShadow: 'none',
+                        border: '1px solid rgba(220, 38, 38, 0.18)',
+                      }}
+                    >
+                      {deletingTaskId === task.id ? 'Deleting...' : 'Delete task'}
+                    </button>
+                  )}
                   {task.last_reminder_error ? (
                     <span className="fleet-inspection-inline-note">{task.last_reminder_error}</span>
                   ) : null}

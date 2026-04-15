@@ -693,6 +693,27 @@ export class InspectionReminderService {
     );
     return mapTaskRow(res.rows?.[0] || null);
   }
+
+  async deleteTask(taskId) {
+    await this.ensureTables();
+    const id = toInteger(taskId, null);
+    if (!id) return null;
+
+    const res = await query(
+      `DELETE FROM vehicle_internal_inspection_tasks
+       WHERE id = $1
+       RETURNING id, completed_inspection_id`,
+      [id],
+    );
+
+    const row = res.rows?.[0] || null;
+    if (!row) return null;
+    return {
+      id: toInteger(row.id, row.id),
+      deleted: true,
+      completed_inspection_id: toInteger(row.completed_inspection_id, row.completed_inspection_id),
+    };
+  }
 }
 
 export default new InspectionReminderService();

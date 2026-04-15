@@ -631,6 +631,11 @@ async function listInspectionTasks(filters = {}) {
   return inspectionReminderService.listTasks(filters);
 }
 
+async function deleteInspectionTask(id) {
+  await ensureVehicleInspectionTables();
+  return inspectionReminderService.deleteTask(id);
+}
+
 async function deleteInspection(id) {
   await ensureVehicleInspectionTables();
   await inspectionReminderService.ensureTables();
@@ -710,6 +715,7 @@ export default {
   submitInspection,
   listInspections,
   listInspectionTasks,
+  deleteInspectionTask,
   getInspectionById,
   getInspectionPhoto,
   analyzeInspection,
