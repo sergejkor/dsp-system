@@ -748,7 +748,7 @@ export default function CarsPage() {
                         <th>Status</th>
                         <th>Driver</th>
                         <th>Station</th>
-                        <th>Registration Expiry</th>
+                        <th>{kpiModal.key === 'defleetingCandidates' ? 'Defleeting Candidate Date' : 'Registration Expiry'}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -771,7 +771,7 @@ export default function CarsPage() {
                           <td><span style={statusColor(car.status)}>{car.status || '—'}</span></td>
                           <td>{getCarDriverLabel(car)}</td>
                           <td>{car.station || '—'}</td>
-                          <td>{formatDate(car.registration_expiry)}</td>
+                          <td>{formatDate(kpiModal.key === 'defleetingCandidates' ? car.planned_defleeting_date : car.registration_expiry)}</td>
                         </tr>
                       ))}
                     </tbody>
