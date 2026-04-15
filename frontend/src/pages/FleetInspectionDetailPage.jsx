@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { getFleetInspection, getInspectionPhotoBlob } from '../services/internalInspectionApi.js';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import {
+  deleteFleetInspection,
+  getFleetInspection,
+  getInspectionPhotoBlob,
+} from '../services/internalInspectionApi.js';
 import { getOverlaySet, REQUIRED_SHOT_IDS } from '../services/overlayRegistry.js';
 import './fleetInspections.css';
 
@@ -50,11 +54,14 @@ function formatDateTime(value) {
 
 export default function FleetInspectionDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [inspection, setInspection] = useState(null);
   const [photoUrls, setPhotoUrls] = useState({});
   const [loading, setLoading] = useState(true);
   const [photoLoading, setPhotoLoading] = useState(false);
   const [error, setError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const findingsByShot = useMemo(
     () => Object.fromEntries((inspection?.findings || []).map((finding) => [finding.shot_type, finding])),
@@ -124,6 +131,23 @@ export default function FleetInspectionDetailPage() {
     };
   }, [inspection]);
 
+  async function handleDeleteInspection() {
+    if (!inspection?.id || deleting) return;
+    const confirmed = window.confirm('Delete this inspection report permanently? This action cannot be undone.');
+    if (!confirmed) return;
+
+    setDeleteError('');
+    setDeleting(true);
+
+    try {
+      await deleteFleetInspection(inspection.id);
+      navigate('/fleet-inspections', { replace: true });
+    } catch (deleteRequestError) {
+      setDeleteError(deleteRequestError.message || 'Failed to delete inspection report');
+      setDeleting(false);
+    }
+  }
+
   if (loading) {
     return <section className="fleet-inspection-card">Loading inspection...</section>;
   }
@@ -155,11 +179,31 @@ export default function FleetInspectionDetailPage() {
             <span className="fleet-inspection-status" data-tone={resultTone(inspection.overall_result)}>
               {resultLabel(inspection.overall_result)}
             </span>
+            <button
+              type="button"
+              className="fleet-inspection-button"
+              onClick={handleDeleteInspection}
+              disabled={deleting}
+              style={{
+                background: '#fef2f2',
+                color: '#b91c1c',
+                boxShadow: 'none',
+                border: '1px solid rgba(220, 38, 38, 0.18)',
+              }}
+            >
+              {deleting ? 'Deleting...' : 'Delete report'}
+            </button>
             <Link to="/fleet-inspections" className="fleet-inspection-button fleet-inspection-button--secondary">
               Back to list
             </Link>
           </div>
         </div>
+
+        {deleteError ? (
+          <div className="fleet-inspection-alert fleet-inspection-alert--error" style={{ marginTop: '1rem' }}>
+            {deleteError}
+          </div>
+        ) : null}
 
         <div className="fleet-inspection-detail-grid" style={{ marginTop: '1rem' }}>
           <div>
@@ -305,6 +349,67 @@ export default function FleetInspectionDetailPage() {
           </div>
         </div>
       ) : null}
+
+      <style>{`
+        body.dark .fleet-inspection-card {
+          background:
+            linear-gradient(180deg, rgba(20, 31, 50, 0.96), rgba(12, 20, 34, 0.96));
+          border-color: rgba(148, 163, 184, 0.18);
+          box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+          color: #f8fbff;
+        }
+
+        body.dark .fleet-inspection-label,
+        body.dark .fleet-inspection-field label {
+          color: #9fb2d1;
+        }
+
+        body.dark .fleet-inspection-muted,
+        body.dark .fleet-inspection-list__head p,
+        body.dark .fleet-inspection-inline-note {
+          color: #92a6c6;
+        }
+
+        body.dark .fleet-inspection-card h2,
+        body.dark .fleet-inspection-card h3,
+        body.dark .fleet-inspection-card h4,
+        body.dark .fleet-inspection-card strong {
+          color: #f8fbff;
+        }
+
+        body.dark .fleet-inspection-button--secondary {
+          background: rgba(30, 41, 59, 0.96);
+          color: #f8fbff;
+          border: 1px solid rgba(148, 163, 184, 0.18);
+        }
+
+        body.dark .fleet-inspection-alert--warning {
+          background: rgba(120, 53, 15, 0.24);
+          color: #fdba74;
+        }
+
+        body.dark .fleet-inspection-alert--error {
+          background: rgba(127, 29, 29, 0.26);
+          color: #fca5a5;
+        }
+
+        body.dark .fleet-inspection-list__item,
+        body.dark .fleet-inspection-photo-card,
+        body.dark .fleet-inspection-result-list__item {
+          background: rgba(15, 23, 42, 0.74);
+          border-color: rgba(148, 163, 184, 0.18);
+        }
+
+        body.dark .fleet-inspection-status[data-tone='neutral'] {
+          background: rgba(51, 65, 85, 0.94);
+          color: #dbeafe;
+        }
+
+        body.dark .fleet-inspection-photo-card .fleet-inspection-photo-card__placeholder {
+          background: rgba(30, 41, 59, 0.96);
+          color: #cbd5e1;
+        }
+      `}</style>
     </section>
   );
 }

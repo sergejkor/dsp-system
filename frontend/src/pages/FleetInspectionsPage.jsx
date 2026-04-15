@@ -311,9 +311,25 @@ export default function FleetInspectionsPage() {
 
                 <div className="fleet-inspection-actions">
                   {task.completed_inspection_id ? (
-                    <Link to={`/fleet-inspections/${task.completed_inspection_id}`} className="fleet-inspection-button fleet-inspection-button--compact">
-                      Open completed inspection
-                    </Link>
+                    <>
+                      <Link to={`/fleet-inspections/${task.completed_inspection_id}`} className="fleet-inspection-button fleet-inspection-button--compact">
+                        Open completed inspection
+                      </Link>
+                      <button
+                        type="button"
+                        className="fleet-inspection-button fleet-inspection-button--compact"
+                        onClick={() => handleDeleteInspection(task.completed_inspection_id)}
+                        disabled={deletingInspectionId === task.completed_inspection_id}
+                        style={{
+                          background: '#fef2f2',
+                          color: '#b91c1c',
+                          boxShadow: 'none',
+                          border: '1px solid rgba(220, 38, 38, 0.18)',
+                        }}
+                      >
+                        {deletingInspectionId === task.completed_inspection_id ? 'Deleting...' : 'Delete report'}
+                      </button>
+                    </>
                   ) : null}
                   {task.last_reminder_error ? (
                     <span className="fleet-inspection-inline-note">{task.last_reminder_error}</span>
@@ -411,6 +427,105 @@ export default function FleetInspectionsPage() {
       </div>
 
       <style>{`
+        body.dark .fleet-inspection-card {
+          background:
+            linear-gradient(180deg, rgba(20, 31, 50, 0.96), rgba(12, 20, 34, 0.96));
+          border-color: rgba(148, 163, 184, 0.18);
+          box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+          color: #f8fbff;
+        }
+
+        body.dark .fleet-inspection-label,
+        body.dark .fleet-inspection-field label {
+          color: #9fb2d1;
+        }
+
+        body.dark .fleet-inspection-muted,
+        body.dark .fleet-inspection-list__head p,
+        body.dark .fleet-inspection-inline-note {
+          color: #92a6c6;
+        }
+
+        body.dark .fleet-inspection-card h2,
+        body.dark .fleet-inspection-card h3,
+        body.dark .fleet-inspection-card h4,
+        body.dark .fleet-inspection-card strong {
+          color: #f8fbff;
+        }
+
+        body.dark .fleet-inspection-input,
+        body.dark .fleet-inspection-select {
+          background: rgba(12, 21, 36, 0.96);
+          border-color: rgba(148, 163, 184, 0.22);
+          color: #f8fbff;
+        }
+
+        body.dark .fleet-inspection-input::placeholder {
+          color: #7f95b7;
+        }
+
+        body.dark .fleet-inspection-button--secondary,
+        body.dark .fleet-inspection-button--neutral {
+          background: rgba(30, 41, 59, 0.96);
+          color: #f8fbff;
+          border: 1px solid rgba(148, 163, 184, 0.18);
+        }
+
+        body.dark .fleet-inspection-alert--warning {
+          background: rgba(120, 53, 15, 0.24);
+          color: #fdba74;
+        }
+
+        body.dark .fleet-inspection-alert--error {
+          background: rgba(127, 29, 29, 0.26);
+          color: #fca5a5;
+        }
+
+        body.dark .fleet-inspection-alert--success {
+          background: rgba(6, 95, 70, 0.24);
+          color: #86efac;
+        }
+
+        body.dark .fleet-inspection-summary-card,
+        body.dark .fleet-inspection-list__item {
+          background: rgba(15, 23, 42, 0.74);
+          border-color: rgba(148, 163, 184, 0.18);
+        }
+
+        body.dark .fleet-inspection-summary-card strong {
+          color: #f8fbff;
+        }
+
+        body.dark .fleet-inspection-summary-card--alert {
+          background: rgba(69, 10, 10, 0.32);
+          border-color: rgba(248, 113, 113, 0.28);
+        }
+
+        body.dark .fleet-inspection-list__item[data-tone='warning'] {
+          background: rgba(120, 53, 15, 0.2);
+          border-color: rgba(251, 191, 36, 0.3);
+        }
+
+        body.dark .fleet-inspection-list__item[data-tone='info'] {
+          background: rgba(30, 64, 175, 0.18);
+          border-color: rgba(96, 165, 250, 0.3);
+        }
+
+        body.dark .fleet-inspection-list__item[data-tone='success'] {
+          background: rgba(6, 95, 70, 0.18);
+          border-color: rgba(74, 222, 128, 0.24);
+        }
+
+        body.dark .fleet-inspection-list__item[data-tone='error'] {
+          background: rgba(127, 29, 29, 0.2);
+          border-color: rgba(248, 113, 113, 0.28);
+        }
+
+        body.dark .fleet-inspection-status[data-tone='neutral'] {
+          background: rgba(51, 65, 85, 0.94);
+          color: #dbeafe;
+        }
+
         .fleet-inspection-list--compact .fleet-inspection-list__item {
           padding: 0.7rem 0.8rem;
           gap: 0.5rem;
