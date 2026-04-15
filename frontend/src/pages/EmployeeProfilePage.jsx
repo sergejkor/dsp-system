@@ -274,6 +274,52 @@ function getFrozenPayrollRowFromCache({ month, kenjoEmployeeId, pnCandidates = [
   }
 }
 
+function payrollRowHasHoursData(row) {
+  if (!row || typeof row !== 'object') return false;
+  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
+    ? row.manual_entry
+    : null;
+  const fields = ['worked_hours', 'payroll_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours', 'overtime'];
+  return fields.some((field) =>
+    Object.prototype.hasOwnProperty.call(row, field) ||
+    (manualEntry ? Object.prototype.hasOwnProperty.call(manualEntry, field) : false)
+  );
+}
+
+function findMatchingPayrollRow(rows, { kenjoIdCandidates = [], pnCandidates = [], employeeName = '' } = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return null;
+
+  const rowsByKenjoId = list.filter((item) => {
+    const rowIds = [
+      item?.kenjo_employee_id,
+      item?.kenjo_user_id,
+      item?.employee_id,
+      item?.id,
+    ]
+      .map((value) => normalizeIdentifier(value))
+      .filter(Boolean);
+    return kenjoIdCandidates.some((candidate) => rowIds.includes(candidate));
+  });
+
+  let row = pickBestPayrollRow(rowsByKenjoId, employeeName);
+  if (!row) {
+    for (const pn of pnCandidates) {
+      const matches = list.filter((item) => personalNumberMatches(item?.pn, pn));
+      if (!matches.length) continue;
+      row = pickBestPayrollRow(matches, employeeName);
+      if (row) break;
+    }
+  }
+  if (!row && employeeName) {
+    row = list.find((item) => normalizeNameForMatch(item?.name) === employeeName) || null;
+  }
+  if (!row && pnCandidates.length > 0) {
+    row = list.find((item) => personalNumberMatches(item?.pn, pnCandidates[0])) || null;
+  }
+  return row || null;
+}
+
 function buildEmployeePayrollCardsFromRow(row) {
   if (!row || typeof row !== 'object') return null;
   const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
@@ -758,7 +804,7 @@ export default function EmployeeProfilePage() {
           pnCandidates: [employeePn].filter(Boolean),
           employeeName,
         });
-        if (cachedRow) {
+        if (cachedRow && payrollRowHasHoursData(cachedRow)) {
           const cards = buildEmployeePayrollCardsFromRow(cachedRow);
           if (!cancelled) setLastMonthPayrollCards(cards);
           return;
@@ -808,24 +854,22 @@ export default function EmployeeProfilePage() {
           return kenjoIdCandidates.some((candidate) => rowIds.includes(candidate));
         });
         const pnCandidates = [...new Set([employeePn].filter(Boolean))];
-
-        const findByPn = (pnValue) =>
-          rows.filter((item) => personalNumberMatches(item?.pn, pnValue));
-
         let row = pickBestPayrollRow(rowsByKenjoId, employeeNameLive);
         if (!row) {
-          for (const pn of pnCandidates) {
-            const matches = findByPn(pn);
-            if (!matches.length) continue;
-            row = pickBestPayrollRow(matches, employeeNameLive);
-            if (row) break;
-          }
+          row = findMatchingPayrollRow(rows, {
+            kenjoIdCandidates,
+            pnCandidates,
+            employeeName: employeeNameLive,
+          });
         }
-        if (!row && employeeNameLive) {
-          row = rows.find((item) => normalizeNameForMatch(item?.name) === employeeNameLive) || null;
-        }
-        if (!row && pnCandidates.length > 0) {
-          row = rows.find((item) => personalNumberMatches(item?.pn, pnCandidates[0])) || null;
+        if (row && !payrollRowHasHoursData(row)) {
+          const liveResult = await calculatePayroll(month, fromDate, toDate);
+          const liveRows = Array.isArray(liveResult?.rows) ? liveResult.rows : [];
+          row = findMatchingPayrollRow(liveRows, {
+            kenjoIdCandidates,
+            pnCandidates,
+            employeeName: employeeNameLive,
+          });
         }
         if (!row || cancelled) {
           if (!cancelled) setLastMonthPayrollCards(null);
