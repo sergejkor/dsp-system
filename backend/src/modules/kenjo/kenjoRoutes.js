@@ -84,14 +84,15 @@ router.post('/sync-employees', async (_req, res) => {
 router.get('/employees/:id', async (req, res) => {
   try {
     await ensureKenjoEmployeeLocalColumns();
-    const employee = await getKenjoEmployeeByIdReadable(req.params.id);
-    if (!employee || !employee.id) {
+    const target = await resolveKenjoTargetEmployee(req.params.id);
+    if (!target) {
       return res.status(404).json({ error: 'Employee not found in Kenjo' });
     }
+    const { employee, kenjoUserId } = target;
     const locRes = await query(
       `SELECT fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, whatsapp_number
        FROM kenjo_employees WHERE kenjo_user_id = $1`,
-      [req.params.id]
+      [kenjoUserId]
     );
     const row = locRes.rows[0];
     const dspLocal = {
@@ -111,7 +112,7 @@ router.get('/employees/:id', async (req, res) => {
        WHERE kenjo_user_id = $1
        ORDER BY updated_at DESC NULLS LAST, id DESC
        LIMIT 1`,
-      [req.params.id],
+      [kenjoUserId],
     );
     const o2Row = o2Res?.rows?.[0] || null;
     const o2Phone = o2Row?.phone_number ? String(o2Row.phone_number).trim() : '';
@@ -212,6 +213,13 @@ async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
   );
 }
 
+async function resolveKenjoTargetEmployee(employeeRef) {
+  const employee = await getKenjoEmployeeByIdReadable(employeeRef);
+  const kenjoUserId = String(employee?.id || employee?._id || '').trim();
+  if (!employee || !kenjoUserId) return null;
+  return { employee, kenjoUserId };
+}
+
 router.put('/employees/:id/profile', async (req, res) => {
   try {
     const { id } = req.params;
@@ -262,7 +270,12 @@ router.put('/employees/:id/profile', async (req, res) => {
     }
     if (dspLocal && typeof dspLocal === 'object') {
       try {
-        await saveEmployeeDspLocal(id, dspLocal);
+        const target = await resolveKenjoTargetEmployee(id);
+        if (!target) {
+          errors.push('dspLocal: Employee not found in Kenjo');
+        } else {
+          await saveEmployeeDspLocal(target.kenjoUserId, dspLocal);
+        }
       } catch (e) {
         errors.push('dspLocal: ' + (e?.message || e));
       }
@@ -287,8 +300,12 @@ router.put('/employees/:id/internal-profile', async (req, res) => {
     if (!dspLocal || typeof dspLocal !== 'object') {
       return res.status(400).json({ error: 'dspLocal payload is required' });
     }
-    await saveEmployeeDspLocal(id, dspLocal);
-    res.json({ ok: true });
+    const target = await resolveKenjoTargetEmployee(id);
+    if (!target) {
+      return res.status(404).json({ error: 'Employee not found in Kenjo' });
+    }
+    await saveEmployeeDspLocal(target.kenjoUserId, dspLocal);
+    res.json({ ok: true, kenjo_user_id: target.kenjoUserId });
   } catch (error) {
     console.error('Kenjo PUT /employees/:id/internal-profile error', error);
     res.status(500).json({ error: String(error?.message || error) });

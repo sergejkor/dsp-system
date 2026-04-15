@@ -618,6 +618,7 @@ export default function EmployeeProfilePage() {
   const [showRescueModal, setShowRescueModal] = useState(false);
   const [rescueDateDraft, setRescueDateDraft] = useState(createEmptyRescueDateDraft);
   const [rescueSaving, setRescueSaving] = useState(false);
+  const [internalProfileModal, setInternalProfileModal] = useState(null);
   const [vacationDaysOverrideDraft, setVacationDaysOverrideDraft] = useState('');
   const [vacationDaysOverrideEditing, setVacationDaysOverrideEditing] = useState(false);
   const [vacationDaysOverrideSaving, setVacationDaysOverrideSaving] = useState(false);
@@ -1704,21 +1705,39 @@ export default function EmployeeProfilePage() {
     if (!draft || !kenjoEmployeeId) return;
     setInternalSaving(true);
     setError('');
+    setInternalProfileModal(null);
     try {
       const nextDspLocal = { ...(draft.dspLocal || {}) };
       await updateEmployeeInternalProfile(kenjoEmployeeId, {
         dspLocal: nextDspLocal,
       });
+      const refreshedEmployee = await getKenjoEmployeeProfile(kenjoEmployeeId);
       const nextEmployee = {
-        ...draft,
-        dspLocal: { ...(draft.dspLocal || {}), ...nextDspLocal },
+        ...refreshedEmployee,
+        dspLocal: {
+          fuehrerschein_aufstellungsdatum: '',
+          fuehrerschein_aufstellungsbehoerde: '',
+          whatsapp_number: '',
+          ...(refreshedEmployee?.dspLocal || {}),
+        },
       };
       setEmployee(nextEmployee);
       setDraft(nextEmployee);
       setError('');
       setIsEditing(false);
+      setInternalProfileModal({
+        tone: 'success',
+        title: 'Save successfully',
+        message: 'Internal profile was saved successfully.',
+      });
     } catch (e) {
-      setError(String(e?.message || e));
+      const message = String(e?.message || e);
+      setError(message);
+      setInternalProfileModal({
+        tone: 'error',
+        title: 'Save failed',
+        message,
+      });
     } finally {
       setInternalSaving(false);
     }
@@ -3016,6 +3035,25 @@ export default function EmployeeProfilePage() {
             <p style={{ margin: '0 0 1rem', whiteSpace: 'pre-wrap' }}>{contractModal.message}</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button type="button" className="btn-primary" onClick={closeContractModal}>
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {internalProfileModal && (
+        <div style={modalOverlayStyle} onClick={() => setInternalProfileModal(null)}>
+          <div
+            style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 460, width: 'calc(100% - 2rem)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 0.75rem', color: internalProfileModal.tone === 'error' ? '#dc2626' : undefined }}>
+              {internalProfileModal.title}
+            </h3>
+            <p style={{ margin: '0 0 1rem', whiteSpace: 'pre-wrap' }}>{internalProfileModal.message}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn-primary" onClick={() => setInternalProfileModal(null)}>
                 OK
               </button>
             </div>
