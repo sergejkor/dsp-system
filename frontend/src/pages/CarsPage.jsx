@@ -328,7 +328,7 @@ export default function CarsPage() {
     setKpiModalLoading(true);
     try {
       const allCars = await getCars();
-      const rows = Array.isArray(allCars)
+      const baseRows = Array.isArray(allCars)
         ? allCars
             .filter((car) => config.filter(car))
             .sort((a, b) =>
@@ -338,6 +338,21 @@ export default function CarsPage() {
               }),
             )
         : [];
+      const rows =
+        config.key === 'defleetingCandidates'
+          ? await Promise.all(
+              baseRows.map(async (car) => {
+                try {
+                  const details = await getCarById(car.id);
+                  return details?.planned_defleeting_date
+                    ? { ...car, planned_defleeting_date: details.planned_defleeting_date }
+                    : car;
+                } catch {
+                  return car;
+                }
+              }),
+            )
+          : baseRows;
       setKpiModalRows(rows);
     } catch (modalError) {
       setKpiModalError(modalError?.message || 'Failed to load vehicles for this card.');
