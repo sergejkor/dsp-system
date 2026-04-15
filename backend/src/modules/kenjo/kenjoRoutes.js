@@ -19,6 +19,31 @@ import { syncKenjoEmployeesToDb } from './kenjoSyncService.js';
 
 const router = Router();
 
+async function ensureKenjoEmployeeLocalColumns() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS kenjo_employees (
+      id SERIAL PRIMARY KEY,
+      kenjo_user_id VARCHAR(255) NOT NULL UNIQUE,
+      employee_number VARCHAR(64),
+      transporter_id VARCHAR(255),
+      first_name VARCHAR(255),
+      last_name VARCHAR(255),
+      display_name VARCHAR(255),
+      job_title VARCHAR(255),
+      start_date DATE,
+      contract_end DATE,
+      is_active BOOLEAN DEFAULT true,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    )
+  `);
+  await query(`
+    ALTER TABLE kenjo_employees
+    ADD COLUMN IF NOT EXISTS fuehrerschein_aufstellungsdatum DATE,
+    ADD COLUMN IF NOT EXISTS fuehrerschein_aufstellungsbehoerde TEXT,
+    ADD COLUMN IF NOT EXISTS whatsapp_number TEXT
+  `);
+}
+
 router.get('/health', (_req, res) => res.json({ ok: true, module: 'kenjo' }));
 
 router.get('/info', (_req, res) => {
@@ -58,6 +83,7 @@ router.post('/sync-employees', async (_req, res) => {
 
 router.get('/employees/:id', async (req, res) => {
   try {
+    await ensureKenjoEmployeeLocalColumns();
     const employee = await getKenjoEmployeeByIdReadable(req.params.id);
     if (!employee || !employee.id) {
       return res.status(404).json({ error: 'Employee not found in Kenjo' });
@@ -152,6 +178,7 @@ function toDateOnly(v) {
 }
 
 async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
+  await ensureKenjoEmployeeLocalColumns();
   const rawD = dspLocal?.fuehrerschein_aufstellungsdatum;
   const rawB = dspLocal?.fuehrerschein_aufstellungsbehoerde;
   const rawW = dspLocal?.whatsapp_number;
@@ -164,29 +191,25 @@ async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
   const whatsappVal =
     rawW === '' || rawW == null ? null : String(rawW).trim().slice(0, 255);
 
-  const up = await query(
-    `UPDATE kenjo_employees
-     SET fuehrerschein_aufstellungsdatum = $2::date,
-         fuehrerschein_aufstellungsbehoerde = $3,
-         whatsapp_number = $4,
-         updated_at = NOW()
-     WHERE kenjo_user_id = $1`,
+  await query(
+    `INSERT INTO kenjo_employees (
+       kenjo_user_id,
+       first_name,
+       last_name,
+       display_name,
+       is_active,
+       fuehrerschein_aufstellungsdatum,
+       fuehrerschein_aufstellungsbehoerde,
+       whatsapp_number,
+       updated_at
+     ) VALUES ($1, '', '', '', true, $2::date, $3, $4, NOW())
+     ON CONFLICT (kenjo_user_id) DO UPDATE SET
+       fuehrerschein_aufstellungsdatum = EXCLUDED.fuehrerschein_aufstellungsdatum,
+       fuehrerschein_aufstellungsbehoerde = EXCLUDED.fuehrerschein_aufstellungsbehoerde,
+       whatsapp_number = EXCLUDED.whatsapp_number,
+       updated_at = NOW()`,
     [kenjoUserId, dateVal, behVal, whatsappVal]
   );
-  if (up.rowCount === 0) {
-    await query(
-      `INSERT INTO kenjo_employees (
-         kenjo_user_id, first_name, last_name, display_name, is_active,
-         fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, whatsapp_number, updated_at
-       ) VALUES ($1, '', '', '', true, $2::date, $3, $4, NOW())
-       ON CONFLICT (kenjo_user_id) DO UPDATE SET
-         fuehrerschein_aufstellungsdatum = EXCLUDED.fuehrerschein_aufstellungsdatum,
-         fuehrerschein_aufstellungsbehoerde = EXCLUDED.fuehrerschein_aufstellungsbehoerde,
-         whatsapp_number = EXCLUDED.whatsapp_number,
-         updated_at = NOW()`,
-      [kenjoUserId, dateVal, behVal, whatsappVal]
-    );
-  }
 }
 
 router.put('/employees/:id/profile', async (req, res) => {
