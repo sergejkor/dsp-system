@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useSearchParams, Link } from 'react-router-dom';
 import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmployeeInKenjo } from '../services/kenjoApi';
 import {
@@ -166,44 +167,15 @@ function normalizeNameForMatch(value) {
 }
 
 function createEmptyRescueDateDraft() {
-  return { day: '', month: '', year: '' };
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function buildRescueIsoDate(draft) {
-  const day = String(draft?.day || '').replace(/\D/g, '').slice(0, 2);
-  const month = String(draft?.month || '').replace(/\D/g, '').slice(0, 2);
-  const year = String(draft?.year || '').replace(/\D/g, '').slice(0, 4);
-
-  if (!day || !month || year.length !== 4) {
-    return '';
-  }
-
-  const dayNumber = Number(day);
-  const monthNumber = Number(month);
-  const yearNumber = Number(year);
-
-  if (
-    !Number.isInteger(dayNumber) ||
-    !Number.isInteger(monthNumber) ||
-    !Number.isInteger(yearNumber) ||
-    monthNumber < 1 ||
-    monthNumber > 12 ||
-    dayNumber < 1 ||
-    dayNumber > 31
-  ) {
-    return '';
-  }
-
-  const candidate = new Date(Date.UTC(yearNumber, monthNumber - 1, dayNumber));
-  if (
-    candidate.getUTCFullYear() !== yearNumber ||
-    candidate.getUTCMonth() !== monthNumber - 1 ||
-    candidate.getUTCDate() !== dayNumber
-  ) {
-    return '';
-  }
-
-  return `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  return normalizeContractDate(draft) || '';
 }
 
 function getFrozenPayrollCache() {
@@ -223,8 +195,11 @@ function getRowHoursValue(row) {
     ? row.manual_entry
     : null;
   return Number(
+    manualEntry?.worked_hours ??
+    row.worked_hours ??
     manualEntry?.payroll_hours ??
     row.payroll_hours ??
+    manualEntry?.expected_hours ??
     row.expected_hours ??
     row.worked_hours ??
     row.contract_expected_hours ??
@@ -909,12 +884,6 @@ export default function EmployeeProfilePage() {
     setRescueDateDraft(createEmptyRescueDateDraft());
   };
 
-  const updateRescueDateDraft = (part, nextValue) => {
-    const maxLength = part === 'year' ? 4 : 2;
-    const sanitized = String(nextValue || '').replace(/\D/g, '').slice(0, maxLength);
-    setRescueDateDraft((prev) => ({ ...prev, [part]: sanitized }));
-  };
-
   const saveRescue = async () => {
     if (!employeeDocRef) {
       setRescueError('Employee reference is missing.');
@@ -922,7 +891,7 @@ export default function EmployeeProfilePage() {
     }
     const nextRescueDate = buildRescueIsoDate(rescueDateDraft);
     if (!nextRescueDate) {
-      setRescueError('Please enter a valid day, month, and year.');
+      setRescueError('Please select a valid rescue date.');
       return;
     }
     setRescueSaving(true);
@@ -1478,6 +1447,34 @@ export default function EmployeeProfilePage() {
     currentVacationBalanceEditing &&
     currentYearRemainingVacationDraftNormalized !== currentYearRemainingVacationValue &&
     !currentVacationBalanceSaving;
+  const rescueSuggestedDate = createEmptyRescueDateDraft();
+  const documentActionButtonBaseStyle = {
+    minWidth: 92,
+    borderRadius: 999,
+    border: 'none',
+    padding: '0.5rem 0.9rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'transform 0.15s ease, opacity 0.15s ease',
+  };
+  const documentViewButtonStyle = {
+    ...documentActionButtonBaseStyle,
+    background: isDark ? 'linear-gradient(135deg, #2563eb, #1d4ed8)' : 'linear-gradient(135deg, #3b82f6, #2563eb)',
+    color: '#fff',
+    boxShadow: isDark ? '0 10px 24px rgba(37, 99, 235, 0.3)' : '0 10px 20px rgba(59, 130, 246, 0.22)',
+  };
+  const documentDownloadButtonStyle = {
+    ...documentActionButtonBaseStyle,
+    background: isDark ? 'linear-gradient(135deg, #0f766e, #14b8a6)' : 'linear-gradient(135deg, #14b8a6, #0f766e)',
+    color: '#fff',
+    boxShadow: isDark ? '0 10px 24px rgba(20, 184, 166, 0.28)' : '0 10px 20px rgba(20, 184, 166, 0.2)',
+  };
+  const documentDeleteButtonStyle = {
+    ...documentActionButtonBaseStyle,
+    background: isDark ? 'linear-gradient(135deg, #dc2626, #b91c1c)' : 'linear-gradient(135deg, #ef4444, #dc2626)',
+    color: '#fff',
+    boxShadow: isDark ? '0 10px 24px rgba(220, 38, 38, 0.28)' : '0 10px 20px rgba(239, 68, 68, 0.2)',
+  };
   const isActive = typeof localEmployee?.is_active === 'boolean' ? localEmployee.is_active : (account?.isActive ?? false);
   const jobTitle = work?.jobTitle;
   const transportationId = work?.transportationId;
@@ -3032,7 +3029,7 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
-      {showDaPerformance && (
+      {showDaPerformance && typeof document !== 'undefined' && createPortal((
         <div style={modalOverlayStyle}>
           <div style={{ ...modalCardStyle, maxWidth: 560, padding: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -3112,7 +3109,7 @@ export default function EmployeeProfilePage() {
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
       {showKpiCommentDialog && kpiRows.length > 0 && (
         <div style={{ ...modalOverlayStyle, zIndex: 1001 }} onClick={() => !kpiCommentSaving && setShowKpiCommentDialog(false)}>
           <div style={{ ...modalCardStyle, padding: '1.25rem', width: '90%', maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
@@ -3214,7 +3211,7 @@ export default function EmployeeProfilePage() {
         const lineStroke = isDark ? '#8cc4ff' : '#0f172a';
         const pointFill = isDark ? '#dbeafe' : '#0f172a';
         const chartBackground = isDark ? 'rgba(7, 18, 35, 0.96)' : '#ffffff';
-        return (
+        return typeof document !== 'undefined' ? createPortal((
           <div style={{ ...modalOverlayStyle, zIndex: 1001, justifyContent: 'center', alignItems: 'center', paddingTop: '2rem', paddingBottom: '2rem' }}>
             <div style={{ ...modalCardStyle, padding: '1.5rem', width: '92vw', maxWidth: 960, maxHeight: '90vh' }}>
               <h3 style={{ margin: '0 0 1rem' }}>KPI by week — Graph</h3>
@@ -3264,7 +3261,7 @@ export default function EmployeeProfilePage() {
               </div>
             </div>
           </div>
-        );
+        ), document.body) : null;
       })()}
 
       {showDeactivateForm && (
@@ -3486,23 +3483,21 @@ export default function EmployeeProfilePage() {
                       <td style={{ padding: '0.5rem 0.75rem' }}>
                         <button
                           type="button"
-                          className="btn-secondary"
+                          style={documentViewButtonStyle}
                           onClick={() => viewEmployeeDocument(employeeDocRef, doc.id).catch((err) => setEmployeeDocError(String(err?.message || err)))}
                         >
                           View
                         </button>
                         <button
                           type="button"
-                          className="btn-secondary"
-                          style={{ marginLeft: '0.5rem' }}
+                          style={{ ...documentDownloadButtonStyle, marginLeft: '0.5rem' }}
                           onClick={() => downloadEmployeeDocument(employeeDocRef, doc.id, doc.file_name)}
                         >
                           Download
                         </button>
                         <button
                           type="button"
-                          className="btn-secondary"
-                          style={{ marginLeft: '0.5rem' }}
+                          style={{ ...documentDeleteButtonStyle, marginLeft: '0.5rem' }}
                           onClick={async () => {
                             if (!window.confirm('Delete this document?')) return;
                             try {
@@ -3658,36 +3653,16 @@ export default function EmployeeProfilePage() {
             {rescueError ? <p className="error-text" style={{ margin: '0 0 0.75rem' }}>{rescueError}</p> : null}
             <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', color: isDark ? '#d7e5ff' : '#111827' }}>
               <span>Date</span>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.5rem' }}>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="day"
-                  aria-label="day"
-                  value={rescueDateDraft.day}
-                  onChange={(e) => updateRescueDateDraft('day', e.target.value)}
-                  style={modalInputStyle}
-                />
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="month"
-                  aria-label="month"
-                  value={rescueDateDraft.month}
-                  onChange={(e) => updateRescueDateDraft('month', e.target.value)}
-                  style={modalInputStyle}
-                />
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="year"
-                  aria-label="year"
-                  value={rescueDateDraft.year}
-                  onChange={(e) => updateRescueDateDraft('year', e.target.value)}
-                  style={modalInputStyle}
-                />
-              </div>
+              <input
+                type="date"
+                value={rescueDateDraft}
+                onChange={(e) => setRescueDateDraft(e.target.value)}
+                style={{ ...modalInputStyle, colorScheme: isDark ? 'dark' : 'light' }}
+              />
             </label>
+            <p style={{ margin: '0.5rem 0 0', color: isDark ? '#9bb0d1' : '#6b7280', fontSize: '0.85rem' }}>
+              Suggested: {formatDateDayMonthYear(rescueSuggestedDate)}
+            </p>
             <p style={{ margin: '0.85rem 0 0', color: isDark ? '#9bb0d1' : '#666', fontSize: '0.9rem' }}>
               Each saved rescue adds the configured Rescue bonus from Payroll Settings to Total Bonus.
             </p>

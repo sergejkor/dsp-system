@@ -106,8 +106,9 @@ function buildPayrollSummaryCards(rows, selectedMonth, t) {
   const sums = list.reduce(
     (acc, row) => {
       const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
+      acc.workedHours += Number(row.worked_hours ?? row.expected_hours) || 0;
       acc.payrollHours += Number(row.expected_hours) || 0;
-      acc.overtimeHours += Number(row.overtime_hours) || 0;
+      acc.overtimeHours += Number(row.overtime_hours ?? row.overtime) || 0;
       acc.totalBonus += Number(row.total_bonus) || 0;
       acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
       acc.verpflMehr += Math.max(0, Number(row.verpfl_mehr) || 0);
@@ -121,6 +122,7 @@ function buildPayrollSummaryCards(rows, selectedMonth, t) {
       return acc;
     },
     {
+      workedHours: 0,
       payrollHours: 0,
       overtimeHours: 0,
       totalBonus: 0,
@@ -146,6 +148,7 @@ function buildPayrollSummaryCards(rows, selectedMonth, t) {
       value: formatCurrency(hoursPlusAllowancesRounded),
       accent: '#0369a1',
     },
+    { key: 'worked-hours', label: t('payroll.summary.workedHours'), value: formatHours(sums.workedHours), accent: '#0f766e' },
     { key: 'payroll-hours', label: t('payroll.summary.payrollHours'), value: formatHours(sums.payrollHours), accent: '#0f766e' },
     { key: 'overtime-hours', label: t('payroll.summary.overtimeHours'), value: formatHours(sums.overtimeHours), accent: '#d97706' },
     { key: 'total-bonus', label: t('payroll.summary.totalBonus'), value: formatCurrency(sums.totalBonus), accent: '#0f766e' },
@@ -970,7 +973,9 @@ export default function PayrollPage() {
     { key: 'name', label: t('payroll.columns.name') },
     { key: 'pn', label: t('payroll.columns.pn') },
     { key: 'working_days', label: t('payroll.columns.working_days') },
+    { key: 'worked_hours', label: t('payroll.columns.worked_hours') },
     { key: 'expected_hours', label: t('payroll.columns.expected_hours') },
+    { key: 'contract_expected_hours', label: t('payroll.columns.contract_expected_hours') },
     { key: 'overtime_hours', label: t('payroll.columns.overtime_hours') },
     { key: 'krank_days', label: t('payroll.columns.krank_days') },
     { key: 'urlaub_days', label: t('payroll.columns.urlaub_days') },
@@ -1757,12 +1762,18 @@ export default function PayrollPage() {
                         </td>
                       );
                     }
-                    const val = (col.key === 'krank_days' || col.key === 'urlaub_days')
-                      ? (row[col.key] ?? 0)
-                      : row[col.key];
-                    const isHoursCol = ['expected_hours', 'overtime_hours'].includes(col.key);
+                    const val = col.key === 'worked_hours'
+                      ? (row.worked_hours ?? row.expected_hours ?? 0)
+                      : col.key === 'contract_expected_hours'
+                        ? (row.contract_expected_hours ?? row.expected_hours ?? 0)
+                        : col.key === 'overtime_hours'
+                          ? (row.overtime_hours ?? row.overtime ?? 0)
+                          : (col.key === 'krank_days' || col.key === 'urlaub_days')
+                            ? (row[col.key] ?? 0)
+                            : row[col.key];
+                    const isHoursCol = ['worked_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours'].includes(col.key);
                     const isCurrency = ['total_bonus', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
-                    const isNumericCol = ['pn', 'working_days', 'expected_hours', 'overtime_hours', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
+                    const isNumericCol = ['pn', 'working_days', 'worked_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
                     const display =
                       col.key === 'eintrittsdatum' || col.key === 'austrittsdatum'
                         ? formatDateDDMMYYYY(val)
@@ -2288,7 +2299,9 @@ export default function PayrollPage() {
                   <col style={{ width: '4rem' }} />
                   <col style={{ width: '6rem' }} />
                   <col style={{ width: '5.8rem' }} />
-                  <col style={{ width: '3.6rem' }} />
+                  <col style={{ width: '5.8rem' }} />
+                  <col style={{ width: '5.8rem' }} />
+                  <col style={{ width: '5.8rem' }} />
                   <col style={{ width: '3.6rem' }} />
                   <col style={{ width: '4.4rem' }} />
                   <col style={{ width: '4.4rem' }} />
@@ -2314,8 +2327,10 @@ export default function PayrollPage() {
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.name || '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.pn || '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.working_days ?? '—'}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.worked_hours ?? row.expected_hours)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.expected_hours)}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.overtime_hours)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.contract_expected_hours)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.overtime_hours ?? row.overtime)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.krank_days ?? 0}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.urlaub_days ?? 0}</td>
                       <td style={{ padding: '0.35rem 0.28rem', whiteSpace: 'nowrap' }}>{formatWholeDays(row.carryover_days)}</td>
