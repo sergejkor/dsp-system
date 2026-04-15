@@ -548,7 +548,7 @@ export default function EmployeeProfilePage() {
   const { language, isDark } = useAppSettings();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const kenjoEmployeeId = location.state?.kenjoEmployeeId ?? searchParams.get('kenjo_employee_id');
+  const routeKenjoEmployeeId = location.state?.kenjoEmployeeId ?? searchParams.get('kenjo_employee_id');
   const localEmployeeId = location.state?.employeeId;
   const payrollRowFromState = location.state?.payrollRow ?? null;
   const payrollContextMonthFromState = String(location.state?.payrollContext?.month || '').slice(0, 7);
@@ -638,32 +638,93 @@ export default function EmployeeProfilePage() {
   const contractFileInputRef = useRef(null);
   const terminateContractFileInputRef = useRef(null);
   const employeeDocFileInputRef = useRef(null);
+  const kenjoEmployeeId = String(
+    routeKenjoEmployeeId ||
+    localEmployee?.kenjo_user_id ||
+    employee?._id ||
+    employee?.id ||
+    ''
+  ).trim();
 
   useEffect(() => {
-    if (!kenjoEmployeeId && !localEmployeeId) return;
+    if (!routeKenjoEmployeeId && !localEmployeeId) return;
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    setEmployee(null);
+    setLocalEmployee(null);
+    (async () => {
+      try {
+        let resolvedKenjoEmployeeId = String(routeKenjoEmployeeId || '').trim();
+        let resolvedLocalEmployee = null;
+
+        if (localEmployeeId || resolvedKenjoEmployeeId) {
+          try {
+            const loc = await getEmployee(localEmployeeId || resolvedKenjoEmployeeId);
+            resolvedLocalEmployee = loc;
+            if (!cancelled) {
+              setLocalEmployee(loc);
+            }
+            if (!resolvedKenjoEmployeeId) {
+              resolvedKenjoEmployeeId = String(loc?.kenjo_user_id || '').trim();
+            }
+          } catch (_) {
+            if (!cancelled) {
+              setLocalEmployee(null);
+            }
+          }
+        }
+
+        if (resolvedKenjoEmployeeId) {
+          const data = await getKenjoEmployeeProfile(resolvedKenjoEmployeeId);
+          if (!cancelled) {
+            setEmployee(data);
+          }
+        } else if (!cancelled) {
+          setEmployee(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(String(e?.message || e));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routeKenjoEmployeeId, localEmployeeId]);
+
+  useEffect(() => {
+    if (!localEmployeeId || routeKenjoEmployeeId || !localEmployee?.kenjo_user_id) return;
+    let cancelled = false;
     setLoading(true);
     setError('');
     (async () => {
       try {
-        if (kenjoEmployeeId) {
-          const data = await getKenjoEmployeeProfile(kenjoEmployeeId);
+        const data = await getKenjoEmployeeProfile(localEmployee.kenjo_user_id);
+        if (!cancelled) {
           setEmployee(data);
         }
-        if (localEmployeeId || kenjoEmployeeId) {
-          try {
-            const loc = await getEmployee(localEmployeeId || kenjoEmployeeId);
-            setLocalEmployee(loc);
-          } catch (_) {
-            setLocalEmployee(null);
-          }
-        }
       } catch (e) {
-        setError(String(e?.message || e));
+        if (!cancelled) {
+          setError(String(e?.message || e));
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     })();
-  }, [kenjoEmployeeId, localEmployeeId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routeKenjoEmployeeId, localEmployeeId, localEmployee?.kenjo_user_id]);
 
   useEffect(() => {
     getSettingsByGroup('drivers')
