@@ -166,7 +166,8 @@ async function run() {
     await query(`
       ALTER TABLE kenjo_employees
       ADD COLUMN IF NOT EXISTS fuehrerschein_aufstellungsdatum DATE,
-      ADD COLUMN IF NOT EXISTS fuehrerschein_aufstellungsbehoerde TEXT
+      ADD COLUMN IF NOT EXISTS fuehrerschein_aufstellungsbehoerde TEXT,
+      ADD COLUMN IF NOT EXISTS whatsapp_number TEXT
     `);
     console.log('Migration OK: kenjo_employees table (or already exists).');
 

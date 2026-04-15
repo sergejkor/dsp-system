@@ -81,6 +81,19 @@ export async function updateEmployeeProfileInKenjo(employeeId, payload) {
   return response.json();
 }
 
+export async function updateEmployeeInternalProfile(employeeId, payload) {
+  const response = await fetch(`${API_BASE}/api/kenjo/employees/${encodeURIComponent(employeeId)}/internal-profile`, authOpts({
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }));
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || response.statusText || 'Internal profile update failed');
+  }
+  return response.json();
+}
+
 export async function compareCortexWithKenjo(from, to, minDiff) {
   const params = new URLSearchParams({ from, to });
   if (minDiff != null && minDiff !== '') params.set('minDiff', String(minDiff));

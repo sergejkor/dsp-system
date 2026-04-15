@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useSearchParams, Link } from 'react-router-dom';
-import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, deactivateEmployeeInKenjo } from '../services/kenjoApi';
+import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, updateEmployeeInternalProfile, deactivateEmployeeInKenjo } from '../services/kenjoApi';
 import {
   getEmployee,
   getEmployeeVacationSummary,
@@ -559,6 +559,7 @@ export default function EmployeeProfilePage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [internalSaving, setInternalSaving] = useState(false);
   const [localEmployee, setLocalEmployee] = useState(null);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [showDeactivateForm, setShowDeactivateForm] = useState(false);
@@ -679,9 +680,11 @@ export default function EmployeeProfilePage() {
     if (employee) {
       setDraft({
         ...employee,
-        dspLocal: employee.dspLocal ?? {
+        dspLocal: {
           fuehrerschein_aufstellungsdatum: '',
           fuehrerschein_aufstellungsbehoerde: '',
+          whatsapp_number: '',
+          ...(employee.dspLocal || {}),
         },
       });
       setIsEditing(false);
@@ -1585,9 +1588,11 @@ export default function EmployeeProfilePage() {
     setError('');
     setDraft({
       ...employee,
-      dspLocal: employee.dspLocal ?? {
+      dspLocal: {
         fuehrerschein_aufstellungsdatum: '',
         fuehrerschein_aufstellungsbehoerde: '',
+        whatsapp_number: '',
+        ...(employee.dspLocal || {}),
       },
     });
     setIsEditing(true);
@@ -1631,6 +1636,30 @@ export default function EmployeeProfilePage() {
     } else {
       setEmployee(draft);
       setIsEditing(false);
+    }
+  };
+
+  const handleSaveInternalEditing = async () => {
+    if (!draft || !kenjoEmployeeId) return;
+    setInternalSaving(true);
+    setError('');
+    try {
+      const nextDspLocal = { ...(draft.dspLocal || {}) };
+      await updateEmployeeInternalProfile(kenjoEmployeeId, {
+        dspLocal: nextDspLocal,
+      });
+      const nextEmployee = {
+        ...draft,
+        dspLocal: { ...(draft.dspLocal || {}), ...nextDspLocal },
+      };
+      setEmployee(nextEmployee);
+      setDraft(nextEmployee);
+      setError('');
+      setIsEditing(false);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setInternalSaving(false);
     }
   };
   const currentContractStart = normalizeContractDate(work?.startDate || localEmployee?.start_date);
@@ -2139,6 +2168,19 @@ export default function EmployeeProfilePage() {
               personal?.mobile || home?.personalMobile,
               (v) => onNestedChange('personal', 'mobile', v),
             )}
+            {renderText(
+              'WhatsApp number',
+              current?.dspLocal?.whatsapp_number,
+              (v) =>
+                setDraft((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        dspLocal: { ...(prev.dspLocal || {}), whatsapp_number: v },
+                      }
+                    : prev,
+                ),
+            )}
           </div>
         </div>
       </div>
@@ -2497,6 +2539,19 @@ export default function EmployeeProfilePage() {
               (v) => onNestedChange('personal', 'mobile', v),
             )}
             {renderText('Work Mobile', work?.workMobile)}
+            {renderText(
+              'WhatsApp number',
+              current?.dspLocal?.whatsapp_number,
+              (v) =>
+                setDraft((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        dspLocal: { ...(prev.dspLocal || {}), whatsapp_number: v },
+                      }
+                    : prev,
+                ),
+            )}
             {renderText('Language', account?.language)}
             {renderText('Gender', personal?.gender, (v) => onNestedChange('personal', 'gender', v))}
             {renderText('Nationality', personal?.nationality)}
@@ -2654,6 +2709,14 @@ export default function EmployeeProfilePage() {
             <>
               <button type="button" className="btn-secondary" onClick={handleCancelEditing} disabled={saving}>
                 Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleSaveInternalEditing}
+                disabled={saving || internalSaving || !kenjoEmployeeId}
+              >
+                {internalSaving ? 'Saving…' : 'Save internal'}
               </button>
               <button type="button" className="btn-primary" onClick={handleSaveEditing} disabled={saving}>
                 {saving ? 'Saving…' : 'Save and send to Kenjo'}

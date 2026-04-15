@@ -63,7 +63,7 @@ router.get('/employees/:id', async (req, res) => {
       return res.status(404).json({ error: 'Employee not found in Kenjo' });
     }
     const locRes = await query(
-      `SELECT fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde
+      `SELECT fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, whatsapp_number
        FROM kenjo_employees WHERE kenjo_user_id = $1`,
       [req.params.id]
     );
@@ -74,6 +74,9 @@ router.get('/employees/:id', async (req, res) => {
         : '',
       fuehrerschein_aufstellungsbehoerde: row?.fuehrerschein_aufstellungsbehoerde
         ? String(row.fuehrerschein_aufstellungsbehoerde)
+        : '',
+      whatsapp_number: row?.whatsapp_number
+        ? String(row.whatsapp_number)
         : '',
     };
     const o2Res = await query(
@@ -148,6 +151,44 @@ function toDateOnly(v) {
   return iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : undefined;
 }
 
+async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
+  const rawD = dspLocal?.fuehrerschein_aufstellungsdatum;
+  const rawB = dspLocal?.fuehrerschein_aufstellungsbehoerde;
+  const rawW = dspLocal?.whatsapp_number;
+  const dateVal =
+    rawD === '' || rawD == null
+      ? null
+      : String(rawD).trim().slice(0, 10);
+  const behVal =
+    rawB === '' || rawB == null ? null : String(rawB).trim().slice(0, 2000);
+  const whatsappVal =
+    rawW === '' || rawW == null ? null : String(rawW).trim().slice(0, 255);
+
+  const up = await query(
+    `UPDATE kenjo_employees
+     SET fuehrerschein_aufstellungsdatum = $2::date,
+         fuehrerschein_aufstellungsbehoerde = $3,
+         whatsapp_number = $4,
+         updated_at = NOW()
+     WHERE kenjo_user_id = $1`,
+    [kenjoUserId, dateVal, behVal, whatsappVal]
+  );
+  if (up.rowCount === 0) {
+    await query(
+      `INSERT INTO kenjo_employees (
+         kenjo_user_id, first_name, last_name, display_name, is_active,
+         fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, whatsapp_number, updated_at
+       ) VALUES ($1, '', '', '', true, $2::date, $3, $4, NOW())
+       ON CONFLICT (kenjo_user_id) DO UPDATE SET
+         fuehrerschein_aufstellungsdatum = EXCLUDED.fuehrerschein_aufstellungsdatum,
+         fuehrerschein_aufstellungsbehoerde = EXCLUDED.fuehrerschein_aufstellungsbehoerde,
+         whatsapp_number = EXCLUDED.whatsapp_number,
+         updated_at = NOW()`,
+      [kenjoUserId, dateVal, behVal, whatsappVal]
+    );
+  }
+}
+
 router.put('/employees/:id/profile', async (req, res) => {
   try {
     const { id } = req.params;
@@ -198,35 +239,7 @@ router.put('/employees/:id/profile', async (req, res) => {
     }
     if (dspLocal && typeof dspLocal === 'object') {
       try {
-        const rawD = dspLocal.fuehrerschein_aufstellungsdatum;
-        const rawB = dspLocal.fuehrerschein_aufstellungsbehoerde;
-        const dateVal =
-          rawD === '' || rawD == null
-            ? null
-            : String(rawD).trim().slice(0, 10);
-        const behVal =
-          rawB === '' || rawB == null ? null : String(rawB).trim().slice(0, 2000);
-        const up = await query(
-          `UPDATE kenjo_employees
-           SET fuehrerschein_aufstellungsdatum = $2::date,
-               fuehrerschein_aufstellungsbehoerde = $3,
-               updated_at = NOW()
-           WHERE kenjo_user_id = $1`,
-          [id, dateVal, behVal]
-        );
-        if (up.rowCount === 0) {
-          await query(
-            `INSERT INTO kenjo_employees (
-               kenjo_user_id, first_name, last_name, display_name, is_active,
-               fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, updated_at
-             ) VALUES ($1, '', '', '', true, $2::date, $3, NOW())
-             ON CONFLICT (kenjo_user_id) DO UPDATE SET
-               fuehrerschein_aufstellungsdatum = EXCLUDED.fuehrerschein_aufstellungsdatum,
-               fuehrerschein_aufstellungsbehoerde = EXCLUDED.fuehrerschein_aufstellungsbehoerde,
-               updated_at = NOW()`,
-            [id, dateVal, behVal]
-          );
-        }
+        await saveEmployeeDspLocal(id, dspLocal);
       } catch (e) {
         errors.push('dspLocal: ' + (e?.message || e));
       }
@@ -237,6 +250,24 @@ router.put('/employees/:id/profile', async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     console.error('Kenjo PUT /employees/:id/profile error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.put('/employees/:id/internal-profile', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dspLocal } = req.body || {};
+    if (!id) {
+      return res.status(400).json({ error: 'Employee id is required' });
+    }
+    if (!dspLocal || typeof dspLocal !== 'object') {
+      return res.status(400).json({ error: 'dspLocal payload is required' });
+    }
+    await saveEmployeeDspLocal(id, dspLocal);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Kenjo PUT /employees/:id/internal-profile error', error);
     res.status(500).json({ error: String(error?.message || error) });
   }
 });
@@ -503,4 +534,3 @@ router.get('/time-off', async (req, res) => {
 });
 
 export default router;
-
