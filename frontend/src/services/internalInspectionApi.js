@@ -124,6 +124,14 @@ export async function getFleetInspection(id) {
   return ensureOk(res, 'Failed to load inspection details');
 }
 
+export async function deleteFleetInspection(id) {
+  const res = await fetch(
+    `${API_BASE}/api/fleet-inspections/${id}`,
+    authOpts({ method: 'DELETE' }),
+  );
+  return ensureOk(res, 'Failed to delete inspection report');
+}
+
 export async function getInspectionPhotoBlob(inspectionId, photoId) {
   const res = await fetch(
     `${API_BASE}/api/fleet-inspections/${inspectionId}/photos/${photoId}/download`,

@@ -61,6 +61,19 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+router.delete('/:id', async (req, res) => {
+  try {
+    const deleted = await vehicleInspectionsService.deleteInspection(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Inspection not found' });
+    }
+    return res.json(deleted);
+  } catch (error) {
+    console.error('DELETE /api/fleet-inspections/:id error', error);
+    return res.status(500).json({ error: String(error?.message || error || 'Failed to delete inspection') });
+  }
+});
+
 router.post('/:id/analyze', async (req, res) => {
   try {
     const analysis = await vehicleInspectionsService.analyzeInspection(req.params.id, {

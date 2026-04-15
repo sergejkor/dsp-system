@@ -47,6 +47,19 @@ function toInteger(value, fallback = null) {
   return Number.isFinite(num) ? Math.trunc(num) : fallback;
 }
 
+function toDateOnly(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const raw = String(value).trim();
+  if (!raw) return null;
+  return raw.slice(0, 10);
+}
+
 function normalizeDateTime(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -618,6 +631,80 @@ async function listInspectionTasks(filters = {}) {
   return inspectionReminderService.listTasks(filters);
 }
 
+async function deleteInspection(id) {
+  await ensureVehicleInspectionTables();
+  await inspectionReminderService.ensureTables();
+
+  const inspectionId = toInteger(id, null);
+  if (!inspectionId) return null;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const inspectionRes = await client.query(
+      `SELECT id, car_id, submitted_at, created_at
+       FROM vehicle_internal_inspections
+       WHERE id = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [inspectionId],
+    );
+    const inspection = inspectionRes.rows?.[0];
+    if (!inspection) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const taskRes = await client.query(
+      `SELECT id, plan_date::text AS plan_date, reminder_count, reminder_start_at, next_reminder_at
+       FROM vehicle_internal_inspection_tasks
+       WHERE completed_inspection_id = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [inspectionId],
+    );
+    const task = taskRes.rows?.[0] || null;
+    const today = toDateOnly(new Date());
+
+    if (task) {
+      const planDate = toDateOnly(task.plan_date);
+      const isPastTask = Boolean(planDate && today && planDate < today);
+      await client.query(
+        `UPDATE vehicle_internal_inspection_tasks
+         SET status = $2,
+             completed_inspection_id = NULL,
+             completed_at = NULL,
+             failed_at = CASE WHEN $2 = 'failed' THEN COALESCE(failed_at, NOW()) ELSE NULL END,
+             next_reminder_at = CASE
+               WHEN $2 = 'failed' THEN NULL
+               ELSE COALESCE(next_reminder_at, reminder_start_at, NOW())
+             END,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [
+          task.id,
+          isPastTask ? 'failed' : (Number(task.reminder_count || 0) > 0 ? 'reminded' : 'pending'),
+        ],
+      );
+    }
+
+    await client.query(
+      `DELETE FROM vehicle_internal_inspections
+       WHERE id = $1`,
+      [inspectionId],
+    );
+
+    await client.query('COMMIT');
+    return { id: inspectionId, deleted: true };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export default {
   ensureVehicleInspectionTables,
   submitInspection,
@@ -630,4 +717,5 @@ export default {
   listReviewQueue,
   applyCandidateReviewAction,
   getVehicleDamageHistory,
+  deleteInspection,
 };

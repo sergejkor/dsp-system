@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { listFleetInspectionTasks, listFleetInspections } from '../services/internalInspectionApi.js';
+import {
+  deleteFleetInspection,
+  listFleetInspectionTasks,
+  listFleetInspections,
+} from '../services/internalInspectionApi.js';
 import './fleetInspections.css';
 
 const RESULT_OPTIONS = [
@@ -76,9 +80,11 @@ export default function FleetInspectionsPage() {
   const [inspections, setInspections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
   const [taskStatus, setTaskStatus] = useState('');
   const [result, setResult] = useState('');
+  const [deletingInspectionId, setDeletingInspectionId] = useState(null);
 
   const carId = searchParams.get('carId') || '';
 
@@ -86,6 +92,7 @@ export default function FleetInspectionsPage() {
     let cancelled = false;
     setLoading(true);
     setError('');
+    setMessage('');
 
     Promise.all([
       listFleetInspectionTasks({ search, status: taskStatus, carId, limit: 120 }),
@@ -126,6 +133,30 @@ export default function FleetInspectionsPage() {
     });
     return counts;
   }, [tasks]);
+
+  async function handleDeleteInspection(inspectionId) {
+    const confirmed = window.confirm('Delete this inspection report permanently? This action cannot be undone.');
+    if (!confirmed) return;
+
+    setDeletingInspectionId(inspectionId);
+    setError('');
+    setMessage('');
+
+    try {
+      await deleteFleetInspection(inspectionId);
+      const [taskRows, inspectionRows] = await Promise.all([
+        listFleetInspectionTasks({ search, status: taskStatus, carId, limit: 120 }),
+        listFleetInspections({ search, result, carId, limit: 120 }),
+      ]);
+      setTasks(Array.isArray(taskRows) ? taskRows : []);
+      setInspections(Array.isArray(inspectionRows) ? inspectionRows : []);
+      setMessage('Inspection report deleted.');
+    } catch (deleteError) {
+      setError(deleteError.message || 'Failed to delete inspection report');
+    } finally {
+      setDeletingInspectionId(null);
+    }
+  }
 
   return (
     <section className="fleet-inspection-grid">
@@ -206,6 +237,12 @@ export default function FleetInspectionsPage() {
       {error ? (
         <div className="fleet-inspection-alert fleet-inspection-alert--error">
           {error}
+        </div>
+      ) : null}
+
+      {message ? (
+        <div className="fleet-inspection-alert fleet-inspection-alert--success">
+          {message}
         </div>
       ) : null}
 
@@ -352,6 +389,20 @@ export default function FleetInspectionsPage() {
                   <Link to={`/fleet-inspections/${item.id}`} className="fleet-inspection-button">
                     Open inspection
                   </Link>
+                  <button
+                    type="button"
+                    className="fleet-inspection-button"
+                    onClick={() => handleDeleteInspection(item.id)}
+                    disabled={deletingInspectionId === item.id}
+                    style={{
+                      background: '#fef2f2',
+                      color: '#b91c1c',
+                      boxShadow: 'none',
+                      border: '1px solid rgba(220, 38, 38, 0.18)',
+                    }}
+                  >
+                    {deletingInspectionId === item.id ? 'Deleting...' : 'Delete report'}
+                  </button>
                 </div>
               </article>
             ))
