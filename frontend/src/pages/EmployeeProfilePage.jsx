@@ -1297,6 +1297,9 @@ export default function EmployeeProfilePage() {
           terminateCurrentButton: 'Terminate Current Contract',
           editContractDateButton: 'Edit contract',
           editContractDateTitle: 'Edit contract',
+          viewContractButton: 'View contract',
+          viewContractErrorTitle: 'View contract failed',
+          missingContractDocument: 'No contract document is attached to this contract yet.',
           setAsPermanentButton: 'Als unbefristet setzen',
           setAsPermanentTitle: 'Unbefristeten Vertrag setzen',
           setAsPermanentConfirm: 'Sind Sie sicher, dass Sie diesen Vertrag auf unbefristet setzen moechten?',
@@ -1363,6 +1366,9 @@ export default function EmployeeProfilePage() {
           terminateCurrentButton: 'Terminate Current Contract',
           editContractDateButton: 'Edit contract',
           editContractDateTitle: 'Edit contract',
+          viewContractButton: 'View contract',
+          viewContractErrorTitle: 'View contract failed',
+          missingContractDocument: 'No contract document is attached to this contract yet.',
           setAsPermanentButton: 'Set as permanent',
           setAsPermanentTitle: 'Set as permanent',
           setAsPermanentConfirm: 'Are you sure you want to set that contract as a permanent?',
@@ -2041,6 +2047,7 @@ export default function EmployeeProfilePage() {
         !normalizeContractDate(row?.termination_date) &&
         !row?.isDerived &&
         row?.id != null,
+      canViewContract: !row?.isDerived && Number.isFinite(Number(row?.contract_document_id)),
       canDelete: !row?.isDerived && row?.id != null,
       contractNumber,
       label: isUnlimited
@@ -2167,6 +2174,32 @@ export default function EmployeeProfilePage() {
   const openDeleteContractModal = (row) => {
     if (!row) return;
     setDeleteContractTarget(row);
+  };
+
+  const handleViewContract = async (row) => {
+    if (!employeeDocRef) {
+      setContractError(contractUi.missingEmployeeRef);
+      return;
+    }
+    const contractDocumentId = Number(row?.contract_document_id);
+    if (!Number.isFinite(contractDocumentId)) {
+      setContractModal({
+        title: contractUi.viewContractErrorTitle,
+        message: contractUi.missingContractDocument,
+      });
+      return;
+    }
+    try {
+      setContractError('');
+      await viewEmployeeDocument(employeeDocRef, contractDocumentId);
+    } catch (e) {
+      const message = String(e?.message || e);
+      setContractError(message);
+      setContractModal({
+        title: contractUi.viewContractErrorTitle,
+        message,
+      });
+    }
   };
 
   const closeContractForm = () => {
@@ -2746,6 +2779,15 @@ export default function EmployeeProfilePage() {
                 disabled={contractSaving}
               >
                 {contractUi.editContractDateButton}
+              </button>
+            ) : null}
+            {row.canViewContract ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => handleViewContract(row)}
+              >
+                {contractUi.viewContractButton}
               </button>
             ) : null}
             {row.canDelete ? (
