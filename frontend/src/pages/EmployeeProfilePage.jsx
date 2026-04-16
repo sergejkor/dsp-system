@@ -528,6 +528,28 @@ function addDaysToContractDate(value, days) {
   return date.toISOString().slice(0, 10);
 }
 
+function addMonthsToContractDate(value, months) {
+  const iso = normalizeContractDate(value);
+  if (!iso || !Number.isFinite(months)) return '';
+  const [year, month, day] = iso.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(date.getTime())) return '';
+  const originalDay = date.getUTCDate();
+  date.setUTCMonth(date.getUTCMonth() + months);
+  if (date.getUTCDate() !== originalDay) {
+    date.setUTCDate(0);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function getTodayContractDate() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function sortContractTimelineRows(rows = []) {
   return [...rows].sort((a, b) => {
     const startA = normalizeContractDate(a?.start_date) || '9999-12-31';
@@ -2053,6 +2075,12 @@ export default function EmployeeProfilePage() {
       .at(-1);
     return latestEnd || currentContractEnd || '';
   })();
+  const probationEndDate = addMonthsToContractDate(contractStartSummary, 6);
+  const probationLabel =
+    probationEndDate && probationEndDate < getTodayContractDate()
+      ? 'Probation expired on'
+      : 'Probation until';
+  const probationDisplayValue = probationEndDate ? formatDateDayMonthYear(probationEndDate) : '';
 
   const openDeactivateConfirm = () => {
     setDeactivateError('');
@@ -2602,9 +2630,7 @@ export default function EmployeeProfilePage() {
         </div>
         <div>
           {renderText('Weekly hours', work?.weeklyHours, (v) => onNestedChange('work', 'weeklyHours', v))}
-          {renderText('Probation until', formatDate(work?.probationUntil), (v) =>
-            onNestedChange('work', 'probationUntil', v),
-          )}
+          {renderText(probationLabel, probationDisplayValue)}
           {renderText('Language', account?.language)}
           {renderText('Contract end', contractEndDisplayValue)}
         </div>
