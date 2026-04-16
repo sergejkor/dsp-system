@@ -177,23 +177,41 @@ export async function uploadEmployeeContractDocument(employeeRef, contractId, so
 }
 
 export async function viewEmployeeContractDocument(employeeRef, contractId, source) {
+  const popup = window.open('', '_blank');
+  if (!popup) {
+    throw new Error('Popup was blocked while opening the document');
+  }
+  try {
+    popup.opener = null;
+    popup.document.title = 'Loading document...';
+    popup.document.body.style.margin = '0';
+    popup.document.body.style.fontFamily = 'system-ui, sans-serif';
+    popup.document.body.style.display = 'grid';
+    popup.document.body.style.placeItems = 'center';
+    popup.document.body.style.minHeight = '100vh';
+    popup.document.body.textContent = 'Loading document...';
+  } catch (_) {}
+
   const params = new URLSearchParams();
   if (source) {
     params.set('source', source);
   }
-  const response = await fetch(
-    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts/${encodeURIComponent(contractId)}/document/download${params.toString() ? `?${params.toString()}` : ''}`,
-    authOpts()
-  );
-  if (!response.ok) throw new Error('Employee contract document view failed');
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const win = window.open(url, '_blank', 'noopener,noreferrer');
-  if (!win) {
-    URL.revokeObjectURL(url);
-    throw new Error('Popup was blocked while opening the document');
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts/${encodeURIComponent(contractId)}/document/download${params.toString() ? `?${params.toString()}` : ''}`,
+      authOpts()
+    );
+    if (!response.ok) throw new Error('Employee contract document view failed');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    popup.location.replace(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+  } catch (error) {
+    try {
+      popup.close();
+    } catch (_) {}
+    throw error;
   }
-  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
 }
 
 export async function deleteEmployeeContractRecord(employeeRef, contractId, source) {
@@ -323,19 +341,37 @@ export async function downloadEmployeeDocument(employeeRef, docId, fileName) {
 }
 
 export async function viewEmployeeDocument(employeeRef, docId) {
-  const response = await fetch(
-    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents/${encodeURIComponent(docId)}/download`,
-    authOpts()
-  );
-  if (!response.ok) throw new Error('Employee document view failed');
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const win = window.open(url, '_blank', 'noopener,noreferrer');
-  if (!win) {
-    URL.revokeObjectURL(url);
+  const popup = window.open('', '_blank');
+  if (!popup) {
     throw new Error('Popup was blocked while opening the document');
   }
-  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+  try {
+    popup.opener = null;
+    popup.document.title = 'Loading document...';
+    popup.document.body.style.margin = '0';
+    popup.document.body.style.fontFamily = 'system-ui, sans-serif';
+    popup.document.body.style.display = 'grid';
+    popup.document.body.style.placeItems = 'center';
+    popup.document.body.style.minHeight = '100vh';
+    popup.document.body.textContent = 'Loading document...';
+  } catch (_) {}
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/documents/${encodeURIComponent(docId)}/download`,
+      authOpts()
+    );
+    if (!response.ok) throw new Error('Employee document view failed');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    popup.location.replace(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+  } catch (error) {
+    try {
+      popup.close();
+    } catch (_) {}
+    throw error;
+  }
 }
 
 export async function deleteEmployeeDocument(employeeRef, docId) {
