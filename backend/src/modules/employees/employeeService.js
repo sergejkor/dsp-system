@@ -556,34 +556,51 @@ async function resolveEmployeeRefs(employeeRef) {
 
   const refs = new Set([ref]);
 
-  const employeesRes = await query(
-    `SELECT id::text AS id_text, employee_id, kenjo_user_id, pn, transporter_id
-     FROM employees
-     WHERE employee_id = $1 OR id::text = $1 OR kenjo_user_id = $1 OR pn = $1`,
-    [ref]
-  ).catch(() => ({ rows: [] }));
+  const addResolvedValue = (value) => {
+    const normalized = String(value || '').trim();
+    if (normalized) refs.add(normalized);
+  };
 
-  for (const row of employeesRes.rows || []) {
-    const values = [row.id_text, row.employee_id, row.kenjo_user_id, row.pn, row.transporter_id];
-    for (const value of values) {
-      const normalized = String(value || '').trim();
-      if (normalized) refs.add(normalized);
+  const expandFromEmployees = async () => {
+    const candidates = [...refs];
+    if (!candidates.length) return;
+    const employeesRes = await query(
+      `SELECT id::text AS id_text, employee_id, kenjo_user_id, pn, transporter_id
+       FROM employees
+       WHERE employee_id = ANY($1::text[])
+          OR id::text = ANY($1::text[])
+          OR kenjo_user_id = ANY($1::text[])
+          OR pn = ANY($1::text[])
+          OR transporter_id = ANY($1::text[])`,
+      [candidates]
+    ).catch(() => ({ rows: [] }));
+
+    for (const row of employeesRes.rows || []) {
+      [row.id_text, row.employee_id, row.kenjo_user_id, row.pn, row.transporter_id].forEach(addResolvedValue);
     }
-  }
+  };
 
-  const kenjoRes = await query(
-    `SELECT kenjo_user_id, employee_number, transporter_id
-     FROM kenjo_employees
-     WHERE kenjo_user_id = $1 OR employee_number = $1 OR transporter_id = $1`,
-    [ref]
-  ).catch(() => ({ rows: [] }));
+  const expandFromKenjo = async () => {
+    const candidates = [...refs];
+    if (!candidates.length) return;
+    const kenjoRes = await query(
+      `SELECT kenjo_user_id, employee_number, transporter_id
+       FROM kenjo_employees
+       WHERE kenjo_user_id = ANY($1::text[])
+          OR employee_number = ANY($1::text[])
+          OR transporter_id = ANY($1::text[])`,
+      [candidates]
+    ).catch(() => ({ rows: [] }));
 
-  for (const row of kenjoRes.rows || []) {
-    for (const value of [row.kenjo_user_id, row.employee_number, row.transporter_id]) {
-      const normalized = String(value || '').trim();
-      if (normalized) refs.add(normalized);
+    for (const row of kenjoRes.rows || []) {
+      [row.kenjo_user_id, row.employee_number, row.transporter_id].forEach(addResolvedValue);
     }
-  }
+  };
+
+  await expandFromEmployees();
+  await expandFromKenjo();
+  await expandFromEmployees();
+  await expandFromKenjo();
 
   return [...refs];
 }
@@ -602,6 +619,7 @@ async function resolveEmployeeRescueTarget(employeeRef) {
           OR id::text = ANY($1::text[])
           OR kenjo_user_id = ANY($1::text[])
           OR pn = ANY($1::text[])
+          OR transporter_id = ANY($1::text[])
        ORDER BY CASE WHEN kenjo_user_id IS NOT NULL AND kenjo_user_id <> '' THEN 0 ELSE 1 END, id ASC
        LIMIT 1`,
       [allRefs]
