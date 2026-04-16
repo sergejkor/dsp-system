@@ -148,7 +148,7 @@ export async function updateEmployeeContractEnd(employeeId, contractEnd) {
   const response = await fetch(`${API_BASE}/api/kenjo/employees/${encodeURIComponent(employeeId)}/work`, authOpts({
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contractEnd: contractEnd || null }),
+    body: JSON.stringify({ contractEnd: contractEnd == null ? '' : contractEnd }),
   }));
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));

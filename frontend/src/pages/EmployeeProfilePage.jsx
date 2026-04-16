@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useSearchParams, Link } from 'react-router-dom';
-import { getKenjoEmployeeProfile, updateEmployeeProfileInKenjo, updateEmployeeInternalProfile, deactivateEmployeeInKenjo } from '../services/kenjoApi';
+import {
+  getKenjoEmployeeProfile,
+  updateEmployeeProfileInKenjo,
+  updateEmployeeInternalProfile,
+  deactivateEmployeeInKenjo,
+  updateEmployeeContractEnd,
+} from '../services/kenjoApi';
 import {
   getEmployee,
   getEmployeeVacationSummary,
@@ -1342,6 +1348,8 @@ export default function EmployeeProfilePage() {
           uploadSuccess: 'Der neue Vertrag wurde unter Dokumenttyp "Vertrag" gespeichert.',
           uploadPartialSuccess: (errorMessage) =>
             `Der Vertrag wurde gespeichert, aber das Dokument konnte nicht automatisch unter Dokumenttyp "Vertrag" abgelegt werden.\n${errorMessage}`,
+          kenjoContractSyncPartialSuccess: (errorMessage) =>
+            `Der Vertrag wurde lokal gespeichert, aber das Vertragsende konnte nicht in Kenjo aktualisiert werden.\n${errorMessage}`,
           saveErrorTitle: 'Save failed',
           deleteErrorTitle: 'Delete failed',
         }
@@ -1411,6 +1419,8 @@ export default function EmployeeProfilePage() {
           uploadSuccess: 'The new contract was saved under document type "Vertrag".',
           uploadPartialSuccess: (errorMessage) =>
             `The contract was saved, but the document could not be added automatically under document type "Vertrag".\n${errorMessage}`,
+          kenjoContractSyncPartialSuccess: (errorMessage) =>
+            `The contract was saved locally, but the contract end could not be updated in Kenjo.\n${errorMessage}`,
           saveErrorTitle: 'Save failed',
           deleteErrorTitle: 'Delete failed',
         };
@@ -1989,7 +1999,7 @@ export default function EmployeeProfilePage() {
     }
   };
   const currentContractStart = normalizeContractDate(localEmployee?.start_date || work?.startDate);
-  const currentContractEnd = normalizeContractDate(localEmployee?.contract_end || work?.contractEnd);
+  const currentContractEnd = normalizeContractDate(localEmployee ? localEmployee?.contract_end : work?.contractEnd);
   const contractSignedDate = current?.dspLocal?.contract_signed_date;
   const normalizedContracts = sortContractTimelineRows(Array.isArray(contracts) ? contracts : []);
   const derivedCurrentContract = (() => {
@@ -2004,6 +2014,11 @@ export default function EmployeeProfilePage() {
         isDerived: true,
       };
     }
+
+    const hasStoredUnlimitedCurrent = normalizedContracts.some(
+      (row) => !normalizeContractDate(row?.termination_date) && !normalizeContractDate(row?.end_date)
+    );
+    if (hasStoredUnlimitedCurrent) return null;
 
     const latestStoredEffectiveEnd = normalizedContracts
       .map((row) => normalizeContractDate(row?.termination_date) || normalizeContractDate(row?.end_date))
@@ -2282,6 +2297,7 @@ export default function EmployeeProfilePage() {
       mode: row.isDerived ? 'create_from_derived' : 'update_existing',
       rowKey: row.row_key || row.id,
       isBaseContract: Number(row?.contractNumber || 0) === 1,
+      isCurrentContract: Boolean(row?.isCurrentProfile) && !normalizeContractDate(row?.termination_date),
       canSetAsPermanent:
         Boolean(row?.isCurrentProfile) &&
         !Boolean(row?.isUnlimited) &&
@@ -2369,6 +2385,63 @@ export default function EmployeeProfilePage() {
           setContractFileUploading(false);
         }
       }
+      let contractKenjoSyncError = '';
+      const currentKenjoContractEnd = normalizeContractDate(work?.contractEnd);
+      const nextKenjoContractEnd =
+        contractDraft.type === 'unlimited' ? null : normalizeContractDate(contractDraft.endDate);
+      const shouldSyncKenjoContractEnd =
+        Boolean(kenjoEmployeeId) &&
+        Boolean(editingContractTarget?.isCurrentContract) &&
+        (nextKenjoContractEnd == null || !currentKenjoContractEnd || nextKenjoContractEnd > currentKenjoContractEnd);
+      if (shouldSyncKenjoContractEnd) {
+        try {
+          await updateEmployeeContractEnd(kenjoEmployeeId, nextKenjoContractEnd);
+          const refreshedKenjoProfile = await getKenjoEmployeeProfile(kenjoEmployeeId).catch(() => null);
+          const persistedKenjoContractEnd = normalizeContractDate(
+            refreshedKenjoProfile?.work?.contractEnd || refreshedKenjoProfile?.contractEnd
+          );
+          const expectedKenjoContractEnd = normalizeContractDate(nextKenjoContractEnd);
+          if ((persistedKenjoContractEnd || null) !== (expectedKenjoContractEnd || null)) {
+            throw new Error(
+              language === 'de'
+                ? 'Kenjo hat das neue Vertragsende nicht gespeichert.'
+                : 'Kenjo did not persist the new contract end.'
+            );
+          }
+          if (refreshedKenjoProfile) {
+            setEmployee((prev) => ({
+              ...(prev || {}),
+              ...refreshedKenjoProfile,
+              dspLocal: {
+                fuehrerschein_aufstellungsdatum: '',
+                fuehrerschein_aufstellungsbehoerde: '',
+                whatsapp_number: '',
+                contract_signed_date: '',
+                ...(prev?.dspLocal || {}),
+                ...(refreshedKenjoProfile?.dspLocal || {}),
+              },
+            }));
+            setDraft((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    ...refreshedKenjoProfile,
+                    dspLocal: {
+                      fuehrerschein_aufstellungsdatum: '',
+                      fuehrerschein_aufstellungsbehoerde: '',
+                      whatsapp_number: '',
+                      contract_signed_date: '',
+                      ...(prev?.dspLocal || {}),
+                      ...(refreshedKenjoProfile?.dspLocal || {}),
+                    },
+                  }
+                : prev
+            );
+          }
+        } catch (kenjoSyncError) {
+          contractKenjoSyncError = String(kenjoSyncError?.message || kenjoSyncError);
+        }
+      }
       let contractSignedSaveError = '';
       if (shouldSaveContractSignedDate) {
         try {
@@ -2408,23 +2481,23 @@ export default function EmployeeProfilePage() {
         setLocalEmployee(refreshedEmployee);
       }
       closeContractForm();
-      if (contractDocumentUploadError || contractSignedSaveError) {
+      if (contractDocumentUploadError || contractSignedSaveError || contractKenjoSyncError) {
         const contractSignedPartialMessage = language === 'de'
           ? `Der Vertrag wurde gespeichert, aber "Contract signed" konnte nicht automatisch gespeichert werden.\n${contractSignedSaveError}`
           : `The contract was saved, but Contract signed could not be saved automatically.\n${contractSignedSaveError}`;
-        let partialMessage = '';
-        if (contractDocumentUploadError && contractSignedSaveError) {
-          partialMessage =
-            `${contractUi.uploadPartialSuccess(contractDocumentUploadError)}\n` +
-            `${language === 'de' ? 'Contract signed konnte nicht automatisch gespeichert werden.' : 'Contract signed could not be saved automatically.'}\n${contractSignedSaveError}`;
-        } else if (contractDocumentUploadError) {
-          partialMessage = contractUi.uploadPartialSuccess(contractDocumentUploadError);
-        } else {
-          partialMessage = contractSignedPartialMessage;
+        const partialMessages = [];
+        if (contractDocumentUploadError) {
+          partialMessages.push(contractUi.uploadPartialSuccess(contractDocumentUploadError));
+        }
+        if (contractKenjoSyncError) {
+          partialMessages.push(contractUi.kenjoContractSyncPartialSuccess(contractKenjoSyncError));
+        }
+        if (contractSignedSaveError) {
+          partialMessages.push(contractSignedPartialMessage);
         }
         setContractModal({
           title: contractUi.save,
-          message: partialMessage,
+          message: partialMessages.join('\n\n'),
         });
       } else if (contractUploadFile) {
         setContractModal({

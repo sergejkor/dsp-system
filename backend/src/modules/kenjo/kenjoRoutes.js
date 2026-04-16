@@ -138,7 +138,9 @@ router.put('/employees/:id/work', async (req, res) => {
       return res.status(400).json({ error: 'Employee id is required' });
     }
     const body = {};
-    if (contractEnd !== undefined) body.contractEnd = contractEnd === '' || contractEnd === null ? null : String(contractEnd).slice(0, 10);
+    if (contractEnd !== undefined) {
+      body.contractEnd = contractEnd === '' || contractEnd === null ? '' : String(contractEnd).slice(0, 10);
+    }
     await updateEmployeeWork(id, body);
     res.json({ ok: true });
   } catch (error) {
