@@ -6,9 +6,17 @@ Two-stage sync: **Stage A** imports matching emails and report URLs into `incomi
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PAVE_GMAIL_QUERY` | `in:anywhere` | Base query for **unread/manual** sync (`fetchUnreadEmails`). Not limited to unread unless you add `is:unread`. |
-| `PAVE_GMAIL_HISTORICAL_QUERY` | `in:anywhere` | Base query for **backfill**; combined with `after:` / `before:` / `from:` / `subject:`. |
+| `PAVE_GMAIL_QUERY` | `in:anywhere` | Base query for **unread/manual** sync (`fetchUnreadEmails`). Not limited to unread unless you add `is:unread`. Sync now searches a wider raw inbox window and stops after it queued the requested number of matching PAVE emails, so unrelated mailbox traffic no longer starves auto-ingestion. |
+| `PAVE_GMAIL_HISTORICAL_QUERY` | `in:anywhere` | Base query for **backfill**; combined with `after:` / `before:` / `from:` / `subject:`. UI `dateTo` is treated as inclusive; Gmail `before:` is shifted by +1 day under the hood. |
 | `PAVE_GMAIL_MESSAGE_FETCH_CONCURRENCY` | `8` | Parallel `messages.get` calls after list pagination (max 20). |
+
+## Scheduler
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PAVE_SYNC_ENABLED` | `false` | Enables the automatic PAVE email sync scheduler on backend startup. |
+| `PAVE_SYNC_CRON` | `*/5 * * * *` | Cron expression for auto sync runs. |
+| `PAVE_SYNC_MAX_EMAILS_PER_RUN` | `50` | Target number of matching PAVE emails queued per automatic run. |
 
 ## IMAP
 

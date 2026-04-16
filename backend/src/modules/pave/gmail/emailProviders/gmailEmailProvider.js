@@ -76,6 +76,16 @@ function normalizeGmailSearchDate(value) {
   return s;
 }
 
+function shiftGmailSearchDate(value, days = 0) {
+  const normalized = normalizeGmailSearchDate(value);
+  if (!normalized) return null;
+  if (!days) return normalized;
+  const match = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (!match) return normalized;
+  const shifted = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days));
+  return `${shifted.getUTCFullYear()}/${shifted.getUTCMonth() + 1}/${shifted.getUTCDate()}`;
+}
+
 function gmailSubjectClause(subjectContains) {
   const s = String(subjectContains || '').trim();
   if (!s) return null;
@@ -216,7 +226,8 @@ export default {
     const baseHistorical = String(process.env.PAVE_GMAIL_HISTORICAL_QUERY || 'in:anywhere').trim();
     const parts = [baseHistorical];
     const after = normalizeGmailSearchDate(dateFrom);
-    const before = normalizeGmailSearchDate(dateTo);
+    // Gmail `before:` is exclusive, while the UI date picker is inclusive.
+    const before = shiftGmailSearchDate(dateTo, 1);
     if (after) parts.push(`after:${after}`);
     if (before) parts.push(`before:${before}`);
     if (sender) parts.push(`from:${String(sender).trim()}`);

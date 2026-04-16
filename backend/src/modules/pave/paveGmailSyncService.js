@@ -77,6 +77,22 @@ function normalizeEmailProvider(provider) {
   return String(provider || '').trim().toLowerCase();
 }
 
+function clampSyncLimit(limit, fallback = 20) {
+  const n = Number(limit);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.min(5000, Math.trunc(n)));
+}
+
+/**
+ * Shared inboxes often contain many non-PAVE emails. Searching only the first N raw
+ * messages can miss real PAVE reports completely, so auto sync looks deeper and then
+ * stops once enough matching reports were queued.
+ */
+function computeAutoEmailSearchPool(limit) {
+  const requested = clampSyncLimit(limit, 20);
+  return Math.min(2000, Math.max(100, requested * 8));
+}
+
 async function ensureDirs() {
   const dir = path.resolve(process.cwd(), 'backend-uploads/pave-gmail');
   await fs.mkdir(dir, { recursive: true });
@@ -640,10 +656,13 @@ export async function syncGmailReports({
   syncRunningGlobal = true;
   const syncStarted = Date.now();
   const providerNorm = normalizeEmailProvider(provider);
+  const requestedLimit = clampSyncLimit(limit, 20);
+  const usingSourceEmails = Array.isArray(sourceEmails);
+  const searchPool = usingSourceEmails ? sourceEmails.length : computeAutoEmailSearchPool(requestedLimit);
   const reportConc = Math.max(1, Math.min(8, Number(process.env.PAVE_REPORT_PROCESS_CONCURRENCY || 3)));
   const processMax = Math.min(
     5000,
-    Math.max(1, Number(process.env.PAVE_REPORT_PROCESS_MAX_PER_RUN || limit || 100))
+    Math.max(1, Number(process.env.PAVE_REPORT_PROCESS_MAX_PER_RUN || requestedLimit || 100))
   );
   const pendingDownloadCap = reprocessSparse
     ? Math.min(2000, Math.max(processMax, Number(process.env.PAVE_REQUEUE_SPARSE_MAX || 200)))
@@ -666,12 +685,17 @@ export async function syncGmailReports({
   };
 
   const tSearch = Date.now();
-  const rawList = Array.isArray(sourceEmails)
+  const rawList = usingSourceEmails
     ? sourceEmails
-    : await providerImpl.fetchUnreadEmails({ maxResults: Number(limit) || 20 });
+    : await providerImpl.fetchUnreadEmails({ maxResults: searchPool });
   timings.emailSearchMs = Date.now() - tSearch;
 
-  const emails = Array.isArray(rawList) ? rawList.slice(0, limit) : [];
+  const emails =
+    rawList && typeof rawList === 'object' && Array.isArray(rawList.emails)
+      ? rawList.emails
+      : Array.isArray(rawList)
+        ? rawList
+        : [];
 
   const storageDir = await ensureDirs();
 
@@ -696,13 +720,17 @@ export async function syncGmailReports({
     stageBPlaywrightDownloads: 0,
     stageBCacheHits: 0,
     sparseRequeued: 0,
+    requestedLimit,
+    searchPool,
+    searchCapReached: false,
     timings,
   };
   console.log('[pave-sync] sync start', {
     mode,
     provider,
     scanned: emails.length,
-    limit,
+    requestedLimit,
+    searchPool,
     reprocessSparse,
     perEmailTimeoutMs,
     reportConcurrency: reportConc,
@@ -720,6 +748,16 @@ export async function syncGmailReports({
 
     const tStageA = Date.now();
     for (let i = 0; i < emails.length; i++) {
+      if (!usingSourceEmails && results.stageAQueued >= requestedLimit) {
+        results.searchCapReached = true;
+        console.log('[pave-sync] search cap reached', {
+          requestedLimit,
+          searchPool,
+          scannedRawEmails: i,
+          queuedMatchingReports: results.stageAQueued,
+        });
+        break;
+      }
       const email = emails[i];
       let incomingEmailId = null;
       try {
@@ -920,6 +958,9 @@ export async function syncGmailReports({
       scanned: results.scanned,
       matched: results.matched,
       imported: results.imported,
+      requestedLimit: results.requestedLimit,
+      searchPool: results.searchPool,
+      searchCapReached: results.searchCapReached,
       filteredOut: results.filteredOut,
       skipped: results.skipped,
       partial: results.partial,
