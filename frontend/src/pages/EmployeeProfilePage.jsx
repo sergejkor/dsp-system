@@ -1933,6 +1933,9 @@ export default function EmployeeProfilePage() {
     setError('');
     setInternalProfileModal(null);
     try {
+      const requestedContractSignedDate = normalizeLocalDateInputValue(
+        draft?.dspLocal?.contract_signed_date,
+      );
       const nextDspLocal = {
         ...(draft.dspLocal || {}),
         fuehrerschein_aufstellungsdatum: normalizeLocalDateInputValue(
@@ -1946,6 +1949,14 @@ export default function EmployeeProfilePage() {
         dspLocal: nextDspLocal,
       });
       const refreshedEmployee = await getKenjoEmployeeProfile(kenjoEmployeeId);
+      const persistedContractSignedDate = normalizeLocalDateInputValue(
+        refreshedEmployee?.dspLocal?.contract_signed_date,
+      );
+      if (requestedContractSignedDate !== persistedContractSignedDate) {
+        throw new Error(
+          'Contract signed date was not persisted. Backend update is likely missing on the server.'
+        );
+      }
       const nextEmployee = {
         ...refreshedEmployee,
         dspLocal: {
@@ -2361,12 +2372,19 @@ export default function EmployeeProfilePage() {
       let contractSignedSaveError = '';
       if (shouldSaveContractSignedDate) {
         try {
+          const requestedContractSignedDate = normalizeLocalDateInputValue(contractDraft.contractSignedDate);
           await updateEmployeeInternalProfile(kenjoEmployeeId, {
             dspLocal: {
-              contract_signed_date: normalizeLocalDateInputValue(contractDraft.contractSignedDate) || null,
+              contract_signed_date: requestedContractSignedDate || null,
             },
           });
           const refreshedProfile = await getKenjoEmployeeProfile(kenjoEmployeeId).catch(() => null);
+          const persistedContractSignedDate = normalizeLocalDateInputValue(
+            refreshedProfile?.dspLocal?.contract_signed_date,
+          );
+          if ((requestedContractSignedDate || '') !== (persistedContractSignedDate || '')) {
+            throw new Error('Contract signed date was not persisted. Backend update is likely missing on the server.');
+          }
           if (refreshedProfile) {
             const nextEmployee = {
               ...refreshedProfile,
