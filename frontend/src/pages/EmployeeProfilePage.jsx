@@ -765,7 +765,7 @@ export default function EmployeeProfilePage() {
   const [contractsLoading, setContractsLoading] = useState(false);
   const [contractError, setContractError] = useState('');
   const [showContractForm, setShowContractForm] = useState(false);
-  const [contractDraft, setContractDraft] = useState({ startDate: '', endDate: '', type: 'fixed' });
+  const [contractDraft, setContractDraft] = useState({ startDate: '', endDate: '', type: 'fixed', contractSignedDate: '' });
   const [contractSaving, setContractSaving] = useState(false);
   const [editingContractTarget, setEditingContractTarget] = useState(null);
   const [contractModal, setContractModal] = useState(null);
@@ -2236,7 +2236,7 @@ export default function EmployeeProfilePage() {
 
   const closeContractForm = () => {
     setShowContractForm(false);
-    setContractDraft({ startDate: '', endDate: '', type: 'fixed' });
+    setContractDraft({ startDate: '', endDate: '', type: 'fixed', contractSignedDate: '' });
     setContractError('');
     setEditingContractTarget(null);
     setContractUploadFile(null);
@@ -2258,6 +2258,7 @@ export default function EmployeeProfilePage() {
       startDate: nextFixedContractStartDate || currentContractStart || '',
       endDate: '',
       type: defaultType,
+      contractSignedDate: normalizeLocalDateInputValue(current?.dspLocal?.contract_signed_date),
     });
   };
 
@@ -2269,6 +2270,7 @@ export default function EmployeeProfilePage() {
       source: row.source || 'history',
       mode: row.isDerived ? 'create_from_derived' : 'update_existing',
       rowKey: row.row_key || row.id,
+      isBaseContract: Number(row?.contractNumber || 0) === 1,
       canSetAsPermanent:
         Boolean(row?.isCurrentProfile) &&
         !Boolean(row?.isUnlimited) &&
@@ -2281,6 +2283,7 @@ export default function EmployeeProfilePage() {
       startDate: normalizeContractDate(row?.start_date) || '',
       endDate: normalizeContractDate(row?.end_date) || '',
       type: row?.isUnlimited ? 'unlimited' : 'fixed',
+      contractSignedDate: normalizeLocalDateInputValue(current?.dspLocal?.contract_signed_date),
     });
   };
 
@@ -2301,6 +2304,12 @@ export default function EmployeeProfilePage() {
     setContractError('');
     setEmployeeDocError('');
     try {
+      const shouldSaveContractSignedDate =
+        Boolean(kenjoEmployeeId) &&
+        (
+          (!editingContractTarget && contractTimeline.length === 0) ||
+          Boolean(editingContractTarget?.isBaseContract)
+        );
       const isUpdatingExistingContract =
         editingContractTarget && editingContractTarget.mode !== 'create_from_derived';
       let saved = isUpdatingExistingContract
@@ -2349,15 +2358,55 @@ export default function EmployeeProfilePage() {
           setContractFileUploading(false);
         }
       }
+      let contractSignedSaveError = '';
+      if (shouldSaveContractSignedDate) {
+        try {
+          await updateEmployeeInternalProfile(kenjoEmployeeId, {
+            dspLocal: {
+              contract_signed_date: normalizeLocalDateInputValue(contractDraft.contractSignedDate) || null,
+            },
+          });
+          const refreshedProfile = await getKenjoEmployeeProfile(kenjoEmployeeId).catch(() => null);
+          if (refreshedProfile) {
+            const nextEmployee = {
+              ...refreshedProfile,
+              dspLocal: {
+                fuehrerschein_aufstellungsdatum: '',
+                fuehrerschein_aufstellungsbehoerde: '',
+                whatsapp_number: '',
+                contract_signed_date: '',
+                ...(refreshedProfile?.dspLocal || {}),
+              },
+            };
+            setEmployee(nextEmployee);
+            setDraft(nextEmployee);
+          }
+        } catch (signedDateError) {
+          contractSignedSaveError = String(signedDateError?.message || signedDateError);
+        }
+      }
       const refreshedEmployee = await getEmployee(employeeDocRef).catch(() => null);
       if (refreshedEmployee) {
         setLocalEmployee(refreshedEmployee);
       }
       closeContractForm();
-      if (contractDocumentUploadError) {
+      if (contractDocumentUploadError || contractSignedSaveError) {
+        const contractSignedPartialMessage = language === 'de'
+          ? `Der Vertrag wurde gespeichert, aber "Contract signed" konnte nicht automatisch gespeichert werden.\n${contractSignedSaveError}`
+          : `The contract was saved, but Contract signed could not be saved automatically.\n${contractSignedSaveError}`;
+        let partialMessage = '';
+        if (contractDocumentUploadError && contractSignedSaveError) {
+          partialMessage =
+            `${contractUi.uploadPartialSuccess(contractDocumentUploadError)}\n` +
+            `${language === 'de' ? 'Contract signed konnte nicht automatisch gespeichert werden.' : 'Contract signed could not be saved automatically.'}\n${contractSignedSaveError}`;
+        } else if (contractDocumentUploadError) {
+          partialMessage = contractUi.uploadPartialSuccess(contractDocumentUploadError);
+        } else {
+          partialMessage = contractSignedPartialMessage;
+        }
         setContractModal({
           title: contractUi.save,
-          message: contractUi.uploadPartialSuccess(contractDocumentUploadError),
+          message: partialMessage,
         });
       } else if (contractUploadFile) {
         setContractModal({
@@ -2379,6 +2428,12 @@ export default function EmployeeProfilePage() {
       setContractFileUploading(false);
     }
   };
+  const showContractSignedField =
+    Boolean(kenjoEmployeeId) &&
+    (
+      (!editingContractTarget && contractTimeline.length === 0) ||
+      Boolean(editingContractTarget?.isBaseContract)
+    );
 
   const handleUploadNewContractClick = () => {
     if (!employeeDocRef) {
@@ -3448,6 +3503,20 @@ export default function EmployeeProfilePage() {
                 </label>
               ) : null}
             </div>
+
+            {showContractSignedField ? (
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  <span>Contract signed</span>
+                  <input
+                    type="date"
+                    value={contractDraft.contractSignedDate || ''}
+                    onChange={(e) => setContractDraft((prev) => ({ ...prev, contractSignedDate: e.target.value }))}
+                    style={modalInputStyle}
+                  />
+                </label>
+              </div>
+            ) : null}
 
             {editingContractTarget?.canSetAsPermanent && contractDraft.type !== 'unlimited' ? (
               <div style={{ marginBottom: '1rem' }}>
