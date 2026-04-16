@@ -2177,7 +2177,10 @@ export default function EmployeeProfilePage() {
   };
 
   const handleViewContract = async (row) => {
-    if (!employeeDocRef) {
+    const contractEmployeeRef = String(
+      row?.employee_ref || row?.kenjo_employee_id || employeeDocRef || ''
+    ).trim();
+    if (!contractEmployeeRef) {
       setContractError(contractUi.missingEmployeeRef);
       return;
     }
@@ -2191,7 +2194,7 @@ export default function EmployeeProfilePage() {
     }
     try {
       setContractError('');
-      await viewEmployeeDocument(employeeDocRef, contractDocumentId);
+      await viewEmployeeDocument(contractEmployeeRef, contractDocumentId);
     } catch (e) {
       const message = String(e?.message || e);
       setContractError(message);
