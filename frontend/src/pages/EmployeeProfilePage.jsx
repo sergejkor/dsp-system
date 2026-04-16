@@ -11,6 +11,8 @@ import {
   getEmployeeDocuments,
   addEmployeeContract,
   updateEmployeeContract,
+  uploadEmployeeContractDocument,
+  deleteEmployeeContractRecord,
   terminateEmployeeContract,
   addEmployeeRescue,
   updateEmployeeLocalSettings,
@@ -108,6 +110,12 @@ function formatCurrency(value) {
   return `${num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
+function areDisplayedHourValuesEqual(left, right) {
+  const leftNum = Number(left) || 0;
+  const rightNum = Number(right) || 0;
+  return Math.abs(leftNum - rightNum) < 0.005;
+}
+
 function getLastMonthRange() {
   const now = new Date();
   const y = now.getFullYear();
@@ -133,6 +141,40 @@ function getMonthRange(monthValue) {
     fromDate: from.toISOString().slice(0, 10),
     toDate: to.toISOString().slice(0, 10),
   };
+}
+
+function getEmployeeExpectedHoursForMonth(employee, monthValue) {
+  const weeklyHours = Number(
+    employee?.work?.weeklyHours ??
+    employee?.weeklyHours ??
+    0
+  );
+  let weeklyDays = Number(
+    employee?.work?.weeklyDays ??
+    employee?.weeklyDays ??
+    0
+  );
+
+  if (!(weeklyHours > 0)) return 0;
+  if (!(weeklyDays > 0)) weeklyDays = 5;
+  weeklyDays = Math.max(1, Math.min(Math.round(weeklyDays), 5));
+
+  const dailyHours = weeklyHours / weeklyDays;
+  if (!(dailyHours > 0)) return 0;
+
+  const { fromDate, toDate } = getMonthRange(monthValue);
+  const activeWeekdays = new Set();
+  for (let weekday = 1; weekday <= weeklyDays; weekday += 1) {
+    activeWeekdays.add(weekday);
+  }
+
+  let total = 0;
+  for (let cursor = new Date(`${fromDate}T12:00:00`); cursor <= new Date(`${toDate}T12:00:00`); cursor.setDate(cursor.getDate() + 1)) {
+    const weekday = cursor.getDay() === 0 ? 7 : cursor.getDay();
+    if (activeWeekdays.has(weekday)) total += dailyHours;
+  }
+
+  return Math.round(total * 100) / 100;
 }
 
 function normalizeIdentifier(value) {
@@ -190,34 +232,124 @@ function getFrozenPayrollCache() {
   }
 }
 
-function getRowHoursValue(row) {
-  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
+function getRowManualEntry(row) {
+  return row?.manual_entry && typeof row.manual_entry === 'object'
     ? row.manual_entry
     : null;
-  return Number(
-    manualEntry?.worked_hours ??
-    row.worked_hours ??
-    manualEntry?.payroll_hours ??
-    row.payroll_hours ??
-    manualEntry?.expected_hours ??
-    row.expected_hours ??
-    row.worked_hours ??
-    row.contract_expected_hours ??
-    0
-  ) || 0;
+}
+
+function getRowNumericValue(row, fields = []) {
+  const manualEntry = getRowManualEntry(row);
+  let sawNumericZero = false;
+  for (const field of fields) {
+    const candidates = [manualEntry?.[field], row?.[field]];
+    for (const candidate of candidates) {
+      if (candidate == null || candidate === '') continue;
+      const parsed = Number(candidate);
+      if (!Number.isFinite(parsed)) continue;
+      if (parsed === 0) {
+        sawNumericZero = true;
+        continue;
+      }
+      return parsed;
+    }
+  }
+  return sawNumericZero ? 0 : 0;
+}
+
+function rowHasOwnField(row, fields = []) {
+  const manualEntry = getRowManualEntry(row);
+  return fields.some((field) =>
+    Object.prototype.hasOwnProperty.call(row || {}, field) ||
+    (manualEntry ? Object.prototype.hasOwnProperty.call(manualEntry, field) : false)
+  );
+}
+
+function getRowContractExpectedHoursValue(row) {
+  return getRowNumericValue(row, ['expected_working_hours', 'contract_expected_hours']);
+}
+
+function getRowExplicitRegularHoursValue(row) {
+  return getRowNumericValue(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours']);
+}
+
+function getRowExplicitOvertimeHoursValue(row) {
+  return getRowNumericValue(row, ['overtime_hours', 'overtime']);
+}
+
+function getRowRawWorkedHoursValue(row) {
+  return getRowNumericValue(row, ['total_worked_hours', 'worked_hours']);
+}
+
+function getRowHoursValue(row) {
+  const rawWorkedHours = getRowRawWorkedHoursValue(row);
+  if (rawWorkedHours > 0) {
+    return rawWorkedHours;
+  }
+
+  const explicitRegularHours = getRowExplicitRegularHoursValue(row);
+  const explicitOvertimeHours = getRowExplicitOvertimeHoursValue(row);
+  if (explicitRegularHours > 0 || explicitOvertimeHours > 0) {
+    return explicitRegularHours + explicitOvertimeHours;
+  }
+
+  const contractExpectedHours = getRowContractExpectedHoursValue(row);
+  if (explicitRegularHours > 0) return explicitRegularHours;
+  if (contractExpectedHours > 0) return contractExpectedHours;
+  return 0;
+}
+
+function payrollRowHasDisplayHoursData(row) {
+  if (!row || typeof row !== 'object') return false;
+  return rowHasOwnField(row, [
+    'total_worked_hours',
+    'worked_hours',
+    'worked_hours_capped',
+    'expected_hours',
+    'payroll_hours',
+    'expected_working_hours',
+    'contract_expected_hours',
+    'overtime_hours',
+    'overtime',
+  ]);
+}
+
+function getRowRegularHoursValue(row) {
+  const contractExpectedHours = getRowContractExpectedHoursValue(row);
+  const rawWorkedHours = getRowRawWorkedHoursValue(row);
+
+  if (contractExpectedHours > 0 && rawWorkedHours > 0) {
+    return Math.min(rawWorkedHours, contractExpectedHours);
+  }
+
+  const explicitRegularHours = getRowExplicitRegularHoursValue(row);
+  if (explicitRegularHours > 0) return explicitRegularHours;
+
+  if (contractExpectedHours > 0) {
+    return Math.min(getRowHoursValue(row), contractExpectedHours);
+  }
+
+  return getRowHoursValue(row);
+}
+
+function getRowOvertimeHoursValue(row) {
+  const rawWorkedHours = getRowRawWorkedHoursValue(row);
+  const contractExpectedHours = getRowContractExpectedHoursValue(row);
+  if (contractExpectedHours > 0 && rawWorkedHours > 0) {
+    return Math.max(rawWorkedHours - contractExpectedHours, 0);
+  }
+
+  if (rowHasOwnField(row, ['overtime_hours', 'overtime'])) {
+    return getRowExplicitOvertimeHoursValue(row);
+  }
+
+  const workedHours = getRowHoursValue(row);
+  const regularHours = getRowRegularHoursValue(row);
+  return Math.max(workedHours - regularHours, 0);
 }
 
 function getRowVerpflValue(row) {
-  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
-    ? row.manual_entry
-    : null;
-  return Number(
-    manualEntry?.verpfl_mehr ??
-    row.verpfl_mehr_display ??
-    row.verpfl_mehr ??
-    row.verpflegung_mehr ??
-    0
-  ) || 0;
+  return getRowNumericValue(row, ['verpfl_mehr', 'verpfl_mehr_display', 'verpflegung_mehr']);
 }
 
 function pickBestPayrollRow(candidates, employeeName) {
@@ -276,13 +408,10 @@ function getFrozenPayrollRowFromCache({ month, kenjoEmployeeId, pnCandidates = [
 
 function payrollRowHasHoursData(row) {
   if (!row || typeof row !== 'object') return false;
-  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
-    ? row.manual_entry
-    : null;
   const fields = ['worked_hours', 'payroll_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours', 'overtime'];
   return fields.some((field) =>
     Object.prototype.hasOwnProperty.call(row, field) ||
-    (manualEntry ? Object.prototype.hasOwnProperty.call(manualEntry, field) : false)
+    (getRowManualEntry(row) ? Object.prototype.hasOwnProperty.call(getRowManualEntry(row), field) : false)
   );
 }
 
@@ -320,40 +449,23 @@ function findMatchingPayrollRow(rows, { kenjoIdCandidates = [], pnCandidates = [
   return row || null;
 }
 
-function buildEmployeePayrollCardsFromRow(row) {
+function buildEmployeePayrollCardsFromRow(row, { employee = null, month = '' } = {}) {
   if (!row || typeof row !== 'object') return null;
-  const manualEntry = row?.manual_entry && typeof row.manual_entry === 'object'
-    ? row.manual_entry
-    : null;
-  const payrollHours = getRowHoursValue(row);
-  const overtimeHours = Number(
-    manualEntry?.overtime_hours ??
-    row.overtime_hours ??
-    row.overtime ??
-    0
-  ) || 0;
+  const sourceWorkedHours = getRowRawWorkedHoursValue(row) || getRowHoursValue(row);
+  const resolvedExpectedHours =
+    getRowContractExpectedHoursValue(row) ||
+    getEmployeeExpectedHoursForMonth(employee, month);
+  const payrollHours = resolvedExpectedHours > 0
+    ? Math.min(sourceWorkedHours, resolvedExpectedHours)
+    : getRowRegularHoursValue(row);
+  const contractExpectedHours = resolvedExpectedHours || payrollHours;
+  const overtimeHours = resolvedExpectedHours > 0
+    ? Math.max(sourceWorkedHours - resolvedExpectedHours, 0)
+    : getRowOvertimeHoursValue(row);
   const verpflMehr = getRowVerpflValue(row);
-  const fahrtGeld = Number(
-    manualEntry?.fahrt_geld ??
-    row.fahrt_geld_display ??
-    row.fahrt_geld ??
-    row.fahrtgeld ??
-    0
-  ) || 0;
-  const krankDays = Number(
-    manualEntry?.krank_days ??
-    row.krank_days ??
-    row.sick_days ??
-    row.kranktage ??
-    0
-  ) || 0;
-  const urlaubDays = Number(
-    manualEntry?.urlaub_days ??
-    row.urlaub_days ??
-    row.vacation_days ??
-    row.urlaubstage ??
-    0
-  ) || 0;
+  const fahrtGeld = getRowNumericValue(row, ['fahrt_geld', 'fahrt_geld_display', 'fahrtgeld']);
+  const krankDays = getRowNumericValue(row, ['krank_days', 'sick_days', 'kranktage']);
+  const urlaubDays = getRowNumericValue(row, ['urlaub_days', 'vacation_days', 'urlaubstage']);
   const workedHoursPay = payrollHours * EMPLOYEE_HOURLY_RATE_EUR;
   const overtimePay = overtimeHours * EMPLOYEE_HOURLY_RATE_EUR;
   const krankgeld = krankDays * EMPLOYEE_DAILY_PAYOUT_HOURS * EMPLOYEE_HOURLY_RATE_EUR;
@@ -367,6 +479,7 @@ function buildEmployeePayrollCardsFromRow(row) {
     urlaubgeld;
   return {
     workedHours: payrollHours,
+    fullTimeHours: contractExpectedHours,
     overtimeHours,
     verpflMehr,
     fahrtGeld,
@@ -378,6 +491,25 @@ function buildEmployeePayrollCardsFromRow(row) {
     overtimePay,
     bruttoLohn,
   };
+}
+
+function LoadingFiveDots({ isDark = false }) {
+  return (
+    <span className={`employee-loading-dots${isDark ? ' employee-loading-dots--dark' : ''}`}>
+      <span className="employee-loading-dots__label">Loading</span>
+      <span className="employee-loading-dots__track" aria-hidden="true">
+        {[0, 1, 2, 3, 4].map((index) => (
+          <span
+            key={index}
+            className="employee-loading-dots__dot"
+            style={{ animationDelay: `${index * 0.18}s` }}
+          >
+            .
+          </span>
+        ))}
+      </span>
+    </span>
+  );
 }
 
 function normalizeContractDate(value) {
@@ -615,6 +747,10 @@ export default function EmployeeProfilePage() {
   const [editingContractTarget, setEditingContractTarget] = useState(null);
   const [contractModal, setContractModal] = useState(null);
   const [contractFileUploading, setContractFileUploading] = useState(false);
+  const [contractUploadFile, setContractUploadFile] = useState(null);
+  const [showSetPermanentConfirm, setShowSetPermanentConfirm] = useState(false);
+  const [deleteContractTarget, setDeleteContractTarget] = useState(null);
+  const [contractDeleting, setContractDeleting] = useState(false);
   const [terminateContractTarget, setTerminateContractTarget] = useState(null);
   const [terminateContractDraft, setTerminateContractDraft] = useState({
     terminationDate: '',
@@ -648,6 +784,7 @@ export default function EmployeeProfilePage() {
   const [timeOffHistoryLoading, setTimeOffHistoryLoading] = useState(false);
   const [timeOffHistoryError, setTimeOffHistoryError] = useState('');
   const [lastMonthPayrollCards, setLastMonthPayrollCards] = useState(null);
+  const [lastMonthPayrollLoading, setLastMonthPayrollLoading] = useState(false);
   const contractFileInputRef = useRef(null);
   const terminateContractFileInputRef = useRef(null);
   const employeeDocFileInputRef = useRef(null);
@@ -834,9 +971,11 @@ export default function EmployeeProfilePage() {
   useEffect(() => {
     if (!kenjoEmployeeId) {
       setLastMonthPayrollCards(null);
+      setLastMonthPayrollLoading(false);
       return;
     }
     let cancelled = false;
+    setLastMonthPayrollLoading(true);
     (async () => {
       try {
         const lastMonth = getLastMonthRange();
@@ -861,8 +1000,8 @@ export default function EmployeeProfilePage() {
           payrollContextMonthFromState === month
             ? payrollRowFromState
             : null;
-        if (rowFromStateMatches) {
-          const cards = buildEmployeePayrollCardsFromRow(rowFromStateMatches);
+        if (rowFromStateMatches && payrollRowHasDisplayHoursData(rowFromStateMatches)) {
+          const cards = buildEmployeePayrollCardsFromRow(rowFromStateMatches, { employee, month });
           if (!cancelled) setLastMonthPayrollCards(cards);
           return;
         }
@@ -881,8 +1020,8 @@ export default function EmployeeProfilePage() {
           pnCandidates: [employeePn].filter(Boolean),
           employeeName,
         });
-        if (cachedRow && payrollRowHasHoursData(cachedRow)) {
-          const cards = buildEmployeePayrollCardsFromRow(cachedRow);
+        if (cachedRow && payrollRowHasDisplayHoursData(cachedRow)) {
+          const cards = buildEmployeePayrollCardsFromRow(cachedRow, { employee, month });
           if (!cancelled) setLastMonthPayrollCards(cards);
           return;
         }
@@ -939,7 +1078,7 @@ export default function EmployeeProfilePage() {
             employeeName: employeeNameLive,
           });
         }
-        if (row && !payrollRowHasHoursData(row)) {
+        if (row && !payrollRowHasDisplayHoursData(row)) {
           const liveResult = await calculatePayroll(month, fromDate, toDate);
           const liveRows = Array.isArray(liveResult?.rows) ? liveResult.rows : [];
           row = findMatchingPayrollRow(liveRows, {
@@ -952,19 +1091,21 @@ export default function EmployeeProfilePage() {
           if (!cancelled) setLastMonthPayrollCards(null);
           return;
         }
-        const cards = buildEmployeePayrollCardsFromRow(row);
+        const cards = buildEmployeePayrollCardsFromRow(row, { employee, month });
         if (!cancelled) {
           setLastMonthPayrollCards(cards);
         }
       } catch (_) {
         if (!cancelled) setLastMonthPayrollCards(null);
+      } finally {
+        if (!cancelled) setLastMonthPayrollLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [kenjoEmployeeId, employee, payrollRowFromState]);
+  }, [kenjoEmployeeId, employee, payrollRowFromState, payrollContextMonthFromState]);
 
   const openKpiCommentFromMain = async () => {
     if (!kenjoEmployeeId || !employee) return;
@@ -1132,8 +1273,19 @@ export default function EmployeeProfilePage() {
           unlimitedLabel: 'Unbefristed',
           terminateButton: 'Terminate contract',
           terminateCurrentButton: 'Terminate Current Contract',
-          editContractDateButton: 'Edit contract date',
-          editContractDateTitle: 'Edit contract date',
+          editContractDateButton: 'Edit contract',
+          editContractDateTitle: 'Edit contract',
+          setAsPermanentButton: 'Als unbefristet setzen',
+          setAsPermanentTitle: 'Unbefristeten Vertrag setzen',
+          setAsPermanentConfirm: 'Sind Sie sicher, dass Sie diesen Vertrag auf unbefristet setzen moechten?',
+          setAsPermanentConfirmButton: 'Yes',
+          setAsPermanentCancelButton: 'Cancel',
+          deleteContractButton: 'Delete contract',
+          deleteContractTitle: 'Delete contract',
+          deleteContractConfirm: 'Sind Sie sicher, dass Sie diesen Vertrag loeschen moechten?',
+          deleteContractCancelButton: 'No',
+          deleteContractConfirmButton: 'Yes',
+          deleteContractSuccess: 'Contract deleted successfully.',
           terminateTitle: 'Vertrag kuendigen',
           terminationDate: 'Termination date',
           mutualTermination: 'Aufhebungsvertrag',
@@ -1159,7 +1311,12 @@ export default function EmployeeProfilePage() {
           saving: 'Speichert...',
           uploadContract: 'Upload contract',
           uploadingContract: 'Laedt hoch...',
+          contractDocumentSelected: (name) => `Dokument: ${name}`,
           uploadSuccess: 'Der neue Vertrag wurde unter Dokumenttyp "Vertrag" gespeichert.',
+          uploadPartialSuccess: (errorMessage) =>
+            `Der Vertrag wurde gespeichert, aber das Dokument konnte nicht automatisch unter Dokumenttyp "Vertrag" abgelegt werden.\n${errorMessage}`,
+          saveErrorTitle: 'Save failed',
+          deleteErrorTitle: 'Delete failed',
         }
       : {
           addContractButton: 'Add contract',
@@ -1182,8 +1339,19 @@ export default function EmployeeProfilePage() {
           unlimitedLabel: 'Unbefristed',
           terminateButton: 'Terminate contract',
           terminateCurrentButton: 'Terminate Current Contract',
-          editContractDateButton: 'Edit contract date',
-          editContractDateTitle: 'Edit contract date',
+          editContractDateButton: 'Edit contract',
+          editContractDateTitle: 'Edit contract',
+          setAsPermanentButton: 'Set as permanent',
+          setAsPermanentTitle: 'Set as permanent',
+          setAsPermanentConfirm: 'Are you sure you want to set that contract as a permanent?',
+          setAsPermanentConfirmButton: 'Yes',
+          setAsPermanentCancelButton: 'Cancel',
+          deleteContractButton: 'Delete contract',
+          deleteContractTitle: 'Delete contract',
+          deleteContractConfirm: 'Are you sure you want to delete this contract?',
+          deleteContractCancelButton: 'No',
+          deleteContractConfirmButton: 'Yes',
+          deleteContractSuccess: 'Contract deleted successfully.',
           terminateTitle: 'Terminate contract',
           terminationDate: 'Termination date',
           mutualTermination: 'Aufhebungsvertrag',
@@ -1209,7 +1377,12 @@ export default function EmployeeProfilePage() {
           saving: 'Saving...',
           uploadContract: 'Upload contract',
           uploadingContract: 'Uploading...',
+          contractDocumentSelected: (name) => `Document: ${name}`,
           uploadSuccess: 'The new contract was saved under document type "Vertrag".',
+          uploadPartialSuccess: (errorMessage) =>
+            `The contract was saved, but the document could not be added automatically under document type "Vertrag".\n${errorMessage}`,
+          saveErrorTitle: 'Save failed',
+          deleteErrorTitle: 'Delete failed',
         };
 
   const timeOffUi =
@@ -1608,6 +1781,16 @@ export default function EmployeeProfilePage() {
     return iso;
   };
 
+  const renderLastMonthPayrollValue = (formatter, value) => (
+    lastMonthPayrollLoading ? (
+      <LoadingFiveDots isDark={isDark} />
+    ) : formatter(value ?? 0)
+  );
+  const showLastMonthFullTimeCard = !lastMonthPayrollLoading && !areDisplayedHourValuesEqual(
+    lastMonthPayrollCards?.workedHours,
+    lastMonthPayrollCards?.fullTimeHours
+  );
+
   const onFieldChange = (field, value) => {
     setDraft((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
@@ -1759,8 +1942,8 @@ export default function EmployeeProfilePage() {
       setInternalSaving(false);
     }
   };
-  const currentContractStart = normalizeContractDate(work?.startDate || localEmployee?.start_date);
-  const currentContractEnd = normalizeContractDate(work?.contractEnd || localEmployee?.contract_end);
+  const currentContractStart = normalizeContractDate(localEmployee?.start_date || work?.startDate);
+  const currentContractEnd = normalizeContractDate(localEmployee?.contract_end || work?.contractEnd);
   const normalizedContracts = sortContractTimelineRows(Array.isArray(contracts) ? contracts : []);
   const derivedCurrentContract = (() => {
     if (!normalizedContracts.length) {
@@ -1836,6 +2019,7 @@ export default function EmployeeProfilePage() {
         !normalizeContractDate(row?.termination_date) &&
         !row?.isDerived &&
         row?.id != null,
+      canDelete: !row?.isDerived && row?.id != null,
       contractNumber,
       label: isUnlimited
         ? contractUi.unlimitedLabel
@@ -1922,6 +2106,11 @@ export default function EmployeeProfilePage() {
     setContractModal(null);
   };
 
+  const closeDeleteContractModal = () => {
+    if (contractDeleting) return;
+    setDeleteContractTarget(null);
+  };
+
   const closeTerminateContractModal = () => {
     setTerminateContractTarget(null);
     setTerminateContractDraft({
@@ -1947,11 +2136,21 @@ export default function EmployeeProfilePage() {
     setTerminateContractError('');
   };
 
+  const openDeleteContractModal = (row) => {
+    if (!row) return;
+    setDeleteContractTarget(row);
+  };
+
   const closeContractForm = () => {
     setShowContractForm(false);
     setContractDraft({ startDate: '', endDate: '', type: 'fixed' });
     setContractError('');
     setEditingContractTarget(null);
+    setContractUploadFile(null);
+    setShowSetPermanentConfirm(false);
+    if (contractFileInputRef.current) {
+      contractFileInputRef.current.value = '';
+    }
   };
 
   const openContractForm = () => {
@@ -1959,6 +2158,8 @@ export default function EmployeeProfilePage() {
     const defaultType = canAddAnotherFixedContract ? 'fixed' : 'unlimited';
     setContractError('');
     setEditingContractTarget(null);
+    setContractUploadFile(null);
+    setShowSetPermanentConfirm(false);
     setShowContractForm(true);
     setContractDraft({
       startDate: nextFixedContractStartDate || currentContractStart || '',
@@ -1975,7 +2176,13 @@ export default function EmployeeProfilePage() {
       source: row.source || 'history',
       mode: row.isDerived ? 'create_from_derived' : 'update_existing',
       rowKey: row.row_key || row.id,
+      canSetAsPermanent:
+        Boolean(row?.isCurrentProfile) &&
+        !Boolean(row?.isUnlimited) &&
+        !normalizeContractDate(row?.termination_date),
     });
+    setContractUploadFile(null);
+    setShowSetPermanentConfirm(false);
     setShowContractForm(true);
     setContractDraft({
       startDate: normalizeContractDate(row?.start_date) || '',
@@ -1999,10 +2206,11 @@ export default function EmployeeProfilePage() {
     }
     setContractSaving(true);
     setContractError('');
+    setEmployeeDocError('');
     try {
       const isUpdatingExistingContract =
         editingContractTarget && editingContractTarget.mode !== 'create_from_derived';
-      const saved = isUpdatingExistingContract
+      let saved = isUpdatingExistingContract
         ? await updateEmployeeContract(employeeDocRef, editingContractTarget.id, {
             source: editingContractTarget.source,
             startDate: contractDraft.startDate,
@@ -2020,11 +2228,62 @@ export default function EmployeeProfilePage() {
           : [...(prev || []), saved];
         return sortContractTimelineRows(nextRows.filter(Boolean));
       });
+      let contractDocumentUploadError = '';
+      if (contractUploadFile && saved?.id != null) {
+        setContractFileUploading(true);
+        try {
+          saved = await uploadEmployeeContractDocument(
+            employeeDocRef,
+            saved.id,
+            saved.source || editingContractTarget?.source || 'history',
+            contractUploadFile
+          );
+          const refreshed = await getEmployeeDocuments(employeeDocRef);
+          setEmployeeDocs(Array.isArray(refreshed) ? refreshed : []);
+          setShowEmployeeDocsList(true);
+          setEmployeeDocType('Vertrag');
+          setEmployeeDocsFilterType('Vertrag');
+          setContracts((prev) =>
+            sortContractTimelineRows(
+              (prev || []).map((row) =>
+                row?.id === saved.id && row?.source === saved.source ? { ...row, ...saved } : row
+              ).filter(Boolean)
+            )
+          );
+        } catch (uploadError) {
+          contractDocumentUploadError = String(uploadError?.message || uploadError);
+        } finally {
+          setContractFileUploading(false);
+        }
+      }
+      const refreshedEmployee = await getEmployee(employeeDocRef).catch(() => null);
+      if (refreshedEmployee) {
+        setLocalEmployee(refreshedEmployee);
+      }
       closeContractForm();
+      if (contractDocumentUploadError) {
+        setContractModal({
+          title: contractUi.save,
+          message: contractUi.uploadPartialSuccess(contractDocumentUploadError),
+        });
+      } else if (contractUploadFile) {
+        setContractModal({
+          title: contractUi.save,
+          message: contractUi.uploadSuccess,
+        });
+      }
     } catch (e) {
-      setContractError(String(e?.message || e));
+      const message = String(e?.message || e);
+      setContractError(message);
+      if (contractUploadFile || editingContractTarget) {
+        setContractModal({
+          title: contractUi.saveErrorTitle,
+          message,
+        });
+      }
     } finally {
       setContractSaving(false);
+      setContractFileUploading(false);
     }
   };
 
@@ -2045,30 +2304,71 @@ export default function EmployeeProfilePage() {
     setTerminateContractDraft((prev) => ({ ...prev, file }));
   };
 
-  const handleContractFileChange = async (event) => {
-    const file = event.target.files?.[0];
+  const handleContractFileChange = (event) => {
+    const file = event.target.files?.[0] || null;
     event.target.value = '';
-    if (!file) return;
-    if (!employeeDocRef) {
+    setContractUploadFile(file);
+    if (file) {
+      setContractError('');
+    }
+  };
+
+  const openSetPermanentConfirm = () => {
+    if (!editingContractTarget?.canSetAsPermanent || contractDraft.type === 'unlimited') return;
+    setShowSetPermanentConfirm(true);
+  };
+
+  const closeSetPermanentConfirm = () => {
+    if (contractSaving) return;
+    setShowSetPermanentConfirm(false);
+  };
+
+  const confirmSetAsPermanent = () => {
+    setContractDraft((prev) => ({
+      ...prev,
+      type: 'unlimited',
+      endDate: '',
+    }));
+    setContractError('');
+    setShowSetPermanentConfirm(false);
+  };
+
+  const confirmDeleteContract = async () => {
+    if (!employeeDocRef || !deleteContractTarget) {
       setContractError(contractUi.missingEmployeeRef);
       return;
     }
-    setContractFileUploading(true);
+    setContractDeleting(true);
     setContractError('');
-    setEmployeeDocError('');
     try {
-      await uploadEmployeeDocument(employeeDocRef, file, 'Vertrag');
-      const refreshed = await getEmployeeDocuments(employeeDocRef);
-      setEmployeeDocs(Array.isArray(refreshed) ? refreshed : []);
-      setShowEmployeeDocsList(true);
+      await deleteEmployeeContractRecord(
+        employeeDocRef,
+        deleteContractTarget.id,
+        deleteContractTarget.source || 'history'
+      );
+      const refreshedContracts = await getEmployeeContracts(employeeDocRef).catch(() => []);
+      setContracts(Array.isArray(refreshedContracts) ? refreshedContracts : []);
+      const refreshedDocs = await getEmployeeDocuments(employeeDocRef).catch(() => []);
+      setEmployeeDocs(Array.isArray(refreshedDocs) ? refreshedDocs : []);
+      const refreshedEmployee = await getEmployee(employeeDocRef).catch(() => null);
+      if (refreshedEmployee) {
+        setLocalEmployee(refreshedEmployee);
+      }
+      setDeleteContractTarget(null);
       setContractModal({
-        title: contractUi.save,
-        message: contractUi.uploadSuccess,
+        title: contractUi.deleteContractTitle,
+        message: contractUi.deleteContractSuccess,
       });
     } catch (e) {
-      setContractError(String(e?.message || e));
+      const message = String(e?.message || e);
+      setContractError(message);
+      setDeleteContractTarget(null);
+      setContractModal({
+        title: contractUi.deleteErrorTitle,
+        message,
+      });
     } finally {
-      setContractFileUploading(false);
+      setContractDeleting(false);
     }
   };
 
@@ -2420,6 +2720,16 @@ export default function EmployeeProfilePage() {
                 disabled={contractSaving}
               >
                 {contractUi.editContractDateButton}
+              </button>
+            ) : null}
+            {row.canDelete ? (
+              <button
+                type="button"
+                className="btn-secondary btn-danger"
+                onClick={() => openDeleteContractModal(row)}
+                disabled={contractDeleting}
+              >
+                {contractUi.deleteContractButton}
               </button>
             ) : null}
             {row.canTerminate ? (
@@ -2877,31 +3187,37 @@ export default function EmployeeProfilePage() {
         >
           <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
             <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Worked Hours (Last Month)</div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatHours(lastMonthPayrollCards?.workedHours ?? 0)}</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatHours, lastMonthPayrollCards?.workedHours)}</div>
           </div>
+          {showLastMonthFullTimeCard && (
+            <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
+              <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Full Time (Last Month)</div>
+              <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatHours, lastMonthPayrollCards?.fullTimeHours)}</div>
+            </div>
+          )}
           <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
             <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Overtime (Last Month)</div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatHours(lastMonthPayrollCards?.overtimeHours ?? 0)}</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatHours, lastMonthPayrollCards?.overtimeHours)}</div>
           </div>
           <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
             <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Verpfl. mehr. (Last Month)</div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.verpflMehr ?? 0)}</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatCurrency, lastMonthPayrollCards?.verpflMehr)}</div>
           </div>
           <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
             <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Fahrt. Geld (Last Month)</div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.fahrtGeld ?? 0)}</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatCurrency, lastMonthPayrollCards?.fahrtGeld)}</div>
           </div>
           <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
             <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Krankgeld (Last Month)</div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.krankgeld ?? 0)}</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatCurrency, lastMonthPayrollCards?.krankgeld)}</div>
           </div>
           <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
             <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Urlaubgeld (Last Month)</div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.urlaubgeld ?? 0)}</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatCurrency, lastMonthPayrollCards?.urlaubgeld)}</div>
           </div>
           <div className="card" style={{ margin: 0, padding: '0.68rem 0.78rem' }}>
             <div style={{ fontSize: '0.78rem', color: isDark ? '#9bb0d1' : '#6b7280' }}>Brutto Lohn (Letzte Monat)</div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{formatCurrency(lastMonthPayrollCards?.bruttoLohn ?? 0)}</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{renderLastMonthPayrollValue(formatCurrency, lastMonthPayrollCards?.bruttoLohn)}</div>
           </div>
         </div>
       )}
@@ -3020,18 +3336,38 @@ export default function EmployeeProfilePage() {
               ) : null}
             </div>
 
-            {!editingContractTarget ? (
+            {editingContractTarget?.canSetAsPermanent && contractDraft.type !== 'unlimited' ? (
               <div style={{ marginBottom: '1rem' }}>
                 <button
                   type="button"
-                  className="btn-secondary"
-                  onClick={handleUploadNewContractClick}
-                  disabled={contractFileUploading}
+                  className="btn-primary"
+                  onClick={openSetPermanentConfirm}
+                  disabled={contractSaving || contractFileUploading}
                 >
-                  {contractFileUploading ? contractUi.uploadingContract : contractUi.uploadContract}
+                  {contractUi.setAsPermanentButton}
                 </button>
               </div>
             ) : null}
+
+            <div style={{ marginBottom: '1rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleUploadNewContractClick}
+                disabled={contractSaving || contractFileUploading}
+              >
+                {contractFileUploading
+                  ? contractUi.uploadingContract
+                  : editingContractTarget
+                    ? contractUi.uploadDocument
+                    : contractUi.uploadContract}
+              </button>
+              {contractUploadFile ? (
+                <div style={{ marginTop: '0.45rem', color: employeeMutedTextStyle.color, fontSize: '0.9rem' }}>
+                  {contractUi.contractDocumentSelected(contractUploadFile.name)}
+                </div>
+              ) : null}
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               <button type="button" className="btn-secondary" onClick={closeContractForm} disabled={contractSaving}>
@@ -3039,6 +3375,36 @@ export default function EmployeeProfilePage() {
               </button>
               <button type="button" className="btn-primary" onClick={saveContract} disabled={contractSaving}>
                 {contractSaving ? contractUi.saving : contractUi.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSetPermanentConfirm && (
+        <div style={modalOverlayStyle} onClick={closeSetPermanentConfirm}>
+          <div
+            style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 460, width: 'calc(100% - 2rem)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 0.75rem' }}>{contractUi.setAsPermanentTitle}</h3>
+            <p style={{ margin: '0 0 1rem', whiteSpace: 'pre-wrap' }}>{contractUi.setAsPermanentConfirm}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeSetPermanentConfirm}
+                disabled={contractSaving}
+              >
+                {contractUi.setAsPermanentCancelButton}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={confirmSetAsPermanent}
+                disabled={contractSaving}
+              >
+                {contractUi.setAsPermanentConfirmButton}
               </button>
             </div>
           </div>
@@ -3053,6 +3419,36 @@ export default function EmployeeProfilePage() {
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button type="button" className="btn-primary" onClick={closeContractModal}>
                 OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteContractTarget && (
+        <div style={modalOverlayStyle} onClick={closeDeleteContractModal}>
+          <div
+            style={{ ...modalCardStyle, padding: '1.5rem', maxWidth: 460, width: 'calc(100% - 2rem)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 0.75rem' }}>{contractUi.deleteContractTitle}</h3>
+            <p style={{ margin: '0 0 1rem', whiteSpace: 'pre-wrap' }}>{contractUi.deleteContractConfirm}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={closeDeleteContractModal}
+                disabled={contractDeleting}
+              >
+                {contractUi.deleteContractCancelButton}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary btn-danger"
+                onClick={confirmDeleteContract}
+                disabled={contractDeleting}
+              >
+                {contractDeleting ? contractUi.saving : contractUi.deleteContractConfirmButton}
               </button>
             </div>
           </div>

@@ -157,6 +157,50 @@ export async function updateEmployeeContract(employeeRef, contractId, payload) {
   return out;
 }
 
+export async function uploadEmployeeContractDocument(employeeRef, contractId, source, file) {
+  const form = new FormData();
+  form.append('source', source || 'history');
+  if (file) {
+    form.append('file', file);
+  }
+
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts/${encodeURIComponent(contractId)}/document`,
+    authOpts({
+      method: 'POST',
+      body: form,
+    })
+  );
+  const out = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(out.error || 'Employee contract document upload failed');
+  return out;
+}
+
+export async function deleteEmployeeContractRecord(employeeRef, contractId, source) {
+  const params = new URLSearchParams();
+  if (source) {
+    params.set('source', source);
+  }
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts/${encodeURIComponent(contractId)}${params.toString() ? `?${params.toString()}` : ''}`,
+    authOpts({
+      method: 'DELETE',
+    })
+  );
+  const raw = await response.text();
+  let out = {};
+  try {
+    out = raw ? JSON.parse(raw) : {};
+  } catch {
+    out = {};
+  }
+  if (!response.ok) {
+    const fallback = raw && !raw.trim().startsWith('<') ? raw.trim() : `Employee contract delete failed (${response.status})`;
+    throw new Error(out.error || fallback);
+  }
+  return out;
+}
+
 export async function terminateEmployeeContract(employeeRef, payload) {
   const form = new FormData();
   form.append('contractStartDate', payload?.contractStartDate || '');

@@ -165,6 +165,52 @@ router.put('/:id/contracts/:contractId', async (req, res) => {
   }
 });
 
+router.post('/:id/contracts/:contractId/document', upload.single('file'), async (req, res) => {
+  try {
+    const row = await employeeService.attachEmployeeContractDocument(req.params.id, req.params.contractId, {
+      source: req.body?.source ?? 'history',
+      fileName: req.file?.originalname || 'contract-document.bin',
+      mimeType: req.file?.mimetype || 'application/octet-stream',
+      fileContent: req.file?.buffer || null,
+    });
+    res.status(201).json(row);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_ref is required' ||
+      message === 'Valid contract id is required' ||
+      message === 'Valid contract source is required' ||
+      message === 'File is required' ||
+      message === 'Contract not found'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('POST /api/employees/:id/contracts/:contractId/document error', error);
+    res.status(500).json({ error: 'Failed to upload contract document' });
+  }
+});
+
+router.delete('/:id/contracts/:contractId', async (req, res) => {
+  try {
+    const out = await employeeService.deleteEmployeeContract(req.params.id, req.params.contractId, {
+      source: req.body?.source ?? req.query?.source ?? 'history',
+    });
+    res.json(out);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_ref is required' ||
+      message === 'Valid contract id is required' ||
+      message === 'Valid contract source is required' ||
+      message === 'Contract not found'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('DELETE /api/employees/:id/contracts/:contractId error', error);
+    res.status(500).json({ error: 'Failed to delete contract' });
+  }
+});
+
 router.post('/:id/contracts/terminate', upload.single('file'), async (req, res) => {
   try {
     const row = await employeeService.terminateEmployeeContract(req.params.id, {
