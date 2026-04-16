@@ -19,6 +19,7 @@ const PLACEHOLDER_TOKENS = [
   '{{country}}',
   '{{contractStart}}',
   '{{contractEnd}}',
+  '{{contractSigned}}',
   '{{today}}',
 ];
 
@@ -237,7 +238,7 @@ export default function SettingsCreateDocumentsPage() {
         </div>
         <p className="muted" style={{ margin: '0.85rem 0 0' }}>
           Example: write <code>{'{{fullName}}'}</code> where the employee name should appear,{' '}
-          <code>{'{{contractStart}}'}</code> and <code>{'{{contractEnd}}'}</code> for contract dates, and{' '}
+          <code>{'{{contractStart}}'}</code>, <code>{'{{contractEnd}}'}</code> and <code>{'{{contractSigned}}'}</code> for contract dates, and{' '}
           <code>{'{{today}}'}</code> at the bottom for today&apos;s date.
         </p>
         <p className="muted" style={{ margin: '0.85rem 0 0' }}>

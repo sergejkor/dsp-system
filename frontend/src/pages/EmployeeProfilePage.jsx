@@ -918,6 +918,7 @@ export default function EmployeeProfilePage() {
           fuehrerschein_aufstellungsdatum: '',
           fuehrerschein_aufstellungsbehoerde: '',
           whatsapp_number: '',
+          contract_signed_date: '',
           ...(employee.dspLocal || {}),
         },
       });
@@ -1878,6 +1879,7 @@ export default function EmployeeProfilePage() {
         fuehrerschein_aufstellungsdatum: '',
         fuehrerschein_aufstellungsbehoerde: '',
         whatsapp_number: '',
+        contract_signed_date: '',
         ...(employee.dspLocal || {}),
       },
     });
@@ -1936,6 +1938,9 @@ export default function EmployeeProfilePage() {
         fuehrerschein_aufstellungsdatum: normalizeLocalDateInputValue(
           draft?.dspLocal?.fuehrerschein_aufstellungsdatum,
         ),
+        contract_signed_date: normalizeLocalDateInputValue(
+          draft?.dspLocal?.contract_signed_date,
+        ),
       };
       await updateEmployeeInternalProfile(kenjoEmployeeId, {
         dspLocal: nextDspLocal,
@@ -1947,6 +1952,7 @@ export default function EmployeeProfilePage() {
           fuehrerschein_aufstellungsdatum: '',
           fuehrerschein_aufstellungsbehoerde: '',
           whatsapp_number: '',
+          contract_signed_date: '',
           ...(refreshedEmployee?.dspLocal || {}),
         },
       };
@@ -1973,6 +1979,7 @@ export default function EmployeeProfilePage() {
   };
   const currentContractStart = normalizeContractDate(localEmployee?.start_date || work?.startDate);
   const currentContractEnd = normalizeContractDate(localEmployee?.contract_end || work?.contractEnd);
+  const contractSignedDate = current?.dspLocal?.contract_signed_date;
   const normalizedContracts = sortContractTimelineRows(Array.isArray(contracts) ? contracts : []);
   const derivedCurrentContract = (() => {
     if (!normalizedContracts.length) {
@@ -2691,6 +2698,19 @@ export default function EmployeeProfilePage() {
           {renderText(probationLabel, probationDisplayValue)}
           {renderText('Language', account?.language)}
           {renderText('Contract end', contractEndDisplayValue)}
+          {renderLocalDate(
+            'Contract signed',
+            contractSignedDate,
+            (v) =>
+              setDraft((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      dspLocal: { ...(prev.dspLocal || {}), contract_signed_date: v },
+                    }
+                  : prev,
+              ),
+          )}
         </div>
       </div>
 

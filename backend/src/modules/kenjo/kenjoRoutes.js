@@ -40,7 +40,8 @@ async function ensureKenjoEmployeeLocalColumns() {
     ALTER TABLE kenjo_employees
     ADD COLUMN IF NOT EXISTS fuehrerschein_aufstellungsdatum DATE,
     ADD COLUMN IF NOT EXISTS fuehrerschein_aufstellungsbehoerde TEXT,
-    ADD COLUMN IF NOT EXISTS whatsapp_number TEXT
+    ADD COLUMN IF NOT EXISTS whatsapp_number TEXT,
+    ADD COLUMN IF NOT EXISTS contract_signed_date DATE
   `);
 }
 
@@ -90,7 +91,7 @@ router.get('/employees/:id', async (req, res) => {
     }
     const { employee, kenjoUserId } = target;
     const locRes = await query(
-      `SELECT fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, whatsapp_number
+      `SELECT fuehrerschein_aufstellungsdatum, fuehrerschein_aufstellungsbehoerde, whatsapp_number, contract_signed_date
        FROM kenjo_employees WHERE kenjo_user_id = $1`,
       [kenjoUserId]
     );
@@ -103,6 +104,7 @@ router.get('/employees/:id', async (req, res) => {
       whatsapp_number: row?.whatsapp_number
         ? String(row.whatsapp_number)
         : '',
+      contract_signed_date: formatDateOnlyForClient(row?.contract_signed_date),
     };
     const o2Res = await query(
       `SELECT id, kenjo_user_id, name, phone_number, sim_card_number
@@ -215,7 +217,9 @@ async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
   const rawD = dspLocal?.fuehrerschein_aufstellungsdatum;
   const rawB = dspLocal?.fuehrerschein_aufstellungsbehoerde;
   const rawW = dspLocal?.whatsapp_number;
+  const rawContractSigned = dspLocal?.contract_signed_date;
   const { mode: dateMode, value: dateVal } = resolveDateOnlyForDb(rawD);
+  const { mode: contractSignedMode, value: contractSignedVal } = resolveDateOnlyForDb(rawContractSigned);
   const behVal =
     rawB === '' || rawB == null ? null : String(rawB).trim().slice(0, 2000);
   const whatsappVal =
@@ -231,8 +235,20 @@ async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
        fuehrerschein_aufstellungsdatum,
        fuehrerschein_aufstellungsbehoerde,
        whatsapp_number,
+       contract_signed_date,
        updated_at
-     ) VALUES ($1, '', '', '', true, CASE WHEN $5 = 'keep' THEN NULL ELSE $2::date END, $3, $4, NOW())
+     ) VALUES (
+       $1,
+       '',
+       '',
+       '',
+       true,
+       CASE WHEN $5 = 'keep' THEN NULL ELSE $2::date END,
+       $3,
+       $4,
+       CASE WHEN $6 = 'keep' THEN NULL ELSE $7::date END,
+       NOW()
+     )
      ON CONFLICT (kenjo_user_id) DO UPDATE SET
        fuehrerschein_aufstellungsdatum = CASE
          WHEN $5 = 'keep' THEN kenjo_employees.fuehrerschein_aufstellungsdatum
@@ -240,8 +256,12 @@ async function saveEmployeeDspLocal(kenjoUserId, dspLocal) {
        END,
        fuehrerschein_aufstellungsbehoerde = EXCLUDED.fuehrerschein_aufstellungsbehoerde,
        whatsapp_number = EXCLUDED.whatsapp_number,
+       contract_signed_date = CASE
+         WHEN $6 = 'keep' THEN kenjo_employees.contract_signed_date
+         ELSE EXCLUDED.contract_signed_date
+       END,
        updated_at = NOW()`,
-    [kenjoUserId, dateVal, behVal, whatsappVal, dateMode]
+    [kenjoUserId, dateVal, behVal, whatsappVal, dateMode, contractSignedMode, contractSignedVal]
   );
 }
 

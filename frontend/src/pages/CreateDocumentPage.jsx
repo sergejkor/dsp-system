@@ -5,6 +5,22 @@ import { getEmployee, listEmployees } from '../services/employeesApi.js';
 import { getKenjoEmployeeProfile } from '../services/kenjoApi.js';
 import { useAppSettings } from '../context/AppSettingsContext.jsx';
 
+const CREATE_DOCUMENT_PLACEHOLDER_TOKENS = [
+  '{{firstName}}',
+  '{{lastName}}',
+  '{{fullName}}',
+  '{{address}}',
+  '{{street}}',
+  '{{houseNumber}}',
+  '{{postalCode}}',
+  '{{city}}',
+  '{{country}}',
+  '{{contractStart}}',
+  '{{contractEnd}}',
+  '{{contractSigned}}',
+  '{{today}}',
+];
+
 function formatDateNormal(value) {
   if (!value) return '—';
   const raw = String(value).slice(0, 10);
@@ -106,6 +122,7 @@ export default function CreateDocumentPage() {
   const employeeAddress = useMemo(() => {
     return buildAddressLine(employeeDetails);
   }, [employeeDetails]);
+  const contractSignedDate = employeeDetails?.dspLocal?.contract_signed_date || '';
 
   const pageStyle = {
     display: 'flex',
@@ -236,6 +253,10 @@ export default function CreateDocumentPage() {
                 <div className="muted small">Contract end</div>
                 <div>{formatDateNormal(employeeDetails?.work?.contractEnd || employeeDetails?.austrittsdatum || employeeDetails?.contract_end)}</div>
               </div>
+              <div>
+                <div className="muted small">Contract signed</div>
+                <div>{formatDateNormal(contractSignedDate)}</div>
+              </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <div className="muted small">Template</div>
                 <div>{selectedTemplate ? selectedTemplate.name : 'No template selected yet'}</div>
@@ -258,6 +279,37 @@ export default function CreateDocumentPage() {
               contract dates, placeholder replacement and automatic file download after pressing <em>Create Document</em>.
             </p>
           </div>
+        </div>
+      </div>
+
+      <div style={altPanelStyle}>
+        <h3 style={{ marginTop: 0, ...headingStyle }}>Available placeholders</h3>
+        <p className="muted" style={{ margin: 0, maxWidth: '60rem' }}>
+          Put these placeholders directly into the DOCX template so the selected employee data can be inserted
+          automatically.
+        </p>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.45rem',
+            marginTop: '0.85rem',
+          }}
+        >
+          {CREATE_DOCUMENT_PLACEHOLDER_TOKENS.map((token) => (
+            <code
+              key={token}
+              style={{
+                background: isDark ? 'rgba(23, 44, 74, 0.95)' : '#e5eefc',
+                color: isDark ? '#d7e7ff' : '#1d4ed8',
+                padding: '0.22rem 0.5rem',
+                borderRadius: 8,
+                border: isDark ? '1px solid rgba(132, 162, 214, 0.18)' : 'none',
+              }}
+            >
+              {token}
+            </code>
+          ))}
         </div>
       </div>
     </section>
