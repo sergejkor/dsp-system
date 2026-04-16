@@ -2197,12 +2197,33 @@ export default function EmployeeProfilePage() {
       setContractError('');
       await viewEmployeeContractDocument(contractEmployeeRef, row?.id, row?.source || 'history');
     } catch (e) {
-      const message = String(e?.message || e);
-      setContractError(message);
-      setContractModal({
-        title: contractUi.viewContractErrorTitle,
-        message,
-      });
+      const fallbackRefs = [
+        employeeDocRef,
+        contractEmployeeRef,
+        row?.employee_ref,
+        row?.kenjo_employee_id,
+      ]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+      let openedFromFallback = false;
+      let fallbackError = e;
+      for (const fallbackRef of [...new Set(fallbackRefs)]) {
+        try {
+          await viewEmployeeDocument(fallbackRef, contractDocumentId);
+          openedFromFallback = true;
+          break;
+        } catch (viewError) {
+          fallbackError = viewError;
+        }
+      }
+      if (!openedFromFallback) {
+        const message = String(fallbackError?.message || fallbackError);
+        setContractError(message);
+        setContractModal({
+          title: contractUi.viewContractErrorTitle,
+          message,
+        });
+      }
     }
   };
 
