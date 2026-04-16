@@ -12,6 +12,7 @@ import {
   addEmployeeContract,
   updateEmployeeContract,
   uploadEmployeeContractDocument,
+  viewEmployeeContractDocument,
   deleteEmployeeContractRecord,
   terminateEmployeeContract,
   addEmployeeRescue,
@@ -2194,7 +2195,7 @@ export default function EmployeeProfilePage() {
     }
     try {
       setContractError('');
-      await viewEmployeeDocument(contractEmployeeRef, contractDocumentId);
+      await viewEmployeeContractDocument(contractEmployeeRef, row?.id, row?.source || 'history');
     } catch (e) {
       const message = String(e?.message || e);
       setContractError(message);

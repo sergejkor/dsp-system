@@ -1611,6 +1611,78 @@ async function attachEmployeeContractDocument(employeeRef, contractId, { source,
   return mapEmployeeContractRow(row, 'history', 'history');
 }
 
+async function getEmployeeContractDocument(employeeRef, contractId, { source } = {}) {
+  await ensureEmployeeContractsTable();
+  await ensureEmployeeContractTerminationColumns();
+  await ensureEmployeeContractDocumentColumns();
+  await ensureEmployeeContractExtensionsTable();
+  await ensureEmployeeDocumentsTable();
+
+  const ref = String(employeeRef || '').trim();
+  const id = Number(contractId);
+  const normalizedSource = String(source || 'history').trim();
+  if (!ref) throw new Error('employee_ref is required');
+  if (!Number.isFinite(id)) throw new Error('Valid contract id is required');
+  if (normalizedSource !== 'history' && normalizedSource !== 'legacy_extension') {
+    throw new Error('Valid contract source is required');
+  }
+
+  let documentId = null;
+
+  if (normalizedSource === 'legacy_extension') {
+    const refs = await resolveEmployeeRefs(ref);
+    const allRefs = [...new Set([ref, ...refs].filter(Boolean))];
+    const existing = await query(
+      `SELECT contract_document_id
+       FROM employee_contract_extensions
+       WHERE id = $1
+         AND employee_ref = ANY($2::text[])
+       LIMIT 1`,
+      [id, allRefs]
+    );
+    const row = existing.rows?.[0] || null;
+    if (!row) throw new Error('Contract not found');
+    documentId = row.contract_document_id == null ? null : Number(row.contract_document_id);
+  } else {
+    const target = await resolveEmployeeRescueTarget(ref);
+    const refs = [...new Set([ref, ...(target.refs || [])].filter(Boolean))];
+    const where = [];
+    const params = [id];
+    if (refs.length) {
+      params.push(refs);
+      where.push(`employee_ref = ANY($${params.length}::text[])`);
+    }
+    if (target.kenjoEmployeeId) {
+      params.push(target.kenjoEmployeeId);
+      where.push(`kenjo_employee_id = $${params.length}`);
+    }
+    if (!where.length) throw new Error('Contract not found');
+
+    const existing = await query(
+      `SELECT contract_document_id
+       FROM employee_contracts
+       WHERE id = $1
+         AND (${where.join(' OR ')})
+       LIMIT 1`,
+      params
+    );
+    const row = existing.rows?.[0] || null;
+    if (!row) throw new Error('Contract not found');
+    documentId = row.contract_document_id == null ? null : Number(row.contract_document_id);
+  }
+
+  if (!Number.isFinite(documentId)) return null;
+
+  const doc = await query(
+    `SELECT id, employee_ref, document_type, file_name, mime_type, file_content, import_group_id, import_source_key, import_source_name, created_at
+     FROM employee_documents
+     WHERE id = $1
+     LIMIT 1`,
+    [documentId]
+  );
+  return doc.rows?.[0] || null;
+}
+
 async function deleteEmployeeContract(employeeRef, contractId, { source } = {}) {
   await ensureEmployeeContractsTable();
   await ensureEmployeeContractTerminationColumns();
@@ -2029,6 +2101,7 @@ const employeeService = {
   addEmployeeContract,
   updateEmployeeContract,
   attachEmployeeContractDocument,
+  getEmployeeContractDocument,
   deleteEmployeeContract,
   terminateEmployeeContract,
   addEmployeeContractExtension,

@@ -190,6 +190,32 @@ router.post('/:id/contracts/:contractId/document', upload.single('file'), async 
   }
 });
 
+router.get('/:id/contracts/:contractId/document/download', async (req, res) => {
+  try {
+    const row = await employeeService.getEmployeeContractDocument(req.params.id, req.params.contractId, {
+      source: req.query?.source ?? 'history',
+    });
+    if (!row) return res.status(404).json({ error: 'Document not found' });
+    const fileName = row.file_name || `employee-contract-document-${row.id}.bin`;
+    const mime = row.mime_type || 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    res.send(row.file_content);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (
+      message === 'employee_ref is required' ||
+      message === 'Valid contract id is required' ||
+      message === 'Valid contract source is required' ||
+      message === 'Contract not found'
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    console.error('GET /api/employees/:id/contracts/:contractId/document/download error', error);
+    res.status(500).json({ error: 'Failed to download contract document' });
+  }
+});
+
 router.delete('/:id/contracts/:contractId', async (req, res) => {
   try {
     const out = await employeeService.deleteEmployeeContract(req.params.id, req.params.contractId, {

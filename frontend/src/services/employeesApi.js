@@ -176,6 +176,26 @@ export async function uploadEmployeeContractDocument(employeeRef, contractId, so
   return out;
 }
 
+export async function viewEmployeeContractDocument(employeeRef, contractId, source) {
+  const params = new URLSearchParams();
+  if (source) {
+    params.set('source', source);
+  }
+  const response = await fetch(
+    `${API_BASE}/api/employees/${encodeURIComponent(employeeRef)}/contracts/${encodeURIComponent(contractId)}/document/download${params.toString() ? `?${params.toString()}` : ''}`,
+    authOpts()
+  );
+  if (!response.ok) throw new Error('Employee contract document view failed');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!win) {
+    URL.revokeObjectURL(url);
+    throw new Error('Popup was blocked while opening the document');
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+}
+
 export async function deleteEmployeeContractRecord(employeeRef, contractId, source) {
   const params = new URLSearchParams();
   if (source) {
