@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getIntegrations, getIntegration, updateIntegration, testIntegration } from '../../services/settingsApi';
+import { formatPortalDateTime } from '../../utils/portalLocale.js';
 
 export default function SettingsIntegrationsPage() {
   const [list, setList] = useState([]);
@@ -32,16 +33,24 @@ export default function SettingsIntegrationsPage() {
         {list.length === 0 ? (
           <p className="muted">No integrations. Run seed:settings.</p>
         ) : (
-          list.map((i) => (
-            <div key={i.integration_key || i.key} className="settings-integration-card">
+          list.map((integration) => (
+            <div key={integration.integration_key || integration.key} className="settings-integration-card">
               <div className="settings-integration-header">
-                <strong>{i.label || i.integration_key || i.key}</strong>
-                <span className="settings-badge settings-badge--active">{i.is_enabled ? 'Enabled' : 'Disabled'}</span>
+                <strong>{integration.label || integration.integration_key || integration.key}</strong>
+                <span className="settings-badge settings-badge--active">{integration.is_enabled ? 'Enabled' : 'Disabled'}</span>
               </div>
-              <p className="settings-integration-meta">Last sync: {i.last_sync_at ? new Date(i.last_sync_at).toLocaleString() : '—'} · Status: {i.last_sync_status || '—'}</p>
+              <p className="settings-integration-meta">
+                Last sync:
+                {' '}
+                {integration.last_sync_at ? formatPortalDateTime(integration.last_sync_at) : '—'}
+                {' · '}
+                Status:
+                {' '}
+                {integration.last_sync_status || '—'}
+              </p>
               <div className="settings-integration-actions">
-                <button type="button" className="settings-act" onClick={() => setModal({ key: i.integration_key || i.key, label: i.label })}>Edit</button>
-                <button type="button" className="settings-act" onClick={() => handleTest(i.integration_key || i.key)}>Test connection</button>
+                <button type="button" className="settings-act" onClick={() => setModal({ key: integration.integration_key || integration.key, label: integration.label })}>Edit</button>
+                <button type="button" className="settings-act" onClick={() => handleTest(integration.integration_key || integration.key)}>Test connection</button>
               </div>
             </div>
           ))
@@ -82,50 +91,51 @@ function IntegrationEditModal({ integrationKey, label, onClose, onSaved, onError
 
   useEffect(() => {
     getIntegration(integrationKey)
-      .then((c) => setConfig(c.public_config_json || c))
+      .then((configValue) => setConfig(configValue.public_config_json || configValue))
       .catch(() => setConfig({}))
       .finally(() => setLoading(false));
   }, [integrationKey]);
 
-  function handleSubmit(e) {
-    e.preventDefault();
+  function handleSubmit(event) {
+    event.preventDefault();
     setSaving(true);
     onError('');
     updateIntegration(integrationKey, config)
       .then(onSaved)
-      .catch((e) => { onError(e.message); setSaving(false); });
+      .catch((error) => { onError(error.message); setSaving(false); });
   }
 
   if (loading) return <div className="settings-modal-backdrop"><div className="settings-modal"><p>Loading…</p></div></div>;
 
   return (
     <div className="settings-modal-backdrop" onClick={onClose}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="settings-modal" onClick={(event) => event.stopPropagation()}>
         <div className="settings-modal-header">
-          <h4>Edit — {label || integrationKey}</h4>
+          <h4>{label || integrationKey}</h4>
           <button type="button" className="settings-modal-close" onClick={onClose}>×</button>
         </div>
         <form onSubmit={handleSubmit} className="settings-modal-body">
-          <p className="muted">Public config only. Secrets are managed server-side.</p>
-          <label>Base URL <input value={config.base_url || ''} onChange={(e) => setConfig({ ...config, base_url: e.target.value })} /></label>
-          <label>Environment <input value={config.environment || ''} onChange={(e) => setConfig({ ...config, environment: e.target.value })} /></label>
-          <label>Enabled <input type="checkbox" checked={!!config.is_enabled} onChange={(e) => setConfig({ ...config, is_enabled: e.target.checked })} /></label>
-          <div className="settings-modal-footer">
-            <button type="button" onClick={onClose}>Cancel</button>
-            <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          <label className="settings-form-field">
+            <span>Config JSON</span>
+            <textarea
+              className="settings-textarea"
+              rows={14}
+              value={JSON.stringify(config, null, 2)}
+              onChange={(event) => {
+                try {
+                  setConfig(JSON.parse(event.target.value || '{}'));
+                } catch {
+                  onError('Invalid JSON');
+                }
+              }}
+            />
+          </label>
+          <div className="settings-modal-actions">
+            <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
           </div>
         </form>
       </div>
-      <style>{`
-        .settings-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-        .settings-modal { background: #fff; border-radius: 12px; max-width: 440px; width: 90%; max-height: 90vh; overflow: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
-        .settings-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid #e5e7eb; }
-        .settings-modal-close { background: none; border: none; font-size: 1.5rem; cursor: pointer; }
-        .settings-modal-body { padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
-        .settings-modal-body label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
-        .settings-modal-body input { padding: 0.4rem; }
-        .settings-modal-footer { margin-top: 0.5rem; display: flex; gap: 0.5rem; justify-content: flex-end; }
-      `}</style>
     </div>
   );
 }

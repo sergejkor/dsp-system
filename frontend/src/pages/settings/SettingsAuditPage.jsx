@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getAuditLog } from '../../services/settingsApi';
+import { formatPortalDateTime } from '../../utils/portalLocale.js';
 
 export default function SettingsAuditPage() {
   const [result, setResult] = useState({ items: [], limit: 100, offset: 0 });
@@ -23,15 +24,19 @@ export default function SettingsAuditPage() {
       <p className="muted">Track who changed what and when.</p>
 
       <div className="settings-toolbar">
-        <label>Entity type <select value={entityType} onChange={(e) => setEntityType(e.target.value)}>
-          <option value="">All</option>
-          <option value="user">User</option>
-          <option value="role">Role</option>
-          <option value="role_permissions">Role permissions</option>
-          <option value="settings">Settings</option>
-          <option value="feature_flag">Feature flag</option>
-          <option value="security_settings">Security</option>
-        </select></label>
+        <label>
+          Entity type
+          {' '}
+          <select value={entityType} onChange={(e) => setEntityType(e.target.value)}>
+            <option value="">All</option>
+            <option value="user">User</option>
+            <option value="role">Role</option>
+            <option value="role_permissions">Role permissions</option>
+            <option value="settings">Settings</option>
+            <option value="feature_flag">Feature flag</option>
+            <option value="security_settings">Security</option>
+          </select>
+        </label>
       </div>
 
       {loading ? (
@@ -46,7 +51,7 @@ export default function SettingsAuditPage() {
                 <th>ID</th>
                 <th>Action</th>
                 <th>Changed by</th>
-                <th></th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -55,7 +60,7 @@ export default function SettingsAuditPage() {
               ) : (
                 items.map((a) => (
                   <tr key={a.id}>
-                    <td>{a.changed_at ? new Date(a.changed_at).toLocaleString() : '—'}</td>
+                    <td>{a.changed_at ? formatPortalDateTime(a.changed_at) : '—'}</td>
                     <td>{a.entity_type}</td>
                     <td>{a.entity_id}</td>
                     <td>{a.action}</td>

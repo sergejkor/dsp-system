@@ -5,7 +5,7 @@ import { syncKenjoEmployees } from '../services/kenjoApi';
 
 /** Day window around today included in planning columns (saved to DB). */
 const CAR_PLANNING_PAST_DAYS = 60;
-const CAR_PLANNING_FUTURE_DAYS = 8;
+const CAR_PLANNING_FUTURE_DAYS = 6;
 
 const FULL_WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 

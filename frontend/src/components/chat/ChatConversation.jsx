@@ -1,5 +1,6 @@
 import React from 'react';
 import { getChatCopy } from './chatCopy.js';
+import { resolvePortalLocale } from '../../utils/portalLocale.js';
 
 function AttachmentIcon() {
   return (
@@ -29,7 +30,7 @@ function formatTimestamp(value) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(resolvePortalLocale(), {
     hour: '2-digit',
     minute: '2-digit',
     day: '2-digit',

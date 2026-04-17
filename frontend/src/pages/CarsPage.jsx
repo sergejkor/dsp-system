@@ -20,6 +20,7 @@ import { getPaveSessions } from '../services/paveApi';
 import { getPaveGmailReportsByCar } from '../services/paveGmailApi.js';
 import { listFleetInspections } from '../services/internalInspectionApi.js';
 import { formatPaveInspectionDate } from '../utils/paveInspectionDateDisplay.js';
+import { formatPortalDate, formatPortalNumber } from '../utils/portalLocale.js';
 
 const STATUS_OPTIONS = ['Active', 'Maintenance', 'Grounded', 'Out of Service', 'Defleeted', 'Defleeting candidate', 'Defleeting finalized'];
 const VEHICLE_TYPES = ['Van', 'Step Van', 'Rental', 'Personal'];
@@ -1116,10 +1117,7 @@ export default function CarsPage() {
 function VinQrModal({ vin, onClose }) {
   const rawVin = String(vin || '').trim();
   if (!rawVin) return null;
-  const value =
-    typeof window !== 'undefined'
-      ? new URL(`/fleet-check?vin=${encodeURIComponent(rawVin)}`, window.location.origin).toString()
-      : rawVin;
+  const value = rawVin;
   const [copyStatus, setCopyStatus] = useState('');
   const modal = (
     <div
@@ -1157,7 +1155,7 @@ function VinQrModal({ vin, onClose }) {
             borderBottom: '1px solid #eee',
           }}
         >
-          <h3 style={{ margin: 0, fontSize: '1rem' }}>Fleet inspection QR code</h3>
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>VIN QR code</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             {copyStatus && (
               <span className="muted" style={{ fontSize: '0.85rem' }}>{copyStatus}</span>
@@ -1215,7 +1213,7 @@ function VinQrModal({ vin, onClose }) {
         <div style={{ padding: '1rem', display: 'grid', placeItems: 'center', gap: '0.75rem' }}>
           <QRCodeCanvas id="vin-qr-canvas" value={value} size={220} includeMargin />
           <div style={{ display: 'grid', gap: '0.3rem', width: '100%' }}>
-            <code style={{ wordBreak: 'break-all' }}>{value}</code>
+            <code style={{ wordBreak: 'break-all' }}>{rawVin}</code>
             <span className="muted" style={{ fontSize: '0.85rem' }}>VIN: {rawVin}</span>
           </div>
         </div>

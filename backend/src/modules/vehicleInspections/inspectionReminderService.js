@@ -1,5 +1,6 @@
 import { query } from '../../db.js';
 import settingsService from '../settings/settingsService.js';
+import pushService from '../push/pushService.js';
 import { normalizePhoneForWhatsApp, sendWhatsAppMessage } from './twilioWhatsAppService.js';
 
 let tablesReady = false;
@@ -501,15 +502,17 @@ export class InspectionReminderService {
     await query(
       `INSERT INTO vehicle_internal_inspection_reminder_logs (
          task_id,
+         channel,
          status,
          sent_to,
          provider_message_id,
          error_message,
          payload_json
        )
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         Number(taskId),
+        stringOrNull(payload.channel, 32) || 'whatsapp',
         stringOrNull(status, 64) || 'unknown',
         stringOrNull(payload.sentTo, 255),
         stringOrNull(payload.providerMessageId, 128),
@@ -575,34 +578,6 @@ export class InspectionReminderService {
 
     const today = toDateOnly(now);
     const sentTo = normalizePhoneForWhatsApp(currentTask.driver_phone, config.defaultCountryCode);
-    if (!sentTo) {
-      const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
-      const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
-      await query(
-        `UPDATE vehicle_internal_inspection_tasks
-         SET last_reminder_status = 'missing_phone',
-             last_reminder_error = 'Driver WhatsApp number is missing or invalid in Employee overview',
-             next_reminder_at = $2,
-             updated_at = NOW()
-         WHERE id = $1`,
-        [currentTask.id, sameDayNextReminder],
-      );
-      await this.logReminderAttempt(currentTask.id, 'missing_phone', {
-        sentTo: currentTask.driver_phone,
-        errorMessage: 'Driver WhatsApp number is missing or invalid in Employee overview',
-        payload: { driverIdentifier: currentTask.driver_identifier, driverKenjoUserId: currentTask.driver_kenjo_user_id },
-      });
-      return {
-        status: 'missing_phone',
-        task: mapTaskRow({
-          ...currentTask,
-          last_reminder_status: 'missing_phone',
-          last_reminder_error: 'Driver WhatsApp number is missing or invalid in Employee overview',
-          next_reminder_at: sameDayNextReminder,
-        }),
-      };
-    }
-
     const inspectionUrl = buildInspectionUrl(config.publicBaseUrl, currentTask.vin) || currentTask.inspection_url || '';
     const body = renderReminderMessage(
       currentTask.reminder_message_template || config.reminderMessage,
@@ -616,7 +591,131 @@ export class InspectionReminderService {
       },
     );
 
+    let pushResult = {
+      configured: false,
+      deviceCount: 0,
+      sentCount: 0,
+      failedCount: 0,
+      lastError: null,
+    };
+
     try {
+      pushResult = await pushService.sendNotificationToEmployee(
+        {
+          kenjoUserId: currentTask.driver_kenjo_user_id,
+          employeeRef: currentTask.driver_employee_ref,
+        },
+        {
+          title: 'FleetCheck reminder',
+          body,
+          url: inspectionUrl || config.publicBaseUrl || '/',
+          tag: `fleetcheck-task-${currentTask.id}`,
+          data: {
+            url: inspectionUrl || config.publicBaseUrl || '/',
+            taskId: currentTask.id,
+            vin: currentTask.vin || null,
+            licensePlate: currentTask.license_plate || null,
+          },
+        },
+      );
+    } catch (error) {
+      pushResult = {
+        configured: true,
+        deviceCount: 0,
+        sentCount: 0,
+        failedCount: 1,
+        lastError: String(error?.message || error || 'Push send failed'),
+      };
+    }
+
+    if (pushResult.configured && pushResult.failedCount > 0 && pushResult.sentCount === 0) {
+      await this.logReminderAttempt(currentTask.id, 'send_failed', {
+        channel: 'push',
+        errorMessage: pushResult.lastError,
+        payload: {
+          inspectionUrl,
+          deviceCount: pushResult.deviceCount,
+          failedCount: pushResult.failedCount,
+        },
+      });
+    }
+
+    if (pushResult.configured && pushResult.sentCount > 0) {
+      const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
+      const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
+      const updateRes = await query(
+        `UPDATE vehicle_internal_inspection_tasks
+         SET status = 'reminded',
+             last_reminder_at = NOW(),
+             last_reminder_status = 'sent_push',
+             last_reminder_sid = NULL,
+             last_reminder_error = NULL,
+             reminder_count = reminder_count + 1,
+             next_reminder_at = $2,
+             inspection_url = COALESCE($3, inspection_url),
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [currentTask.id, sameDayNextReminder, inspectionUrl || null],
+      );
+      await this.logReminderAttempt(currentTask.id, 'sent', {
+        channel: 'push',
+        sentTo: `${pushResult.sentCount} device(s)`,
+        payload: {
+          inspectionUrl,
+          body,
+          deviceCount: pushResult.deviceCount,
+          sentCount: pushResult.sentCount,
+        },
+      });
+      return {
+        status: 'sent_push',
+        task: mapTaskRow(updateRes.rows?.[0] || null),
+        sentTo: `${pushResult.sentCount} push device(s)`,
+      };
+    }
+
+    try {
+      if (!sentTo) {
+        const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
+        const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
+        const missingChannelMessage = pushResult.configured
+          ? 'Driver has no active FleetCheck app notifications and no valid WhatsApp number in Employee overview'
+          : 'Driver WhatsApp number is missing or invalid in Employee overview';
+        const detailedMissingMessage = pushResult.lastError
+          ? `${missingChannelMessage}. Push error: ${pushResult.lastError}`
+          : missingChannelMessage;
+        await query(
+          `UPDATE vehicle_internal_inspection_tasks
+           SET last_reminder_status = 'missing_phone',
+               last_reminder_error = $2,
+               next_reminder_at = $3,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [currentTask.id, detailedMissingMessage, sameDayNextReminder],
+        );
+        await this.logReminderAttempt(currentTask.id, 'missing_phone', {
+          channel: 'whatsapp',
+          sentTo: currentTask.driver_phone,
+          errorMessage: detailedMissingMessage,
+          payload: {
+            driverIdentifier: currentTask.driver_identifier,
+            driverKenjoUserId: currentTask.driver_kenjo_user_id,
+            pushConfigured: pushResult.configured,
+            pushDeviceCount: pushResult.deviceCount,
+          },
+        });
+        return {
+          status: 'missing_phone',
+          task: mapTaskRow({
+            ...currentTask,
+            last_reminder_status: 'missing_phone',
+            last_reminder_error: detailedMissingMessage,
+            next_reminder_at: sameDayNextReminder,
+          }),
+        };
+      }
+
       const result = await sendWhatsAppMessage({
         to: currentTask.driver_phone,
         body,
@@ -626,9 +725,9 @@ export class InspectionReminderService {
       const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
       const updateRes = await query(
         `UPDATE vehicle_internal_inspection_tasks
-         SET status = 'reminded',
-             last_reminder_at = NOW(),
-             last_reminder_status = 'sent',
+         SET last_reminder_at = NOW(),
+             status = 'reminded',
+             last_reminder_status = 'sent_whatsapp',
              last_reminder_sid = $2,
              last_reminder_error = NULL,
              reminder_count = reminder_count + 1,
@@ -640,6 +739,7 @@ export class InspectionReminderService {
         [currentTask.id, result.sid, sameDayNextReminder, inspectionUrl || null],
       );
       await this.logReminderAttempt(currentTask.id, 'sent', {
+        channel: 'whatsapp',
         sentTo,
         providerMessageId: result.sid,
         payload: {
@@ -648,7 +748,11 @@ export class InspectionReminderService {
           inspectionUrl,
         },
       });
-      return { status: 'sent', task: mapTaskRow(updateRes.rows?.[0] || null), sentTo };
+      return {
+        status: 'sent_whatsapp',
+        task: mapTaskRow(updateRes.rows?.[0] || null),
+        sentTo,
+      };
     } catch (error) {
       const message = String(error?.message || error || 'Twilio send failed');
       const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
@@ -665,6 +769,7 @@ export class InspectionReminderService {
         [currentTask.id, message, sameDayNextReminder],
       );
       await this.logReminderAttempt(currentTask.id, 'send_failed', {
+        channel: 'whatsapp',
         sentTo,
         errorMessage: message,
         payload: { body, inspectionUrl },
@@ -827,7 +932,12 @@ export class InspectionReminderService {
     const reminderResult = await this.sendReminderForTask(manualTask, config, now);
 
     if (reminderResult.status === 'missing_phone') {
-      throw new Error('Selected employee does not have a valid WhatsApp number in Employee overview');
+      throw new Error(
+        String(
+          reminderResult?.task?.last_reminder_error
+          || 'Selected employee does not have FleetCheck notifications enabled and does not have a valid WhatsApp number in Employee overview',
+        ),
+      );
     }
     if (reminderResult.status === 'send_failed') {
       throw new Error(reminderResult.errorMessage || 'Failed to send WhatsApp reminder');

@@ -17,6 +17,7 @@ async function ensureFinesSchema() {
   await query(`CREATE INDEX IF NOT EXISTS idx_fine_documents_fine_id ON fine_documents (fine_id, created_at DESC)`);
   await query(`ALTER TABLE fines ADD COLUMN IF NOT EXISTS notify_online BOOLEAN DEFAULT FALSE`);
   await query(`ALTER TABLE fines ADD COLUMN IF NOT EXISTS notify_email BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE fines ADD COLUMN IF NOT EXISTS car_id INTEGER`);
   finesSchemaReady = true;
 }
 
@@ -37,7 +38,7 @@ export async function getFines() {
   await ensureFinesSchema();
   const res = await query(
     `SELECT id, kenjo_employee_id, created_date, receipt_date, case_number, amount,
-            has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, created_at, updated_at
+            has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, car_id, created_at, updated_at
      FROM fines
      ORDER BY created_at DESC, id DESC`
   );
@@ -57,16 +58,17 @@ export async function createFine(payload) {
     paid_by,
     notify_online,
     notify_email,
+    car_id,
   } = payload || {};
 
   await ensureFinesSchema();
   const res = await query(
     `INSERT INTO fines (
        kenjo_employee_id, created_date, receipt_date, case_number, amount,
-       has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, car_id
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING id, kenjo_employee_id, created_date, receipt_date, case_number, amount,
-               has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, created_at, updated_at`,
+               has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, car_id, created_at, updated_at`,
     [
       kenjo_employee_id,
       created_date || null,
@@ -79,6 +81,7 @@ export async function createFine(payload) {
       paid_by || null,
       !!notify_online,
       !!notify_email,
+      car_id != null && car_id !== '' ? Number(car_id) : null,
     ]
   );
   return res.rows[0];
@@ -96,6 +99,7 @@ export async function updateFine(id, payload) {
     paid_by,
     notify_online,
     notify_email,
+    car_id,
   } = payload || {};
 
   await ensureFinesSchema();
@@ -111,10 +115,11 @@ export async function updateFine(id, payload) {
          paid_by = $9,
          notify_online = $10,
          notify_email = $11,
+         car_id = $12,
          updated_at = NOW()
      WHERE id = $1
      RETURNING id, kenjo_employee_id, created_date, receipt_date, case_number, amount,
-               has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, created_at, updated_at`,
+               has_fine_points, fine_points, processing_date, paid_by, notify_online, notify_email, car_id, created_at, updated_at`,
     [
       id,
       created_date || null,
@@ -127,6 +132,7 @@ export async function updateFine(id, payload) {
       paid_by || null,
       !!notify_online,
       !!notify_email,
+      car_id != null && car_id !== '' ? Number(car_id) : null,
     ]
   );
   return res.rows[0];
@@ -199,4 +205,3 @@ const finesService = {
 };
 
 export default finesService;
-

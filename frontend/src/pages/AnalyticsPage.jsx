@@ -17,6 +17,7 @@ import {
 import { useAppSettings } from '../context/AppSettingsContext';
 import * as analyticsApi from '../services/analyticsApi';
 import { formatKpiValue, kpiLabel } from '../utils/analyticsKpiDisplay.js';
+import { formatPortalDate, resolvePortalLocale } from '../utils/portalLocale.js';
 
 const TAB_KEYS = ['overview', 'operations', 'drivers', 'payroll', 'attendance', 'vacation', 'sickdays', 'routes', 'performance', 'safety', 'fleet', 'hr', 'compliance', 'insurance', 'damages', 'custom'];
 const DATE_PRESETS = ['today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month', 'last_30', 'last_90', 'this_quarter', 'last_quarter', 'this_year', 'custom'];
@@ -149,15 +150,18 @@ function formatAnalyticsDate(value) {
   if (value == null || value === '') return '—';
   if (typeof value === 'string') {
     const m = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (m) return `${m[3]}.${m[2]}.${m[1]}`;
+    if (m) return formatPortalDate(`${m[1]}-${m[2]}-${m[3]}`);
     if (/^\d{4}-\d{2}$/.test(value)) {
       const [y, mo] = value.split('-');
-      return `${mo}.${y}`;
+      return new Intl.DateTimeFormat(resolvePortalLocale(), {
+        month: '2-digit',
+        year: 'numeric',
+      }).format(new Date(Number(y), Number(mo) - 1, 1, 12, 0, 0, 0));
     }
   }
   const d = value instanceof Date ? value : new Date(value);
   if (!Number.isNaN(d.getTime())) {
-    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return formatPortalDate(d);
   }
   return String(value);
 }

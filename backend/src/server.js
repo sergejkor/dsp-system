@@ -25,6 +25,7 @@ import dashboardRoutes from './modules/dashboard/dashboardRoutes.js';
 import financeRoutes from './modules/finance/financeRoutes.js';
 import publicIntakePublicRoutes from './modules/publicIntake/publicIntakePublicRoutes.js';
 import publicIntakeAdminRoutes from './modules/publicIntake/publicIntakeAdminRoutes.js';
+import pushPublicRoutes from './modules/push/pushPublicRoutes.js';
 import chatRoutes from './modules/chat/chatRoutes.js';
 import { initChatRealtime } from './modules/chat/chatRealtime.js';
 import searchRoutes from './modules/search/searchRoutes.js';
@@ -89,6 +90,7 @@ app.use('/api/auth', authRoutes);
 // Public intake routes must stay accessible without auth
 app.use('/api/public', publicIntakePublicRoutes);
 app.use('/api/public/fleet-inspections', vehicleInspectionsPublicRoutes);
+app.use('/api/public/push', pushPublicRoutes);
 app.use('/api', authMiddleware.loadAuth);
 app.use('/api', (req, res, next) => {
   if (req.originalUrl === '/api/health') return next();

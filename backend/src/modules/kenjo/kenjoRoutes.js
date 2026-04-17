@@ -139,7 +139,14 @@ router.put('/employees/:id/work', async (req, res) => {
     }
     const body = {};
     if (contractEnd !== undefined) {
-      body.contractEnd = contractEnd === '' || contractEnd === null ? '' : String(contractEnd).slice(0, 10);
+      if (contractEnd === '' || contractEnd === null) {
+        return res.status(400).json({ error: 'Kenjo API does not support clearing contract end for unlimited contracts.' });
+      }
+      const normalizedContractEnd = toKenjoDateTime(contractEnd);
+      if (!normalizedContractEnd) {
+        return res.status(400).json({ error: 'Valid contractEnd is required' });
+      }
+      body.contractEnd = normalizedContractEnd;
     }
     await updateEmployeeWork(id, body);
     res.json({ ok: true });
@@ -158,7 +165,7 @@ router.put('/employees/:id/deactivate', async (req, res) => {
     }
     const termDate = toDateOnly(terminationDate) || (terminationDate && String(terminationDate).trim().slice(0, 10)) || null;
     if (termDate) {
-      await updateEmployeeWork(id, { contractEnd: termDate });
+      await updateEmployeeWork(id, { contractEnd: `${termDate}T00:00:00.000Z` });
     }
     await deactivateEmployee(id);
     await query(
@@ -178,6 +185,11 @@ function toDateOnly(v) {
   const s = String(v).trim();
   const iso = s.includes('T') ? s.split('T')[0] : s;
   return iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : undefined;
+}
+
+function toKenjoDateTime(v) {
+  const dateOnly = toDateOnly(v);
+  return dateOnly ? `${dateOnly}T00:00:00.000Z` : undefined;
 }
 
 function formatDateOnlyForClient(value) {
@@ -294,7 +306,14 @@ router.put('/employees/:id/profile', async (req, res) => {
         const workBody = { ...work };
         delete workBody.managerName;
         if (workBody.startDate !== undefined) workBody.startDate = toDateOnly(workBody.startDate) ?? workBody.startDate;
-        if (workBody.contractEnd !== undefined) workBody.contractEnd = toDateOnly(workBody.contractEnd) ?? workBody.contractEnd;
+        if (workBody.contractEnd !== undefined) {
+          if (workBody.contractEnd === '' || workBody.contractEnd === null) {
+            errors.push('work: Kenjo API does not support clearing contract end for unlimited contracts.');
+            delete workBody.contractEnd;
+          } else {
+            workBody.contractEnd = toKenjoDateTime(workBody.contractEnd) ?? workBody.contractEnd;
+          }
+        }
         if (workBody.probationUntil !== undefined) workBody.probationUntil = toDateOnly(workBody.probationUntil) ?? workBody.probationUntil;
         await updateEmployeeWork(id, workBody);
       } catch (e) {

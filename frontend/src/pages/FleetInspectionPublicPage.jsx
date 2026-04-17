@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import jsQR from 'jsqr';
 import { useSearchParams } from 'react-router-dom';
 import InspectionCamera from '../components/InspectionCamera.jsx';
 import { getOverlaySet, REQUIRED_SHOT_IDS } from '../services/overlayRegistry.js';
@@ -7,6 +8,14 @@ import {
   searchFleetInspectionOperators,
   submitPublicInspection,
 } from '../services/internalInspectionApi.js';
+import {
+  browserPushSupported,
+  getFleetPushSubscription,
+  getPublicPushConfig,
+  registerPublicPushDevice,
+  unregisterPublicPushDevice,
+  urlBase64ToUint8Array,
+} from '../services/pushApi.js';
 import './fleetInspections.css';
 
 const RESULT_LABELS = {
@@ -14,6 +23,179 @@ const RESULT_LABELS = {
   no_new_damage: 'No visible new damage',
   possible_new_damage: 'Possible new damage detected',
 };
+
+const SHOT_ICON_ACCENTS = {
+  front_left: ['front', 'left', 'frontLeft'],
+  left_side: ['left'],
+  rear_left: ['rear', 'left', 'rearLeft'],
+  rear: ['rear'],
+  rear_right: ['rear', 'right', 'rearRight'],
+  right_side: ['right'],
+  front_right: ['front', 'right', 'frontRight'],
+  front: ['front'],
+};
+
+const FLEETCHECK_PUSH_EMPLOYEE_KEY = 'fleetcheck_push_employee';
+
+function readSavedPushEmployee() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(FLEETCHECK_PUSH_EMPLOYEE_KEY) || 'null');
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      employeeRef: String(parsed.employeeRef || '').trim() || null,
+      employeeId: String(parsed.employeeId || '').trim() || null,
+      kenjoUserId: String(parsed.kenjoUserId || '').trim() || null,
+      label: String(parsed.label || '').trim() || null,
+      subtitle: String(parsed.subtitle || '').trim() || null,
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function persistPushEmployee(employee) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!employee) {
+      window.localStorage.removeItem(FLEETCHECK_PUSH_EMPLOYEE_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      FLEETCHECK_PUSH_EMPLOYEE_KEY,
+      JSON.stringify({
+        employeeRef: employee.employeeRef || null,
+        employeeId: employee.employeeId || null,
+        kenjoUserId: employee.kenjoUserId || null,
+        label: employee.label || null,
+        subtitle: employee.subtitle || null,
+      }),
+    );
+  } catch (_error) {}
+}
+
+function inferPushPlatform() {
+  if (typeof navigator === 'undefined') return 'web';
+  const userAgent = String(navigator.userAgent || '').toLowerCase();
+  if (userAgent.includes('android')) return 'android-web';
+  if (userAgent.includes('iphone') || userAgent.includes('ipad')) return 'ios-web';
+  return 'web';
+}
+
+async function requestFleetCameraStream() {
+  const attempts = [
+    {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    },
+    {
+      video: {
+        facingMode: 'environment',
+      },
+      audio: false,
+    },
+    {
+      video: true,
+      audio: false,
+    },
+  ];
+
+  let lastError = null;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Camera access failed.');
+}
+
+function prepareFleetVideoElement(video) {
+  if (!video) return;
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute('muted', 'true');
+  video.setAttribute('autoplay', 'true');
+  video.setAttribute('playsinline', 'true');
+  video.setAttribute('webkit-playsinline', 'true');
+}
+
+function createScannerCanvasContext(canvas) {
+  if (!canvas) return null;
+  return (
+    canvas.getContext('2d', { willReadFrequently: true }) ||
+    canvas.getContext('2d')
+  );
+}
+
+async function detectQrCodeFromVideoFrame(video, detector, canvas, context) {
+  if (detector) {
+    const barcodes = await detector.detect(video);
+    return String(barcodes?.[0]?.rawValue || '');
+  }
+
+  if (!canvas || !context) return '';
+
+  const sourceWidth = video.videoWidth || 0;
+  const sourceHeight = video.videoHeight || 0;
+  if (!sourceWidth || !sourceHeight) return '';
+
+  const maxScanWidth = 960;
+  const scale = sourceWidth > maxScanWidth ? maxScanWidth / sourceWidth : 1;
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+  }
+
+  context.drawImage(video, 0, 0, targetWidth, targetHeight);
+  const imageData = context.getImageData(0, 0, targetWidth, targetHeight);
+  const qrCode = jsQR(imageData.data, targetWidth, targetHeight, {
+    inversionAttempts: 'attemptBoth',
+  });
+  return String(qrCode?.data || '');
+}
+
+function VehicleShotIcon({ shotId, large = false }) {
+  const active = new Set(SHOT_ICON_ACCENTS[shotId] || []);
+  const className = large
+    ? 'fleet-inspection-shot-icon fleet-inspection-shot-icon--large'
+    : 'fleet-inspection-shot-icon';
+
+  function accent(key) {
+    return active.has(key)
+      ? 'var(--fleet-shot-accent, #2563eb)'
+      : 'rgba(148, 163, 184, 0.18)';
+  }
+
+  return (
+    <svg viewBox="0 0 180 92" aria-hidden="true" className={className}>
+      <rect x="20" y="18" width="140" height="56" rx="22" fill="rgba(255,255,255,0.92)" stroke="rgba(100,116,139,0.32)" strokeWidth="4" />
+      <rect x="44" y="10" width="92" height="22" rx="10" fill="rgba(255,255,255,0.92)" stroke="rgba(100,116,139,0.22)" strokeWidth="3" />
+      <rect x="18" y="30" width="18" height="30" rx="8" fill={accent('rear')} />
+      <rect x="144" y="30" width="18" height="30" rx="8" fill={accent('front')} />
+      <rect x="58" y="14" width="64" height="14" rx="7" fill="rgba(191,219,254,0.9)" />
+      <rect x="34" y="24" width="10" height="44" rx="5" fill={accent('left')} />
+      <rect x="136" y="24" width="10" height="44" rx="5" fill={accent('right')} />
+      <circle cx="48" cy="76" r="10" fill="rgba(15,23,42,0.82)" />
+      <circle cx="132" cy="76" r="10" fill="rgba(15,23,42,0.82)" />
+      <circle cx="48" cy="76" r="5" fill="rgba(255,255,255,0.84)" />
+      <circle cx="132" cy="76" r="5" fill="rgba(255,255,255,0.84)" />
+      <circle cx="44" cy="30" r="8" fill={accent('rearLeft')} />
+      <circle cx="136" cy="30" r="8" fill={accent('frontRight')} />
+      <circle cx="44" cy="60" r="8" fill={accent('frontLeft')} />
+      <circle cx="136" cy="60" r="8" fill={accent('rearRight')} />
+    </svg>
+  );
+}
 
 function normalizeVin(value) {
   return String(value || '')
@@ -82,10 +264,14 @@ async function releaseLandscapeInspectionMode() {
 }
 
 export default function FleetInspectionPublicPage() {
+  const savedPushEmployee = useMemo(() => readSavedPushEmployee(), []);
   const [searchParams, setSearchParams] = useSearchParams();
   const [vinInput, setVinInput] = useState(() => normalizeVin(searchParams.get('vin')));
   const [vehicle, setVehicle] = useState(null);
   const [driverName, setDriverName] = useState('');
+  const [driverSelection, setDriverSelection] = useState(null);
+  const [driverConfirmed, setDriverConfirmed] = useState(false);
+  const [driverModalOpen, setDriverModalOpen] = useState(false);
   const [driverSuggestions, setDriverSuggestions] = useState([]);
   const [driverSuggestionsLoading, setDriverSuggestionsLoading] = useState(false);
   const [driverSuggestionsError, setDriverSuggestionsError] = useState('');
@@ -102,12 +288,36 @@ export default function FleetInspectionPublicPage() {
   const [scannerActive, setScannerActive] = useState(false);
   const [scannerStatus, setScannerStatus] = useState('');
   const [scannerError, setScannerError] = useState('');
+  const [pushConfig, setPushConfig] = useState({ loading: true, enabled: false, publicKey: null });
+  const [pushSupported] = useState(() => browserPushSupported());
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushPermission, setPushPermission] = useState(() => {
+    if (!browserPushSupported() || typeof Notification === 'undefined') return 'unsupported';
+    return Notification.permission;
+  });
+  const [pushStatus, setPushStatus] = useState('');
+  const [pushError, setPushError] = useState('');
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushModalOpen, setPushModalOpen] = useState(false);
+  const [pushEmployeeQuery, setPushEmployeeQuery] = useState(() => savedPushEmployee?.label || '');
+  const [pushEmployeeSelection, setPushEmployeeSelection] = useState(() => savedPushEmployee);
+  const [pushSuggestions, setPushSuggestions] = useState([]);
+  const [pushSuggestionsLoading, setPushSuggestionsLoading] = useState(false);
+  const [pushSuggestionsError, setPushSuggestionsError] = useState('');
+  const [pushSuggestionsVisible, setPushSuggestionsVisible] = useState(false);
   const scannerVideoRef = useRef(null);
+  const driverInputRef = useRef(null);
+  const pushInputRef = useRef(null);
   const autoResolvedRef = useRef(false);
   const capturedShotsRef = useRef({});
   const scannerCooldownUntilRef = useRef(0);
   const lastScannedVinRef = useRef('');
   const driverSuggestionRequestRef = useRef(0);
+  const pushSuggestionRequestRef = useRef(0);
+
+  const cameraSupported =
+    typeof window !== 'undefined' &&
+    Boolean(window.navigator?.mediaDevices?.getUserMedia);
 
   const barcodeSupported =
     typeof window !== 'undefined' &&
@@ -142,8 +352,62 @@ export default function FleetInspectionPublicPage() {
   useEffect(() => {
     if (!vehicle) {
       setInspectionStarted(false);
+      setDriverConfirmed(false);
+      setDriverModalOpen(false);
     }
   }, [vehicle]);
+
+  useEffect(() => {
+    if (!driverModalOpen) return undefined;
+    const timerId = window.setTimeout(() => {
+      driverInputRef.current?.focus();
+      driverInputRef.current?.select?.();
+    }, 30);
+    return () => window.clearTimeout(timerId);
+  }, [driverModalOpen]);
+
+  useEffect(() => {
+    if (!pushModalOpen) return undefined;
+    const timerId = window.setTimeout(() => {
+      pushInputRef.current?.focus();
+      pushInputRef.current?.select?.();
+    }, 30);
+    return () => window.clearTimeout(timerId);
+  }, [pushModalOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPushConfig() {
+      if (!pushSupported) {
+        setPushConfig({ loading: false, enabled: false, publicKey: null });
+        return;
+      }
+
+      try {
+        const [config, subscription] = await Promise.all([
+          getPublicPushConfig(),
+          getFleetPushSubscription().catch(() => null),
+        ]);
+        if (cancelled) return;
+        setPushConfig({
+          loading: false,
+          enabled: Boolean(config?.enabled),
+          publicKey: config?.publicKey || null,
+        });
+        setPushEnabled(Boolean(subscription));
+      } catch (error) {
+        if (cancelled) return;
+        setPushConfig({ loading: false, enabled: false, publicKey: null });
+        setPushError(String(error?.message || 'Failed to load app notification setup'));
+      }
+    }
+
+    loadPushConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [pushSupported]);
 
   useEffect(() => {
     if (!inspectionStarted) {
@@ -193,6 +457,45 @@ export default function FleetInspectionPublicPage() {
   }, [driverName, vehicle]);
 
   useEffect(() => {
+    const query = String(pushEmployeeQuery || '').trim();
+    if (!pushModalOpen || query.length < 2) {
+      setPushSuggestions([]);
+      setPushSuggestionsLoading(false);
+      setPushSuggestionsError('');
+      return undefined;
+    }
+
+    const requestId = pushSuggestionRequestRef.current + 1;
+    pushSuggestionRequestRef.current = requestId;
+    setPushSuggestionsLoading(true);
+    setPushSuggestionsError('');
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const rows = await searchFleetInspectionOperators(query);
+        if (pushSuggestionRequestRef.current !== requestId) return;
+        setPushSuggestions(rows || []);
+      } catch (lookupError) {
+        if (pushSuggestionRequestRef.current !== requestId) return;
+        setPushSuggestions([]);
+        setPushSuggestionsError(String(lookupError?.message || 'Failed to load employee suggestions'));
+      } finally {
+        if (pushSuggestionRequestRef.current === requestId) {
+          setPushSuggestionsLoading(false);
+        }
+      }
+    }, 220);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [pushEmployeeQuery, pushModalOpen]);
+
+  useEffect(() => {
+    if (!driverSelection?.kenjoUserId) return;
+    setPushEmployeeSelection((current) => current || driverSelection);
+    setPushEmployeeQuery((current) => current || driverSelection.label || '');
+  }, [driverSelection]);
+
+  useEffect(() => {
     const queryVin = normalizeVin(searchParams.get('vin'));
     if (!queryVin || autoResolvedRef.current) return;
     autoResolvedRef.current = true;
@@ -201,20 +504,29 @@ export default function FleetInspectionPublicPage() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (!scannerActive || !barcodeSupported || vehicle) return undefined;
+    if (!scannerActive || !cameraSupported || vehicle) return undefined;
 
     let cancelled = false;
     let frameId = null;
     let mediaStream = null;
-    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+    const scanCanvas = document.createElement('canvas');
+    const scanContext = createScannerCanvasContext(scanCanvas);
+    const detector = barcodeSupported
+      ? new window.BarcodeDetector({ formats: ['qr_code'] })
+      : null;
 
     async function detectLoop() {
       if (cancelled || !scannerVideoRef.current) return;
       const video = scannerVideoRef.current;
       if (video.readyState >= 2) {
         try {
-          const barcodes = await detector.detect(video);
-          const nextVin = extractVinFromScan(barcodes?.[0]?.rawValue);
+          const rawValue = await detectQrCodeFromVideoFrame(
+            video,
+            detector,
+            scanCanvas,
+            scanContext,
+          );
+          const nextVin = extractVinFromScan(rawValue);
           if (nextVin) {
             const now = Date.now();
             if (
@@ -227,6 +539,7 @@ export default function FleetInspectionPublicPage() {
             lastScannedVinRef.current = nextVin;
             scannerCooldownUntilRef.current = now + 3000;
             setScannerStatus('QR detected. Loading vehicle...');
+            setScannerError('');
             setVinInput(nextVin);
             const resolved = await handleResolveVehicle(nextVin);
             if (resolved) {
@@ -236,7 +549,7 @@ export default function FleetInspectionPublicPage() {
             setScannerStatus('QR detected, but vehicle lookup failed. Try again or enter VIN manually.');
           }
         } catch (_error) {
-          setScannerError('Unable to read this QR code. Try manual VIN entry.');
+          setScannerError('Unable to scan this QR code right now. Try again or enter the VIN manually.');
         }
       }
       frameId = window.requestAnimationFrame(detectLoop);
@@ -246,14 +559,7 @@ export default function FleetInspectionPublicPage() {
       setScannerError('');
       setScannerStatus('Point the camera at the vehicle QR code.');
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        });
+        mediaStream = await requestFleetCameraStream();
 
         if (cancelled) {
           mediaStream.getTracks().forEach((track) => track.stop());
@@ -261,12 +567,17 @@ export default function FleetInspectionPublicPage() {
         }
 
         if (scannerVideoRef.current) {
+          prepareFleetVideoElement(scannerVideoRef.current);
           scannerVideoRef.current.srcObject = mediaStream;
           await scannerVideoRef.current.play().catch(() => {});
         }
         frameId = window.requestAnimationFrame(detectLoop);
-      } catch (_error) {
-        setScannerError('Camera access failed for QR scanning. Use manual VIN input instead.');
+      } catch (error) {
+        const message =
+          error?.name === 'NotAllowedError'
+            ? 'Camera access was blocked. Please allow camera access in Safari settings.'
+            : 'Camera access failed for QR scanning. Use manual VIN input instead.';
+        setScannerError(message);
       }
     }
 
@@ -277,7 +588,7 @@ export default function FleetInspectionPublicPage() {
       if (frameId) window.cancelAnimationFrame(frameId);
       mediaStream?.getTracks().forEach((track) => track.stop());
     };
-  }, [barcodeSupported, scannerActive, vehicle]);
+  }, [barcodeSupported, cameraSupported, scannerActive, vehicle]);
 
   function resetCapturedShots() {
     setCapturedShots((prev) => {
@@ -303,6 +614,10 @@ export default function FleetInspectionPublicPage() {
     try {
       const resolvedVehicle = await resolveVehicleByVin(normalizedVin);
       setVehicle(resolvedVehicle);
+      setDriverConfirmed(false);
+      setDriverSelection(null);
+      setDriverModalOpen(true);
+      setDriverSuggestionsVisible(true);
       setInspectionStarted(false);
       setSearchParams({ vin: normalizedVin }, { replace: true });
       setCurrentIndex(0);
@@ -320,7 +635,6 @@ export default function FleetInspectionPublicPage() {
 
   async function handleCaptureShot(shotId, blob) {
     const previewUrl = URL.createObjectURL(blob);
-    const shotIndex = REQUIRED_SHOT_IDS.indexOf(shotId);
 
     setCapturedShots((prev) => {
       if (prev[shotId]?.previewUrl) {
@@ -331,10 +645,19 @@ export default function FleetInspectionPublicPage() {
         ...prev,
         [shotId]: { blob, previewUrl },
       };
-
-      const nextIndex = REQUIRED_SHOT_IDS.findIndex((id, index) => index > shotIndex && !next[id]);
-      setCurrentIndex(nextIndex === -1 ? shotIndex : nextIndex);
       return next;
+    });
+  }
+
+  function handleNextShot(shotId) {
+    const shotIndex = REQUIRED_SHOT_IDS.indexOf(shotId);
+    if (shotIndex === -1) return;
+    setCurrentIndex((current) => {
+      const nextMissingIndex = REQUIRED_SHOT_IDS.findIndex(
+        (id, index) => index > shotIndex && !capturedShotsRef.current[id],
+      );
+      if (nextMissingIndex !== -1) return nextMissingIndex;
+      return current;
     });
   }
 
@@ -357,6 +680,10 @@ export default function FleetInspectionPublicPage() {
       setError('Driver name is required.');
       return;
     }
+    if (!driverConfirmed) {
+      setDriverModalOpen(true);
+      return;
+    }
     setError('');
     void requestLandscapeInspectionMode();
     setInspectionStarted(true);
@@ -364,6 +691,17 @@ export default function FleetInspectionPublicPage() {
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+  }
+
+  function handleConfirmDriverName() {
+    if (!driverName.trim()) {
+      setError('Driver name is required.');
+      return;
+    }
+    setError('');
+    setDriverConfirmed(true);
+    setDriverModalOpen(false);
+    setDriverSuggestionsVisible(false);
   }
 
   async function handleSubmitInspection() {
@@ -410,6 +748,9 @@ export default function FleetInspectionPublicPage() {
     setNotes('');
     setNotesOpen(false);
     setDriverName('');
+    setDriverSelection(null);
+    setDriverConfirmed(false);
+    setDriverModalOpen(false);
     setVinInput('');
     setInspectionStarted(false);
     setCurrentIndex(0);
@@ -422,22 +763,176 @@ export default function FleetInspectionPublicPage() {
     resetCapturedShots();
   }
 
+  async function handleEnablePushNotifications() {
+    if (!pushSupported) {
+      setPushError('App notifications are not supported in this browser.');
+      return;
+    }
+    if (!pushConfig.enabled || !pushConfig.publicKey) {
+      setPushError('App notifications are not configured on the server yet.');
+      return;
+    }
+    if (!pushEmployeeSelection?.employeeRef && !pushEmployeeSelection?.kenjoUserId) {
+      setPushError('Please select your name from the list before enabling notifications.');
+      return;
+    }
+
+    setPushBusy(true);
+    setPushError('');
+    setPushStatus('');
+
+    try {
+      const permission = await Notification.requestPermission();
+      setPushPermission(permission);
+      if (permission !== 'granted') {
+        throw new Error(
+          permission === 'denied'
+            ? 'Notifications were blocked in your browser settings.'
+            : 'Notification permission was not granted.',
+        );
+      }
+
+      const registration = await navigator.serviceWorker.register('/fleetcheck-sw.js');
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(pushConfig.publicKey),
+        });
+      }
+
+      await registerPublicPushDevice({
+        employeeRef: pushEmployeeSelection.employeeRef,
+        employeeId: pushEmployeeSelection.employeeId,
+        kenjoUserId: pushEmployeeSelection.kenjoUserId,
+        subscription: subscription.toJSON(),
+        userAgent: navigator.userAgent,
+        platform: inferPushPlatform(),
+        appKind: 'fleetcheck-pwa',
+        permissionState: permission,
+      });
+
+      persistPushEmployee(pushEmployeeSelection);
+      setPushEnabled(true);
+      setPushStatus('App notifications are enabled on this device.');
+      setPushModalOpen(false);
+      setPushSuggestionsVisible(false);
+    } catch (error) {
+      setPushError(String(error?.message || 'Failed to enable app notifications'));
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  async function handleDisablePushNotifications() {
+    if (!pushSupported) {
+      setPushEnabled(false);
+      return;
+    }
+
+    setPushBusy(true);
+    setPushError('');
+    setPushStatus('');
+
+    try {
+      const subscription = await getFleetPushSubscription();
+      if (subscription?.endpoint) {
+        await unregisterPublicPushDevice({ endpoint: subscription.endpoint });
+        await subscription.unsubscribe().catch(() => {});
+      }
+      setPushEnabled(false);
+      setPushStatus('App notifications are turned off on this device.');
+      setPushModalOpen(false);
+      setPushSuggestionsVisible(false);
+    } catch (error) {
+      setPushError(String(error?.message || 'Failed to disable app notifications'));
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
   return (
     <div className={`fleet-inspection-page ${inspectionStarted ? 'fleet-inspection-page--camera' : ''}`}>
       <div className={`fleet-inspection-shell ${inspectionStarted ? 'fleet-inspection-shell--camera' : ''}`}>
         {!inspectionStarted ? (
-          <header className="fleet-inspection-hero">
-            <h1>Vehicle Inspection</h1>
-            <p>
-              Scan the vehicle QR, load the correct overlay automatically, and capture the 8 required
-              inspection photos from your phone.
-            </p>
-            <div className="fleet-inspection-meta">
-              <span className="fleet-inspection-meta__chip">8 required shots</span>
-              <span className="fleet-inspection-meta__chip">VIN-based overlay loading</span>
-              <span className="fleet-inspection-meta__chip">Internal DSP only</span>
+          <section className="fleet-inspection-public-header">
+            <h1>FleetCheck</h1>
+            <p>Scan the QR code or enter the VIN manually, then choose your name and start the inspection.</p>
+          </section>
+        ) : null}
+
+        {!inspectionStarted ? (
+          <section className="fleet-inspection-card fleet-inspection-push-card">
+            <div className="fleet-inspection-grid">
+              <div>
+                <p className="fleet-inspection-label">App notifications</p>
+                <h2>Get FleetCheck reminders on this phone</h2>
+                <p className="fleet-inspection-muted">
+                  Enable notifications once on your Android device and internal inspection reminders will arrive in the FleetCheck app.
+                </p>
+              </div>
+              <div className="fleet-inspection-actions">
+                {pushEnabled ? (
+                  <span className="fleet-inspection-status" data-tone="success">
+                    Notifications on
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="fleet-inspection-button fleet-inspection-button--scan"
+                  onClick={() => setPushModalOpen(true)}
+                  disabled={!pushSupported || pushConfig.loading || !pushConfig.enabled}
+                >
+                  {pushEnabled ? 'Manage notifications' : 'Enable notifications'}
+                </button>
+                {pushEnabled ? (
+                  <button
+                    type="button"
+                    className="fleet-inspection-button fleet-inspection-button--neutral"
+                    onClick={() => void handleDisablePushNotifications()}
+                    disabled={pushBusy}
+                  >
+                    Turn off on this device
+                  </button>
+                ) : null}
+              </div>
             </div>
-          </header>
+            {pushConfig.loading ? (
+              <p className="fleet-inspection-muted">Checking notification setup...</p>
+            ) : null}
+            {!pushSupported ? (
+              <div className="fleet-inspection-alert fleet-inspection-alert--warning">
+                App notifications are not supported in this browser.
+              </div>
+            ) : null}
+            {pushSupported && !pushConfig.loading && !pushConfig.enabled ? (
+              <div className="fleet-inspection-alert fleet-inspection-alert--warning">
+                App notifications are not configured on the server yet.
+              </div>
+            ) : null}
+            {pushPermission === 'denied' ? (
+              <div className="fleet-inspection-alert fleet-inspection-alert--warning">
+                Browser notifications are blocked for this device. Allow notifications in the browser settings and try again.
+              </div>
+            ) : null}
+            {pushEmployeeSelection?.label ? (
+              <div className="fleet-inspection-driver-summary">
+                <div>
+                  <span className="fleet-inspection-label">This device is linked to</span>
+                  <strong>{pushEmployeeSelection.label}</strong>
+                  {pushEmployeeSelection.subtitle ? (
+                    <small className="fleet-inspection-muted">{pushEmployeeSelection.subtitle}</small>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            {pushStatus ? (
+              <div className="fleet-inspection-alert fleet-inspection-alert--success">{pushStatus}</div>
+            ) : null}
+            {pushError ? (
+              <div className="fleet-inspection-alert fleet-inspection-alert--error">{pushError}</div>
+            ) : null}
+          </section>
         ) : null}
 
         {error ? (
@@ -489,46 +984,45 @@ export default function FleetInspectionPublicPage() {
 
         {!vehicle ? (
           <>
-            <section className="fleet-inspection-card">
-              <div className="fleet-inspection-grid fleet-inspection-grid--two">
-                <div className="fleet-inspection-field">
-                  <label htmlFor="inspection-vin">Vehicle VIN</label>
-                  <input
-                    id="inspection-vin"
-                    className="fleet-inspection-input"
-                    value={vinInput}
-                    onChange={(event) => setVinInput(normalizeVin(event.target.value))}
-                    placeholder="Scan or enter VIN"
-                    autoCapitalize="characters"
-                    autoCorrect="off"
-                  />
-                </div>
-                <div className="fleet-inspection-actions" style={{ alignItems: 'end' }}>
+            <section className="fleet-inspection-card fleet-inspection-vin-card">
+              <div className="fleet-inspection-field">
+                <label htmlFor="inspection-vin">Scan or enter VIN</label>
+                <input
+                  id="inspection-vin"
+                  className="fleet-inspection-input fleet-inspection-input--vin"
+                  value={vinInput}
+                  onChange={(event) => setVinInput(normalizeVin(event.target.value))}
+                  placeholder="Scan or enter VIN"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                />
+              </div>
+
+              <div className="fleet-inspection-vin-actions">
+                {cameraSupported ? (
                   <button
                     type="button"
-                    className="fleet-inspection-button"
-                    onClick={() => void handleResolveVehicle()}
-                    disabled={loadingVehicle}
+                    className="fleet-inspection-button fleet-inspection-button--scan"
+                    onClick={() => setScannerActive((current) => !current)}
                   >
-                    {loadingVehicle ? 'Loading vehicle...' : 'Load vehicle'}
+                    {scannerActive ? 'Stop QR scanner' : 'Scan QR'}
                   </button>
-                  {barcodeSupported ? (
-                    <button
-                      type="button"
-                      className="fleet-inspection-button fleet-inspection-button--secondary"
-                      onClick={() => setScannerActive((current) => !current)}
-                    >
-                      {scannerActive ? 'Stop QR scanner' : 'Scan QR'}
-                    </button>
-                  ) : null}
-                </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="fleet-inspection-button fleet-inspection-button--neutral"
+                  onClick={() => void handleResolveVehicle()}
+                  disabled={loadingVehicle}
+                >
+                  {loadingVehicle ? 'Loading vehicle...' : 'Load vehicle'}
+                </button>
               </div>
             </section>
 
             {scannerActive ? (
               <section className="fleet-inspection-card">
                 <div className="fleet-inspection-scan-stage">
-                  <video ref={scannerVideoRef} muted playsInline />
+                  <video ref={scannerVideoRef} muted playsInline autoPlay />
                   <div className="fleet-inspection-scan-frame" aria-hidden="true" />
                 </div>
                 <div className="fleet-inspection-grid" style={{ marginTop: '0.85rem' }}>
@@ -546,117 +1040,69 @@ export default function FleetInspectionPublicPage() {
           <section className="fleet-inspection-card fleet-inspection-preflight">
             <div className="fleet-inspection-preflight__hero">
               <div>
-                <p className="fleet-inspection-label">Ready to inspect</p>
+                <p className="fleet-inspection-label">Vehicle ready</p>
                 <h2>{vehicle.licensePlate || vehicle.vehicleId}</h2>
                 <p className="fleet-inspection-muted">
                   {overlaySet?.label || vehicle.vehicleType} - VIN {vehicle.vin}
                 </p>
               </div>
-              <button
-                type="button"
-                className="fleet-inspection-button fleet-inspection-button--secondary"
-                onClick={startAnotherVehicle}
-              >
-                Change vehicle
-              </button>
-            </div>
-
-            <div className="fleet-inspection-preflight__panel">
-              <div className="fleet-inspection-field">
-                <label htmlFor="inspection-driver-name">Driver Name</label>
-                <input
-                  id="inspection-driver-name"
-                  className="fleet-inspection-input fleet-inspection-input--large"
-                  value={driverName}
-                  onChange={(event) => {
-                    setDriverName(event.target.value);
-                    setDriverSuggestionsVisible(true);
-                  }}
-                  onFocus={() => setDriverSuggestionsVisible(true)}
-                  onBlur={() => {
-                    window.setTimeout(() => setDriverSuggestionsVisible(false), 120);
-                  }}
-                  placeholder="Start typing your name"
-                  autoComplete="off"
-                />
-                {driverSuggestionsVisible && (driverSuggestionsLoading || driverSuggestions.length || driverSuggestionsError) ? (
-                  <div className="fleet-inspection-suggestions" role="listbox" aria-label="Driver name suggestions">
-                    {driverSuggestionsLoading ? (
-                      <p className="fleet-inspection-suggestions__state">Searching employees...</p>
-                    ) : null}
-                    {!driverSuggestionsLoading && driverSuggestionsError ? (
-                      <p className="fleet-inspection-suggestions__state">{driverSuggestionsError}</p>
-                    ) : null}
-                    {!driverSuggestionsLoading && !driverSuggestionsError && !driverSuggestions.length && driverName.trim().length >= 2 ? (
-                      <p className="fleet-inspection-suggestions__state">No matching employee found yet.</p>
-                    ) : null}
-                    {!driverSuggestionsLoading && !driverSuggestionsError
-                      ? driverSuggestions.map((suggestion) => (
-                          <button
-                            key={suggestion.id}
-                            type="button"
-                            className="fleet-inspection-suggestion"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => {
-                              setDriverName(suggestion.label);
-                              setDriverSuggestionsVisible(false);
-                              setDriverSuggestions([]);
-                              setDriverSuggestionsError('');
-                            }}
-                          >
-                            <span>{suggestion.label}</span>
-                            {suggestion.subtitle ? (
-                              <small>{suggestion.subtitle}</small>
-                            ) : null}
-                          </button>
-                        ))
-                      : null}
-                  </div>
-                ) : null}
-              </div>
-
-              <button
-                type="button"
-                className="fleet-inspection-note-toggle"
-                onClick={() => setNotesOpen((current) => !current)}
-              >
-                {notesOpen ? 'Hide optional note' : 'Add optional note'}
-              </button>
-
-              {notesOpen ? (
-                <div className="fleet-inspection-field">
-                  <label htmlFor="inspection-notes">Optional Note</label>
-                  <textarea
-                    id="inspection-notes"
-                    className="fleet-inspection-textarea"
-                    value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
-                    placeholder="Any quick context for this inspection"
-                  />
-                </div>
-              ) : null}
-
-              <div className="fleet-inspection-preflight__summary">
-                <div className="fleet-inspection-progress">
-                  <div className="fleet-inspection-toolbar" style={{ justifyContent: 'space-between' }}>
-                    <strong>{capturedCount} of 8 shots captured</strong>
-                    <span className="fleet-inspection-muted">All exterior angles required</span>
-                  </div>
-                  <div className="fleet-inspection-progress__bar">
-                    <span style={{ width: `${(capturedCount / 8) * 100}%` }} />
-                  </div>
-                </div>
-
+              <div className="fleet-inspection-actions">
                 <button
                   type="button"
-                  className="fleet-inspection-button fleet-inspection-button--large"
-                  onClick={handleStartInspection}
-                  disabled={!driverName.trim()}
+                  className="fleet-inspection-button fleet-inspection-button--neutral"
+                  onClick={() => setDriverModalOpen(true)}
                 >
-                  Start inspection
+                  {driverConfirmed ? 'Change driver' : 'Set driver'}
+                </button>
+                <button
+                  type="button"
+                  className="fleet-inspection-button fleet-inspection-button--neutral"
+                  onClick={startAnotherVehicle}
+                >
+                  Change vehicle
                 </button>
               </div>
             </div>
+
+            <div className="fleet-inspection-driver-summary">
+              <div>
+                <span className="fleet-inspection-label">Driver name</span>
+                <strong>{driverName || 'Waiting for driver selection'}</strong>
+              </div>
+            </div>
+
+            <div className="fleet-inspection-preflight__summary">
+              <button
+                type="button"
+                className="fleet-inspection-button fleet-inspection-button--large fleet-inspection-button--scan"
+                onClick={handleStartInspection}
+                disabled={!driverConfirmed}
+              >
+                Start inspection
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="fleet-inspection-note-toggle"
+              onClick={() => setNotesOpen((current) => !current)}
+            >
+              {notesOpen ? 'Hide optional note' : 'Add optional note'}
+            </button>
+
+            {notesOpen ? (
+              <div className="fleet-inspection-field">
+                <label htmlFor="inspection-notes">Optional note</label>
+                <textarea
+                  id="inspection-notes"
+                  className="fleet-inspection-textarea"
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder="Any quick context for this inspection"
+                />
+              </div>
+            ) : null}
+
           </section>
         ) : null}
 
@@ -668,6 +1114,7 @@ export default function FleetInspectionPublicPage() {
               overlayScale={currentShot.overlayScale}
               currentPhoto={capturedShots[currentShot.id]}
               onCapture={(blob) => handleCaptureShot(currentShot.id, blob)}
+              onNext={() => handleNextShot(currentShot.id)}
               onRetake={() => handleRetakeShot(currentShot.id)}
               disabled={submitting}
               stepNumber={Math.min(currentIndex + 1, 8)}
@@ -694,9 +1141,12 @@ export default function FleetInspectionPublicPage() {
               </button>
 
               <div className="fleet-inspection-session__title">
-                <strong>{currentShot.label}</strong>
-                <span>{vehicle.licensePlate || vehicle.vehicleId}</span>
-                <span>{Math.min(currentIndex + 1, 8)} / 8</span>
+                <VehicleShotIcon shotId={currentShot.id} large />
+                <div className="fleet-inspection-session__title-copy">
+                  <strong>{currentShot.label}</strong>
+                  <span>{currentShot.captureTip}</span>
+                  <span>{Math.min(currentIndex + 1, 8)} / 8 - {vehicle.licensePlate || vehicle.vehicleId}</span>
+                </div>
               </div>
             </div>
 
@@ -734,6 +1184,222 @@ export default function FleetInspectionPublicPage() {
               ) : null}
             </div>
           </section>
+        ) : null}
+
+        {driverModalOpen && vehicle && !inspectionStarted ? (
+          <div className="fleet-inspection-modal-backdrop">
+            <div className="fleet-inspection-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-driver-modal-title">
+              <div className="fleet-inspection-modal__header">
+                <div>
+                  <p className="fleet-inspection-label">Vehicle loaded</p>
+                  <h3 id="fleet-driver-modal-title">{vehicle.licensePlate || vehicle.vehicleId}</h3>
+                  <p className="fleet-inspection-muted">Please start typing your name.</p>
+                </div>
+              </div>
+
+              <div className="fleet-inspection-field">
+                <label htmlFor="inspection-driver-name">Driver name</label>
+                <input
+                  id="inspection-driver-name"
+                  ref={driverInputRef}
+                  className="fleet-inspection-input fleet-inspection-input--large"
+                  value={driverName}
+                  onChange={(event) => {
+                    setDriverName(event.target.value);
+                    setDriverSelection(null);
+                    setDriverSuggestionsVisible(true);
+                    setDriverConfirmed(false);
+                  }}
+                  onFocus={() => setDriverSuggestionsVisible(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setDriverSuggestionsVisible(false), 120);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      handleConfirmDriverName();
+                    }
+                  }}
+                  placeholder="Please start typing your name"
+                  autoComplete="off"
+                />
+                {driverSuggestionsVisible && (driverSuggestionsLoading || driverSuggestions.length || driverSuggestionsError) ? (
+                  <div className="fleet-inspection-suggestions" role="listbox" aria-label="Driver name suggestions">
+                    {driverSuggestionsLoading ? (
+                      <p className="fleet-inspection-suggestions__state">Searching employees...</p>
+                    ) : null}
+                    {!driverSuggestionsLoading && driverSuggestionsError ? (
+                      <p className="fleet-inspection-suggestions__state">{driverSuggestionsError}</p>
+                    ) : null}
+                    {!driverSuggestionsLoading && !driverSuggestionsError && !driverSuggestions.length && driverName.trim().length >= 2 ? (
+                      <p className="fleet-inspection-suggestions__state">No matching employee found yet.</p>
+                    ) : null}
+                    {!driverSuggestionsLoading && !driverSuggestionsError
+                      ? driverSuggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.id}
+                            type="button"
+                            className="fleet-inspection-suggestion"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setDriverName(suggestion.label);
+                              setDriverSelection(suggestion);
+                              setDriverConfirmed(false);
+                              setDriverSuggestionsVisible(false);
+                              setDriverSuggestions([]);
+                              setDriverSuggestionsError('');
+                            }}
+                          >
+                            <span>{suggestion.label}</span>
+                            {suggestion.subtitle ? (
+                              <small>{suggestion.subtitle}</small>
+                            ) : null}
+                          </button>
+                        ))
+                      : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="fleet-inspection-modal__actions">
+                <button
+                  type="button"
+                  className="fleet-inspection-button fleet-inspection-button--neutral"
+                  onClick={startAnotherVehicle}
+                >
+                  Change vehicle
+                </button>
+                <button
+                  type="button"
+                  className="fleet-inspection-button fleet-inspection-button--scan"
+                  onClick={handleConfirmDriverName}
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {pushModalOpen && !inspectionStarted ? (
+          <div className="fleet-inspection-modal-backdrop">
+            <div className="fleet-inspection-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-push-modal-title">
+              <div className="fleet-inspection-modal__header">
+                <div>
+                  <p className="fleet-inspection-label">FleetCheck notifications</p>
+                  <h3 id="fleet-push-modal-title">Enable app notifications</h3>
+                  <p className="fleet-inspection-muted">
+                    Select your name once on this phone. We will use it for internal inspection reminders.
+                  </p>
+                </div>
+              </div>
+
+              <div className="fleet-inspection-field">
+                <label htmlFor="fleet-push-employee">Employee name</label>
+                <input
+                  id="fleet-push-employee"
+                  ref={pushInputRef}
+                  className="fleet-inspection-input fleet-inspection-input--large"
+                  value={pushEmployeeQuery}
+                  onChange={(event) => {
+                    setPushEmployeeQuery(event.target.value);
+                    setPushEmployeeSelection(null);
+                    setPushSuggestionsVisible(true);
+                  }}
+                  onFocus={() => setPushSuggestionsVisible(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setPushSuggestionsVisible(false), 120);
+                  }}
+                  placeholder="Please start typing your name"
+                  autoComplete="off"
+                />
+                {pushSuggestionsVisible && (pushSuggestionsLoading || pushSuggestions.length || pushSuggestionsError) ? (
+                  <div className="fleet-inspection-suggestions" role="listbox" aria-label="Notification employee suggestions">
+                    {pushSuggestionsLoading ? (
+                      <p className="fleet-inspection-suggestions__state">Searching employees...</p>
+                    ) : null}
+                    {!pushSuggestionsLoading && pushSuggestionsError ? (
+                      <p className="fleet-inspection-suggestions__state">{pushSuggestionsError}</p>
+                    ) : null}
+                    {!pushSuggestionsLoading && !pushSuggestionsError && !pushSuggestions.length && pushEmployeeQuery.trim().length >= 2 ? (
+                      <p className="fleet-inspection-suggestions__state">No matching employee found yet.</p>
+                    ) : null}
+                    {!pushSuggestionsLoading && !pushSuggestionsError
+                      ? pushSuggestions.map((suggestion) => (
+                          <button
+                            key={`push-${suggestion.id}`}
+                            type="button"
+                            className="fleet-inspection-suggestion"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setPushEmployeeQuery(suggestion.label);
+                              setPushEmployeeSelection(suggestion);
+                              setPushSuggestionsVisible(false);
+                              setPushSuggestions([]);
+                              setPushSuggestionsError('');
+                            }}
+                          >
+                            <span>{suggestion.label}</span>
+                            {suggestion.subtitle ? (
+                              <small>{suggestion.subtitle}</small>
+                            ) : null}
+                          </button>
+                        ))
+                      : null}
+                  </div>
+                ) : null}
+              </div>
+
+              {pushEmployeeSelection ? (
+                <div className="fleet-inspection-driver-summary">
+                  <div>
+                    <span className="fleet-inspection-label">Selected employee</span>
+                    <strong>{pushEmployeeSelection.label}</strong>
+                    {pushEmployeeSelection.subtitle ? (
+                      <small className="fleet-inspection-muted">{pushEmployeeSelection.subtitle}</small>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {pushError ? (
+                <div className="fleet-inspection-alert fleet-inspection-alert--error">{pushError}</div>
+              ) : null}
+
+              <div className="fleet-inspection-modal__actions">
+                <button
+                  type="button"
+                  className="fleet-inspection-button fleet-inspection-button--neutral"
+                  onClick={() => {
+                    setPushModalOpen(false);
+                    setPushSuggestionsVisible(false);
+                    setPushError('');
+                  }}
+                  disabled={pushBusy}
+                >
+                  Cancel
+                </button>
+                {pushEnabled ? (
+                  <button
+                    type="button"
+                    className="fleet-inspection-button fleet-inspection-button--neutral"
+                    onClick={() => void handleDisablePushNotifications()}
+                    disabled={pushBusy}
+                  >
+                    {pushBusy ? 'Turning off...' : 'Turn off on this device'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="fleet-inspection-button fleet-inspection-button--scan"
+                  onClick={() => void handleEnablePushNotifications()}
+                  disabled={pushBusy || !pushEmployeeSelection?.kenjoUserId}
+                >
+                  {pushBusy ? 'Enabling...' : (pushEnabled ? 'Update device' : 'Enable notifications')}
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
       </div>
     </div>

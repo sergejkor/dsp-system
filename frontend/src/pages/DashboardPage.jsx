@@ -4,6 +4,7 @@ import { useAppSettings } from '../context/AppSettingsContext';
 import { useAuth } from '../context/AuthContext';
 import { getDashboardSummary } from '../services/dashboardApi.js';
 import { formatKpiValue, kpiLabel } from '../utils/analyticsKpiDisplay.js';
+import { formatPortalDate, formatPortalDateTime } from '../utils/portalLocale.js';
 
 /** Preferred order for executive KPIs from analytics overview (non-insurance first). */
 const OVERVIEW_KPI_ORDER = [
@@ -30,8 +31,7 @@ const DAMAGES_KPI_KEYS = [
 
 function formatTs(iso) {
   if (!iso) return '—';
-  const s = String(iso);
-  return s.length >= 16 ? s.slice(0, 16).replace('T', ' ') : s;
+  return formatPortalDateTime(iso) || '—';
 }
 
 function formatDateNormal(value) {
@@ -40,16 +40,10 @@ function formatDateNormal(value) {
   if (raw.includes('T') || /\d{2}:\d{2}/.test(raw)) {
     const dt = new Date(raw);
     if (!Number.isNaN(dt.getTime())) {
-      const y = dt.getFullYear();
-      const m = String(dt.getMonth() + 1).padStart(2, '0');
-      const d = String(dt.getDate()).padStart(2, '0');
-      return `${d}.${m}.${y}`;
+      return formatPortalDate(dt) || raw;
     }
   }
-  const s = raw.slice(0, 10);
-  const [y, m, d] = s.split('-');
-  if (!y || !m || !d) return raw;
-  return `${d}.${m}.${y}`;
+  return formatPortalDate(raw.slice(0, 10)) || raw;
 }
 
 function formatDateRange(fromValue, toValue) {

@@ -54,6 +54,9 @@ router.get('/operators', async (req, res) => {
         if (!label) return null;
         return {
           id: String(row.employee_id || row.id || row.kenjo_user_id || label),
+          employeeId: String(row.id || row.employee_id || row.kenjo_user_id || label),
+          employeeRef: String(row.employee_id || row.transporter_id || row.id || label),
+          kenjoUserId: String(row.kenjo_user_id || '').trim() || null,
           label,
           subtitle: String(row.email || '').trim() || null,
         };

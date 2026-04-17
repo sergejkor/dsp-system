@@ -11,6 +11,7 @@ import {
 import { getFinesEmployees } from '../services/finesApi.js';
 import { getCars } from '../services/carsApi.js';
 import { getSettingsByGroup, updateSettingsGroup } from '../services/settingsApi.js';
+import { formatPortalDate, formatPortalDateTime } from '../utils/portalLocale.js';
 import './fleetInspections.css';
 
 const RESULT_OPTIONS = [
@@ -70,14 +71,14 @@ function formatDate(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString();
+  return formatPortalDate(date) || value;
 }
 
 function formatDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  return formatPortalDateTime(date) || value;
 }
 
 export default function FleetInspectionsPage() {

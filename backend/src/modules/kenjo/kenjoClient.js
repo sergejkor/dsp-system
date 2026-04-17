@@ -433,6 +433,7 @@ export async function getKenjoEmployeeByIdReadable(employeeId) {
       workMobile: pickFirst(workEmp?.workMobile, workEmp?.work?.workMobile),
       workPhone: pickFirst(workEmp?.workPhone, workEmp?.work?.workPhone),
       weeklyHours: workEmp?.weeklyHours ?? workEmp?.work?.weeklyHours ?? '',
+      weeklyDays: workEmp?.weeklyDays ?? workEmp?.work?.weeklyDays ?? '',
       startDate: pickFirst(workEmp?.startDate, workEmp?.work?.startDate),
       employeeNumber: pickFirst(workEmp?.employeeNumber, workEmp?.work?.employeeNumber),
       transportationId: pickFirst(

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   calculatePayroll,
@@ -47,6 +48,26 @@ function formatHours(num) {
   const n = Number(num);
   if (!Number.isFinite(n)) return '0.00 h';
   return `${n.toFixed(2)} h`;
+}
+
+function PayrollModalPortal({ children, backdrop = 'rgba(0,0,0,0.4)' }) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: backdrop,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
 }
 
 /** Prefer name matches at the top of the payslip import employee dropdown. */
@@ -1444,7 +1465,7 @@ export default function PayrollPage() {
         )}
 
       {showBonusBreakdown && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, width: 'min(920px, calc(100% - 2rem))', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
               <div>
@@ -1491,11 +1512,11 @@ export default function PayrollPage() {
               </tbody>
             </table>
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {bonusBreakdownRow && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, width: 'min(920px, calc(100% - 2rem))', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
               <div>
@@ -1576,7 +1597,7 @@ export default function PayrollPage() {
               </div>
             )}
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {result && result.rows && (
@@ -1826,7 +1847,7 @@ export default function PayrollPage() {
       )}
 
       {abzugModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, minWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ margin: '0 0 0.5rem' }}>Edit Abzug</h3>
             <p style={{ margin: '0 0 1rem', color: '#6b7280' }}>{abzugModal.name}</p>
@@ -1884,11 +1905,11 @@ export default function PayrollPage() {
               </button>
             </div>
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {bonusModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, minWidth: 360, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ margin: '0 0 0.5rem' }}>Edit Bonus</h3>
             <p style={{ margin: '0 0 1rem', color: '#6b7280' }}>{bonusModal.name}</p>
@@ -1922,11 +1943,11 @@ export default function PayrollPage() {
               </button>
             </div>
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {addRecordOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, minWidth: 380, maxWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ margin: '0 0 1rem' }}>{manualEditTarget ? 'Edit manual record' : 'Add record'}</h3>
             {addRecordLoading ? (
@@ -2055,11 +2076,11 @@ export default function PayrollPage() {
               </>
             )}
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {showActiveOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: '95vw', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ margin: '0 0 1rem' }}>Active drivers not in payroll</h3>
             <p style={{ margin: '0 0 1rem', color: '#6b7280', fontSize: '0.9rem' }}>
@@ -2195,11 +2216,11 @@ export default function PayrollPage() {
               </>
             )}
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {showAdvanceDialog && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, maxWidth: 520, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ margin: '0 0 1rem' }}>Add Advance</h3>
             {advanceError && <p className="error-text" style={{ margin: '0 0 0.5rem' }}>{advanceError}</p>}
@@ -2257,11 +2278,11 @@ export default function PayrollPage() {
               </button>
             </div>
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {payrollHistoryModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1rem', borderRadius: 12, width: 'calc(100vw - 24px)', maxWidth: 1680, maxHeight: '92vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
               <div>
@@ -2349,11 +2370,11 @@ export default function PayrollPage() {
               </table>
             </div>
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {payrollSavedNoticeOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal backdrop="rgba(0,0,0,0.35)">
           <div style={{ background: 'white', padding: '1.25rem', borderRadius: 12, width: '92vw', maxWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ margin: '0 0 0.5rem' }}>Payroll saved</h3>
             <p style={{ margin: 0, color: '#374151' }}>
@@ -2365,11 +2386,11 @@ export default function PayrollPage() {
               </button>
             </div>
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
 
       {showPayslipImport && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <PayrollModalPortal>
           <div style={{ background: 'white', padding: '1.25rem', borderRadius: 12, width: '92vw', maxWidth: 900, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ margin: '0 0 0.75rem' }}>Import salary payslips (PDF)</h3>
             <p style={{ margin: '0 0 0.75rem', color: '#6b7280' }}>
@@ -2555,7 +2576,7 @@ export default function PayrollPage() {
               </button>
             </div>
           </div>
-        </div>
+        </PayrollModalPortal>
       )}
     </section>
   );

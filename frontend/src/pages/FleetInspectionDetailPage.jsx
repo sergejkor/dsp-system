@@ -6,11 +6,12 @@ import {
   getInspectionPhotoBlob,
 } from '../services/internalInspectionApi.js';
 import { getOverlaySet, REQUIRED_SHOT_IDS } from '../services/overlayRegistry.js';
+import { formatPortalDateTime } from '../utils/portalLocale.js';
 import './fleetInspections.css';
 
 function resultTone(result) {
   if (result === 'possible_new_damage') return 'warning';
-  if (result === 'no_new_damage') return 'success';
+  if (result === 'baseline_created' || result === 'no_new_damage') return 'success';
   return 'neutral';
 }
 
@@ -49,7 +50,97 @@ function formatDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  return formatPortalDateTime(date) || value;
+}
+
+function formatShotDisplayLabel(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'Unknown shot';
+  return normalized
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function loadImageElementFromBlob(blob) {
+  return new Promise((resolve, reject) => {
+    const sourceUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      resolve({
+        image,
+        cleanup: () => URL.revokeObjectURL(sourceUrl),
+      });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(sourceUrl);
+      reject(new Error('Failed to decode image'));
+    };
+    image.src = sourceUrl;
+  });
+}
+
+async function buildLandscapePhotoUrl(blob) {
+  if (!blob || typeof document === 'undefined') return '';
+
+  let cleanupSource = () => {};
+
+  try {
+    let source = null;
+    let width = 0;
+    let height = 0;
+
+    if (typeof window !== 'undefined' && typeof window.createImageBitmap === 'function') {
+      const bitmap = await window.createImageBitmap(blob);
+      source = bitmap;
+      width = bitmap.width;
+      height = bitmap.height;
+      cleanupSource = () => bitmap.close?.();
+    } else {
+      const loaded = await loadImageElementFromBlob(blob);
+      source = loaded.image;
+      width = loaded.image.naturalWidth || loaded.image.width || 0;
+      height = loaded.image.naturalHeight || loaded.image.height || 0;
+      cleanupSource = loaded.cleanup;
+    }
+
+    if (!(width > 0) || !(height > 0)) {
+      throw new Error('Invalid image size');
+    }
+
+    if (width >= height) {
+      return URL.createObjectURL(blob);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = height;
+    canvas.height = width;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Canvas context unavailable');
+    }
+
+    context.translate(canvas.width / 2, canvas.height / 2);
+    context.rotate(Math.PI / 2);
+    context.drawImage(source, -width / 2, -height / 2, width, height);
+
+    const rotatedBlob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) => {
+          if (result) resolve(result);
+          else reject(new Error('Failed to export rotated image'));
+        },
+        blob.type || 'image/jpeg',
+        0.92,
+      );
+    });
+
+    return URL.createObjectURL(rotatedBlob);
+  } catch (_error) {
+    return URL.createObjectURL(blob);
+  } finally {
+    cleanupSource();
+  }
 }
 
 export default function FleetInspectionDetailPage() {
@@ -76,6 +167,11 @@ export default function FleetInspectionDetailPage() {
       return REQUIRED_SHOT_IDS.map((shotId) => ({ id: shotId, label: shotId }));
     }
   }, [inspection]);
+
+  const shotLabelsById = useMemo(
+    () => Object.fromEntries(orderedShots.map((shot) => [shot.id, shot.label])),
+    [orderedShots],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +205,7 @@ export default function FleetInspectionDetailPage() {
       inspection.photos.map(async (photo) => {
         try {
           const blob = await getInspectionPhotoBlob(inspection.id, photo.id);
-          const objectUrl = URL.createObjectURL(blob);
+          const objectUrl = await buildLandscapePhotoUrl(blob);
           createdUrls.push(objectUrl);
           return [photo.id, objectUrl];
         } catch (_error) {
@@ -181,19 +277,13 @@ export default function FleetInspectionDetailPage() {
             </span>
             <button
               type="button"
-              className="fleet-inspection-button"
+              className="btn-secondary btn-danger"
               onClick={handleDeleteInspection}
               disabled={deleting}
-              style={{
-                background: '#fef2f2',
-                color: '#b91c1c',
-                boxShadow: 'none',
-                border: '1px solid rgba(220, 38, 38, 0.18)',
-              }}
             >
               {deleting ? 'Deleting...' : 'Delete report'}
             </button>
-            <Link to="/fleet-inspections" className="fleet-inspection-button fleet-inspection-button--secondary">
+            <Link to="/fleet-inspections" className="btn-primary">
               Back to list
             </Link>
           </div>
@@ -226,6 +316,38 @@ export default function FleetInspectionDetailPage() {
       </div>
 
       <div className="fleet-inspection-card">
+        <div className="fleet-inspection-toolbar" style={{ justifyContent: 'space-between' }}>
+          <p className="fleet-inspection-label" style={{ margin: 0 }}>Captured photos</p>
+          {photoLoading ? <span className="fleet-inspection-muted">Loading photo previews...</span> : null}
+        </div>
+        <div className="fleet-inspection-photo-grid" style={{ marginTop: '1rem' }}>
+          {orderedShots.map((shot) => {
+            const photo = inspection.photos?.find((entry) => entry.shot_type === shot.id);
+            const finding = findingsByShot[shot.id];
+            return (
+              <article key={shot.id} className="fleet-inspection-photo-card">
+                <div className="fleet-inspection-photo-card__media">
+                  {photo && photoUrls[photo.id] ? (
+                    <img src={photoUrls[photo.id]} alt={shot.label} className="fleet-inspection-photo-card__image" />
+                  ) : (
+                    <div className="fleet-inspection-photo-card__placeholder">
+                      {photo ? 'Loading...' : 'No photo'}
+                    </div>
+                  )}
+                </div>
+                <div className="fleet-inspection-photo-card__body">
+                  <h4>{shot.label}</h4>
+                  <div className="fleet-inspection-muted">
+                    {finding ? `Difference ${Number(finding.difference_ratio || 0).toFixed(4)}` : 'No new damage flagged'}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="fleet-inspection-card">
         <p className="fleet-inspection-label">Comparison summary</p>
         <div className="fleet-inspection-result-list">
           <div className="fleet-inspection-result-list__item">
@@ -239,6 +361,23 @@ export default function FleetInspectionDetailPage() {
           </div>
         </div>
       </div>
+
+      {inspection.findings?.length ? (
+        <div className="fleet-inspection-card">
+          <p className="fleet-inspection-label">Detected changes</p>
+          <div className="fleet-inspection-change-grid">
+            {inspection.findings.map((finding) => (
+              <article key={finding.id} className="fleet-inspection-change-card">
+                <strong>{shotLabelsById[finding.shot_type] || formatShotDisplayLabel(finding.shot_type)}</strong>
+                <div className="fleet-inspection-change-card__metrics">
+                  <span>Ratio {Number(finding.difference_ratio || 0).toFixed(4)}</span>
+                  <span>Pixels {finding.changed_pixels || 0}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {inspection.task ? (
         <div className="fleet-inspection-card">
@@ -288,52 +427,6 @@ export default function FleetInspectionDetailPage() {
           ) : null}
         </div>
       ) : null}
-
-      {inspection.findings?.length ? (
-        <div className="fleet-inspection-card">
-          <p className="fleet-inspection-label">Detected changes</p>
-          <div className="fleet-inspection-result-list">
-            {inspection.findings.map((finding) => (
-              <div key={finding.id} className="fleet-inspection-result-list__item">
-                <strong>{finding.shot_type}</strong>
-                <div className="fleet-inspection-muted">
-                  Difference ratio: {Number(finding.difference_ratio || 0).toFixed(4)} | Changed pixels: {finding.changed_pixels || 0}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="fleet-inspection-card">
-        <div className="fleet-inspection-toolbar" style={{ justifyContent: 'space-between' }}>
-          <p className="fleet-inspection-label" style={{ margin: 0 }}>Captured photos</p>
-          {photoLoading ? <span className="fleet-inspection-muted">Loading photo previews...</span> : null}
-        </div>
-        <div className="fleet-inspection-photo-grid" style={{ marginTop: '1rem' }}>
-          {orderedShots.map((shot) => {
-            const photo = inspection.photos?.find((entry) => entry.shot_type === shot.id);
-            const finding = findingsByShot[shot.id];
-            return (
-              <article key={shot.id} className="fleet-inspection-photo-card">
-                {photo && photoUrls[photo.id] ? (
-                  <img src={photoUrls[photo.id]} alt={shot.label} />
-                ) : (
-                  <div className="fleet-inspection-photo-card__placeholder">
-                    {photo ? 'Loading...' : 'No photo'}
-                  </div>
-                )}
-                <div className="fleet-inspection-photo-card__body">
-                  <h4>{shot.label}</h4>
-                  <div className="fleet-inspection-muted">
-                    {finding ? `Difference ${Number(finding.difference_ratio || 0).toFixed(4)}` : 'No new damage flagged'}
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </div>
 
       {inspection.events?.length ? (
         <div className="fleet-inspection-card">
@@ -395,7 +488,8 @@ export default function FleetInspectionDetailPage() {
 
         body.dark .fleet-inspection-list__item,
         body.dark .fleet-inspection-photo-card,
-        body.dark .fleet-inspection-result-list__item {
+        body.dark .fleet-inspection-result-list__item,
+        body.dark .fleet-inspection-change-card {
           background: rgba(15, 23, 42, 0.74);
           border-color: rgba(148, 163, 184, 0.18);
         }
@@ -405,7 +499,7 @@ export default function FleetInspectionDetailPage() {
           color: #dbeafe;
         }
 
-        body.dark .fleet-inspection-photo-card .fleet-inspection-photo-card__placeholder {
+        body.dark .fleet-inspection-photo-card__placeholder {
           background: rgba(30, 41, 59, 0.96);
           color: #cbd5e1;
         }

@@ -76,6 +76,50 @@ function resolvePublicHostKind() {
   return null;
 }
 
+function shouldEnableFleetPwaShell() {
+  if (typeof window === 'undefined') return false;
+  if (resolvePublicHostKind() === 'fleet') return true;
+  return String(window.location.pathname || '').toLowerCase().startsWith('/fleet-check');
+}
+
+function ensureFleetManifestLink() {
+  if (typeof document === 'undefined' || !shouldEnableFleetPwaShell()) return;
+
+  let manifestLink = document.querySelector('link[rel="manifest"]');
+  if (!manifestLink) {
+    manifestLink = document.createElement('link');
+    manifestLink.setAttribute('rel', 'manifest');
+    document.head.appendChild(manifestLink);
+  }
+  manifestLink.setAttribute('href', '/manifest.webmanifest');
+
+  let themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (!themeMeta) {
+    themeMeta = document.createElement('meta');
+    themeMeta.setAttribute('name', 'theme-color');
+    document.head.appendChild(themeMeta);
+  }
+  themeMeta.setAttribute('content', '#1d4ed8');
+}
+
+function registerFleetServiceWorker() {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !shouldEnableFleetPwaShell()) return;
+  ensureFleetManifestLink();
+
+  const register = () => {
+    navigator.serviceWorker.register('/fleetcheck-sw.js').catch(() => {});
+  };
+
+  if (document.readyState === 'complete') {
+    register();
+    return;
+  }
+
+  window.addEventListener('load', register, { once: true });
+}
+
+registerFleetServiceWorker();
+
 function AppRoutes() {
   const publicHostKind = resolvePublicHostKind();
   if (publicHostKind === 'personal') {

@@ -1,11 +1,57 @@
 import { useEffect, useRef, useState } from 'react';
 
+async function requestInspectionCameraStream() {
+  const attempts = [
+    {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        aspectRatio: { ideal: 16 / 9 },
+      },
+      audio: false,
+    },
+    {
+      video: {
+        facingMode: 'environment',
+      },
+      audio: false,
+    },
+    {
+      video: true,
+      audio: false,
+    },
+  ];
+
+  let lastError = null;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('Camera access is unavailable in this browser.');
+}
+
+function prepareVideoElement(video) {
+  if (!video) return;
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute('muted', 'true');
+  video.setAttribute('autoplay', 'true');
+  video.setAttribute('playsinline', 'true');
+  video.setAttribute('webkit-playsinline', 'true');
+}
+
 export default function InspectionCamera({
   shot,
   overlayUrl,
   overlayScale = 1,
   currentPhoto,
   onCapture,
+  onNext,
   onRetake,
   disabled = false,
   stepNumber = 1,
@@ -13,6 +59,7 @@ export default function InspectionCamera({
 }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const audioContextRef = useRef(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [isLandscape, setIsLandscape] = useState(() => {
@@ -42,15 +89,9 @@ export default function InspectionCamera({
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            aspectRatio: { ideal: 16 / 9 },
-          },
-          audio: false,
-        });
+        setCameraReady(false);
+        setCameraError('');
+        const stream = await requestInspectionCameraStream();
 
         if (cancelled) {
           stream.getTracks().forEach((track) => track.stop());
@@ -59,12 +100,17 @@ export default function InspectionCamera({
 
         streamRef.current = stream;
         if (videoRef.current) {
+          prepareVideoElement(videoRef.current);
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
         }
         setCameraReady(true);
-      } catch (_error) {
-        setCameraError('Camera access is unavailable in this browser.');
+      } catch (error) {
+        const message =
+          error?.name === 'NotAllowedError'
+            ? 'Camera access was blocked. Please allow camera access in Safari settings.'
+            : 'Camera access is unavailable in this browser.';
+        setCameraError(message);
       }
     }
 
@@ -77,9 +123,73 @@ export default function InspectionCamera({
     };
   }, []);
 
+  useEffect(() => {
+    if (currentPhoto?.previewUrl) return;
+    if (!videoRef.current || !streamRef.current) return;
+
+    const video = videoRef.current;
+    prepareVideoElement(video);
+    if (video.srcObject !== streamRef.current) {
+      video.srcObject = streamRef.current;
+    }
+    void video.play().catch(() => {});
+  }, [currentPhoto?.previewUrl, shot?.id]);
+
   async function stageBlob(blob) {
     if (!blob) return;
     await onCapture(blob);
+  }
+
+  function playShutterSound() {
+    if (typeof window === 'undefined') return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    try {
+      const audioContext = audioContextRef.current || new AudioContextClass();
+      audioContextRef.current = audioContext;
+      if (audioContext.state === 'suspended') {
+        void audioContext.resume();
+      }
+
+      const startAt = audioContext.currentTime;
+      const buffer = audioContext.createBuffer(1, Math.floor(audioContext.sampleRate * 0.08), audioContext.sampleRate);
+      const channelData = buffer.getChannelData(0);
+      for (let index = 0; index < channelData.length; index += 1) {
+        channelData[index] = (Math.random() * 2 - 1) * (1 - index / channelData.length);
+      }
+
+      const noiseSource = audioContext.createBufferSource();
+      noiseSource.buffer = buffer;
+      const noiseFilter = audioContext.createBiquadFilter();
+      noiseFilter.type = 'highpass';
+      noiseFilter.frequency.setValueAtTime(1200, startAt);
+      const noiseGain = audioContext.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, startAt);
+      noiseGain.gain.exponentialRampToValueAtTime(0.22, startAt + 0.01);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.075);
+      noiseSource.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(audioContext.destination);
+
+      const tone = audioContext.createOscillator();
+      tone.type = 'triangle';
+      tone.frequency.setValueAtTime(880, startAt);
+      tone.frequency.exponentialRampToValueAtTime(240, startAt + 0.09);
+      const toneGain = audioContext.createGain();
+      toneGain.gain.setValueAtTime(0.0001, startAt);
+      toneGain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.012);
+      toneGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.09);
+      tone.connect(toneGain);
+      toneGain.connect(audioContext.destination);
+
+      noiseSource.start(startAt);
+      noiseSource.stop(startAt + 0.08);
+      tone.start(startAt);
+      tone.stop(startAt + 0.1);
+    } catch (_error) {
+      // Shutter sound is a UX enhancement only; ignore audio failures silently.
+    }
   }
 
   async function captureFromVideo() {
@@ -92,7 +202,10 @@ export default function InspectionCamera({
     if (!context) return;
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
-    if (blob) await stageBlob(blob);
+    if (blob) {
+      playShutterSound();
+      await stageBlob(blob);
+    }
   }
 
   return (
@@ -111,6 +224,7 @@ export default function InspectionCamera({
               className="fleet-inspection-camera__media"
               muted
               playsInline
+              autoPlay
             />
             {overlayUrl ? (
               <div className="fleet-inspection-camera__overlay-shell">
@@ -147,24 +261,25 @@ export default function InspectionCamera({
 
         <div className="fleet-inspection-camera__controls">
           {currentPhoto?.previewUrl ? (
-            <button
-              type="button"
-              className="fleet-inspection-camera__shutter fleet-inspection-camera__shutter--retake"
-              onClick={onRetake}
-              disabled={disabled}
-              aria-label="Retake photo"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M8 7H4v4M4.6 11A8 8 0 1 0 8 7"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
+            <div className="fleet-inspection-camera__review-actions">
+              <button
+                type="button"
+                className="fleet-inspection-camera__review-btn fleet-inspection-camera__review-btn--next"
+                onClick={onNext}
+                disabled={disabled}
+              >
+                Next
+              </button>
+              <button
+                type="button"
+                className="fleet-inspection-camera__review-btn fleet-inspection-camera__review-btn--retake"
+                onClick={onRetake}
+                disabled={disabled}
+                aria-label="Retake photo"
+              >
+                Retake
+              </button>
+            </div>
           ) : (
             <button
               type="button"

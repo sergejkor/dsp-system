@@ -1,3 +1,5 @@
+import { resolvePortalLocale } from './portalLocale.js';
+
 /**
  * Shared KPI formatting & i18n keys for Analytics + Dashboard.
  * @param {unknown} value
@@ -7,8 +9,17 @@ export function formatKpiValue(value, format) {
   if (value == null) return '—';
   const n = Number(value);
   if (format === 'percent') return `${Number.isNaN(n) ? 0 : n}%`;
-  if (format === 'currency') return `${Number.isNaN(n) ? 0 : n.toFixed(2).replace('.', ',')} €`;
-  return Number.isNaN(n) ? String(value) : n.toLocaleString();
+  if (format === 'currency') {
+    return Number.isNaN(n)
+      ? '0 €'
+      : new Intl.NumberFormat(resolvePortalLocale(), {
+          style: 'currency',
+          currency: 'EUR',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(n);
+  }
+  return Number.isNaN(n) ? String(value) : n.toLocaleString(resolvePortalLocale());
 }
 
 /** Maps API `kpi.key` to `analytics.kpis.*` translation suffix */

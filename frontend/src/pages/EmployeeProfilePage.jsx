@@ -45,6 +45,7 @@ import {
   buildEmployeeDocumentExactNameOptions,
   buildEmployeeDocumentTypeTemplateContext,
 } from '../utils/employeeDocumentTypeSettings';
+import { formatPortalDate, formatPortalDateTime, formatPortalNumber, resolvePortalLocale } from '../utils/portalLocale.js';
 
 /** KPI rating: <50 POOR, <70 FAIR, <85 GREAT, <93 FANTASTIC, >=93 FANTASTIC PLUS */
 function getKpiRatingLabel(kpi) {
@@ -114,7 +115,7 @@ function formatHours(value) {
 
 function formatCurrency(value) {
   const num = Number(value) || 0;
-  return `${num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  return `${formatPortalNumber(num, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
 function areDisplayedHourValuesEqual(left, right) {
@@ -579,7 +580,7 @@ function roundDays(value) {
 
 function formatDaysValue(value) {
   const rounded = roundDays(value);
-  return rounded.toLocaleString('de-DE', {
+  return formatPortalNumber(rounded, {
     minimumFractionDigits: Number.isInteger(rounded) ? 0 : 2,
     maximumFractionDigits: 2,
   });
@@ -1349,7 +1350,9 @@ export default function EmployeeProfilePage() {
           uploadPartialSuccess: (errorMessage) =>
             `Der Vertrag wurde gespeichert, aber das Dokument konnte nicht automatisch unter Dokumenttyp "Vertrag" abgelegt werden.\n${errorMessage}`,
           kenjoContractSyncPartialSuccess: (errorMessage) =>
-            `Der Vertrag wurde lokal gespeichert, aber das Vertragsende konnte nicht in Kenjo aktualisiert werden.\n${errorMessage}`,
+            `Der Vertrag wurde lokal gespeichert, aber das Vertragsende konnte nicht in Kenjo aktualisiert werden.\n${errorMessage}\nBei unbefristeten Vertraegen aktualisieren Sie das Vertragsende bitte manuell im Kenjo-Portal.`,
+          kenjoContractSyncPermanentManualReason:
+            'Kenjo unterstuetzt das automatische Entfernen des Vertragsendes fuer unbefristete Vertraege nicht.',
           saveErrorTitle: 'Save failed',
           deleteErrorTitle: 'Delete failed',
         }
@@ -1420,7 +1423,9 @@ export default function EmployeeProfilePage() {
           uploadPartialSuccess: (errorMessage) =>
             `The contract was saved, but the document could not be added automatically under document type "Vertrag".\n${errorMessage}`,
           kenjoContractSyncPartialSuccess: (errorMessage) =>
-            `The contract was saved locally, but the contract end could not be updated in Kenjo.\n${errorMessage}`,
+            `The contract was saved locally, but the contract end could not be updated in Kenjo.\n${errorMessage}\nFor permanent contracts, please update the contract end manually in the Kenjo portal.`,
+          kenjoContractSyncPermanentManualReason:
+            'Kenjo does not support removing the contract end automatically for permanent contracts.',
           saveErrorTitle: 'Save failed',
           deleteErrorTitle: 'Delete failed',
         };
@@ -2389,9 +2394,17 @@ export default function EmployeeProfilePage() {
       const currentKenjoContractEnd = normalizeContractDate(work?.contractEnd);
       const nextKenjoContractEnd =
         contractDraft.type === 'unlimited' ? null : normalizeContractDate(contractDraft.endDate);
+      const isEditingCurrentContract =
+        Boolean(editingContractTarget?.isCurrentContract) ||
+        Boolean(editingContractTarget?.canSetAsPermanent);
+      const requiresKenjoPermanentManualFollowUp =
+        Boolean(kenjoEmployeeId) &&
+        Boolean(currentKenjoContractEnd) &&
+        contractDraft.type === 'unlimited' &&
+        isEditingCurrentContract;
       const shouldSyncKenjoContractEnd =
         Boolean(kenjoEmployeeId) &&
-        Boolean(editingContractTarget?.isCurrentContract) &&
+        isEditingCurrentContract &&
         (nextKenjoContractEnd == null || !currentKenjoContractEnd || nextKenjoContractEnd > currentKenjoContractEnd);
       if (shouldSyncKenjoContractEnd) {
         try {
@@ -2481,7 +2494,11 @@ export default function EmployeeProfilePage() {
         setLocalEmployee(refreshedEmployee);
       }
       closeContractForm();
-      if (contractDocumentUploadError || contractSignedSaveError || contractKenjoSyncError) {
+      const contractKenjoManualFollowUpMessage =
+        !contractKenjoSyncError && requiresKenjoPermanentManualFollowUp
+          ? contractUi.kenjoContractSyncPermanentManualReason
+          : '';
+      if (contractDocumentUploadError || contractSignedSaveError || contractKenjoSyncError || contractKenjoManualFollowUpMessage) {
         const contractSignedPartialMessage = language === 'de'
           ? `Der Vertrag wurde gespeichert, aber "Contract signed" konnte nicht automatisch gespeichert werden.\n${contractSignedSaveError}`
           : `The contract was saved, but Contract signed could not be saved automatically.\n${contractSignedSaveError}`;
@@ -2491,6 +2508,8 @@ export default function EmployeeProfilePage() {
         }
         if (contractKenjoSyncError) {
           partialMessages.push(contractUi.kenjoContractSyncPartialSuccess(contractKenjoSyncError));
+        } else if (contractKenjoManualFollowUpMessage) {
+          partialMessages.push(contractUi.kenjoContractSyncPartialSuccess(contractKenjoManualFollowUpMessage));
         }
         if (contractSignedSaveError) {
           partialMessages.push(contractSignedPartialMessage);
@@ -3403,27 +3422,6 @@ export default function EmployeeProfilePage() {
                     Add Rescue
                   </button>
                 )}
-              {activeTab === 'performance' && kenjoEmployeeId && (
-                  <button type="button" className="btn-secondary employee-profile-toolbar-btn" onClick={openDaPerformance}>
-                    DA Performance
-                  </button>
-                )}
-              {activeTab === 'performance' && kenjoEmployeeId && (
-                  <button
-                    type="button"
-                    className="btn-secondary employee-profile-toolbar-btn"
-                    onClick={openKpiCommentFromMain}
-                    disabled={kpiLoading}
-                  >
-                    Add comment
-                  </button>
-                )}
-              {activeTab === 'performance' && kenjoEmployeeId && (
-                <>
-                  <Link to={`/pave/new?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary employee-profile-toolbar-btn">Create PAVE Session</Link>
-                  <Link to={`/pave?driver_id=${encodeURIComponent(kenjoEmployeeId)}`} className="btn-secondary employee-profile-toolbar-btn">View PAVE History</Link>
-                </>
-              )}
               {activeTab === 'employment' && kenjoEmployeeId && isActive && (
                 <button type="button" className="btn-secondary btn-danger" onClick={openDeactivateConfirm}>
                   Deactivate employee

@@ -20,18 +20,27 @@ function normalizeApiBase(value) {
   return /^https?:\/\//i.test(normalized) ? normalized : '';
 }
 
-function readRuntimeApiBase() {
+function isFleetcheckHost(hostname) {
+  const host = String(hostname || '').trim().toLowerCase();
+  return host.startsWith('fleetcheck.') || host.startsWith('fleet-check.');
+}
+
+function readRuntimeApiBase(hostname) {
   if (typeof window === 'undefined') return '';
   try {
     const params = new URLSearchParams(window.location.search || '');
     const fromQuery = normalizeApiBase(params.get('apiBase') || params.get('backendUrl') || '');
     if (fromQuery) {
-      window.localStorage?.setItem('fleetcheck_api_base', fromQuery);
+      if (isFleetcheckHost(hostname)) {
+        window.localStorage?.setItem('fleetcheck_api_base', fromQuery);
+      }
       return fromQuery;
     }
-    const fromStorage = normalizeApiBase(window.localStorage?.getItem('fleetcheck_api_base') || '');
-    if (fromStorage) {
-      return fromStorage;
+    if (isFleetcheckHost(hostname)) {
+      const fromStorage = normalizeApiBase(window.localStorage?.getItem('fleetcheck_api_base') || '');
+      if (fromStorage) {
+        return fromStorage;
+      }
     }
   } catch (_error) {}
   return '';
@@ -45,14 +54,14 @@ function resolveApiBase() {
     if (isLocalLikeHost(host)) {
       return 'http://127.0.0.1:3001';
     }
-    const runtimeApiBase = readRuntimeApiBase();
+    const runtimeApiBase = readRuntimeApiBase(host);
     if (runtimeApiBase) {
       return runtimeApiBase;
     }
     if (envBase) {
       return envBase;
     }
-    if (host.startsWith('fleetcheck.') || host.startsWith('fleet-check.')) {
+    if (isFleetcheckHost(host)) {
       return 'https://api.alfamile.com';
     }
   }
