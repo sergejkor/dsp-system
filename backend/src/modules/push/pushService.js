@@ -72,6 +72,54 @@ function isSubscriptionGone(error) {
   return statusCode === 404 || statusCode === 410;
 }
 
+function uniqueStrings(values = [], maxLen = 128) {
+  return [...new Set((Array.isArray(values) ? values : [values]).map((value) => stringOrNull(value, maxLen)).filter(Boolean))];
+}
+
+async function resolveIdentityAliases({ kenjoUserId, employeeRef }) {
+  const normalizedKenjoUserId = stringOrNull(kenjoUserId, 128);
+  const normalizedEmployeeRef = stringOrNull(employeeRef, 128);
+  const aliases = {
+    kenjoUserIds: uniqueStrings([normalizedKenjoUserId]),
+    employeeRefs: uniqueStrings([normalizedEmployeeRef]),
+  };
+
+  if (!normalizedKenjoUserId && !normalizedEmployeeRef) {
+    return aliases;
+  }
+
+  const res = await query(
+    `SELECT
+       ke.kenjo_user_id,
+       ke.employee_number,
+       ke.transporter_id
+     FROM kenjo_employees ke
+     WHERE ($1::text IS NOT NULL AND ke.kenjo_user_id = $1)
+        OR ($2::text IS NOT NULL AND (
+          ke.employee_number = $2
+          OR ke.transporter_id = $2
+          OR ke.kenjo_user_id = $2
+        ))
+     ORDER BY ke.is_active DESC, ke.id ASC
+     LIMIT 10`,
+    [normalizedKenjoUserId, normalizedEmployeeRef],
+  ).catch(() => ({ rows: [] }));
+
+  for (const row of res.rows || []) {
+    aliases.kenjoUserIds = uniqueStrings([
+      ...aliases.kenjoUserIds,
+      row?.kenjo_user_id,
+    ]);
+    aliases.employeeRefs = uniqueStrings([
+      ...aliases.employeeRefs,
+      row?.employee_number,
+      row?.transporter_id,
+    ]);
+  }
+
+  return aliases;
+}
+
 export class PushService {
   async ensureTables() {
     if (tablesReady) return;
@@ -216,20 +264,19 @@ export class PushService {
 
   async listActiveDevicesForEmployee({ kenjoUserId, employeeRef }) {
     await this.ensureTables();
-    const normalizedKenjoUserId = stringOrNull(kenjoUserId, 128);
-    const normalizedEmployeeRef = stringOrNull(employeeRef, 128);
-    if (!normalizedKenjoUserId && !normalizedEmployeeRef) return [];
+    const aliases = await resolveIdentityAliases({ kenjoUserId, employeeRef });
+    if (!aliases.kenjoUserIds.length && !aliases.employeeRefs.length) return [];
 
     const res = await query(
       `SELECT id, kenjo_user_id, employee_ref, display_name, endpoint, subscription_json, platform, app_kind
        FROM employee_push_devices
        WHERE disabled_at IS NULL
          AND (
-           ($1::text IS NOT NULL AND kenjo_user_id = $1)
-           OR ($2::text IS NOT NULL AND employee_ref = $2)
+           (COALESCE(array_length($1::text[], 1), 0) > 0 AND kenjo_user_id = ANY($1::text[]))
+           OR (COALESCE(array_length($2::text[], 1), 0) > 0 AND employee_ref = ANY($2::text[]))
          )
        ORDER BY updated_at DESC, id DESC`,
-      [normalizedKenjoUserId, normalizedEmployeeRef],
+      [aliases.kenjoUserIds, aliases.employeeRefs],
     ).catch(() => ({ rows: [] }));
 
     return res.rows || [];
