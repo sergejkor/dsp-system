@@ -19,8 +19,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'FleetCheck reminder';
   const options = {
     body: payload.body || 'Please complete your FleetCheck inspection.',
-    icon: payload.icon || '/favicon.png',
-    badge: payload.badge || '/favicon.png',
+    icon: payload.icon || '/favicon.png?v=20260417',
+    badge: payload.badge || '/favicon.png?v=20260417',
     tag: payload.tag || 'fleetcheck-reminder',
     requireInteraction: Boolean(payload.requireInteraction),
     renotify: Boolean(payload.renotify),

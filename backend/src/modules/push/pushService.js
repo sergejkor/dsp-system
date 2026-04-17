@@ -57,8 +57,8 @@ function normalizeNotificationPayload(payload = {}) {
   return {
     title: stringOrNull(payload.title, 160) || 'FleetCheck reminder',
     body: stringOrNull(payload.body, 1200) || 'Please complete your FleetCheck inspection.',
-    icon: stringOrNull(payload.icon, 2000) || '/favicon.png',
-    badge: stringOrNull(payload.badge, 2000) || '/favicon.png',
+    icon: stringOrNull(payload.icon, 2000) || '/favicon.png?v=20260417',
+    badge: stringOrNull(payload.badge, 2000) || '/favicon.png?v=20260417',
     tag: stringOrNull(payload.tag, 255) || 'fleetcheck-reminder',
     url: stringOrNull(payload.url, 2000) || '/',
     requireInteraction: Boolean(payload.requireInteraction),

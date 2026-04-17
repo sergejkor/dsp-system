@@ -37,18 +37,33 @@ const SHOT_ICON_ACCENTS = {
 
 const FLEETCHECK_PUSH_EMPLOYEE_KEY = 'fleetcheck_push_employee';
 
+function hasEmployeeIdentity(employee) {
+  return Boolean(
+    employee?.employeeRef
+    || employee?.employeeId
+    || employee?.kenjoUserId,
+  );
+}
+
+function normalizeEmployeeSelection(employee) {
+  if (!employee || typeof employee !== 'object') return null;
+  const normalized = {
+    id: String(employee.id || employee.employeeId || employee.employeeRef || employee.kenjoUserId || '').trim() || null,
+    employeeRef: String(employee.employeeRef || '').trim() || null,
+    employeeId: String(employee.employeeId || '').trim() || null,
+    kenjoUserId: String(employee.kenjoUserId || '').trim() || null,
+    label: String(employee.label || '').trim() || null,
+    subtitle: String(employee.subtitle || '').trim() || null,
+  };
+  if (!hasEmployeeIdentity(normalized) && !normalized.label) return null;
+  return normalized;
+}
+
 function readSavedPushEmployee() {
   if (typeof window === 'undefined') return null;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(FLEETCHECK_PUSH_EMPLOYEE_KEY) || 'null');
-    if (!parsed || typeof parsed !== 'object') return null;
-    return {
-      employeeRef: String(parsed.employeeRef || '').trim() || null,
-      employeeId: String(parsed.employeeId || '').trim() || null,
-      kenjoUserId: String(parsed.kenjoUserId || '').trim() || null,
-      label: String(parsed.label || '').trim() || null,
-      subtitle: String(parsed.subtitle || '').trim() || null,
-    };
+    return normalizeEmployeeSelection(parsed);
   } catch (_error) {
     return null;
   }
@@ -268,9 +283,9 @@ export default function FleetInspectionPublicPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [vinInput, setVinInput] = useState(() => normalizeVin(searchParams.get('vin')));
   const [vehicle, setVehicle] = useState(null);
-  const [driverName, setDriverName] = useState('');
-  const [driverSelection, setDriverSelection] = useState(null);
-  const [driverConfirmed, setDriverConfirmed] = useState(false);
+  const [driverName, setDriverName] = useState(() => savedPushEmployee?.label || '');
+  const [driverSelection, setDriverSelection] = useState(() => savedPushEmployee);
+  const [driverConfirmed, setDriverConfirmed] = useState(() => Boolean(savedPushEmployee?.label));
   const [driverModalOpen, setDriverModalOpen] = useState(false);
   const [driverSuggestions, setDriverSuggestions] = useState([]);
   const [driverSuggestionsLoading, setDriverSuggestionsLoading] = useState(false);
@@ -309,6 +324,7 @@ export default function FleetInspectionPublicPage() {
   const driverInputRef = useRef(null);
   const pushInputRef = useRef(null);
   const autoResolvedRef = useRef(false);
+  const initialSettingsPromptedRef = useRef(false);
   const capturedShotsRef = useRef({});
   const scannerCooldownUntilRef = useRef(0);
   const lastScannedVinRef = useRef('');
@@ -336,6 +352,8 @@ export default function FleetInspectionPublicPage() {
   const currentShot = shots[currentIndex] || null;
   const capturedCount = REQUIRED_SHOT_IDS.filter((shotId) => capturedShots[shotId]).length;
   const allCaptured = capturedCount === REQUIRED_SHOT_IDS.length;
+  const hasConfiguredDriver = hasEmployeeIdentity(driverSelection) && Boolean(driverName.trim());
+  const hasDraftDriver = hasEmployeeIdentity(pushEmployeeSelection);
 
   useEffect(() => {
     capturedShotsRef.current = capturedShots;
@@ -374,6 +392,12 @@ export default function FleetInspectionPublicPage() {
     }, 30);
     return () => window.clearTimeout(timerId);
   }, [pushModalOpen]);
+
+  useEffect(() => {
+    if (inspectionStarted || initialSettingsPromptedRef.current || hasConfiguredDriver) return;
+    initialSettingsPromptedRef.current = true;
+    openSettingsModal();
+  }, [hasConfiguredDriver, inspectionStarted]);
 
   useEffect(() => {
     let cancelled = false;
@@ -420,7 +444,7 @@ export default function FleetInspectionPublicPage() {
 
   useEffect(() => {
     const query = String(driverName || '').trim();
-    if (!vehicle || query.length < 2) {
+    if (!driverModalOpen || !vehicle || query.length < 2) {
       setDriverSuggestions([]);
       setDriverSuggestionsLoading(false);
       setDriverSuggestionsError('');
@@ -488,12 +512,6 @@ export default function FleetInspectionPublicPage() {
 
     return () => window.clearTimeout(timeoutId);
   }, [pushEmployeeQuery, pushModalOpen]);
-
-  useEffect(() => {
-    if (!driverSelection?.kenjoUserId) return;
-    setPushEmployeeSelection((current) => current || driverSelection);
-    setPushEmployeeQuery((current) => current || driverSelection.label || '');
-  }, [driverSelection]);
 
   useEffect(() => {
     const queryVin = normalizeVin(searchParams.get('vin'));
@@ -599,6 +617,57 @@ export default function FleetInspectionPublicPage() {
     });
   }
 
+  function commitSelectedDriver(employee, { persist = true } = {}) {
+    const normalized = normalizeEmployeeSelection(employee);
+    const nextLabel = String(normalized?.label || '').trim();
+    setDriverSelection(normalized);
+    setDriverName(nextLabel);
+    setDriverConfirmed(Boolean(nextLabel) && hasEmployeeIdentity(normalized));
+    if (persist) {
+      persistPushEmployee(normalized);
+    }
+    return normalized;
+  }
+
+  function closeSettingsModal({ preserveFeedback = false } = {}) {
+    setPushEmployeeSelection(driverSelection || null);
+    setPushEmployeeQuery(driverSelection?.label || '');
+    setPushSuggestions([]);
+    setPushSuggestionsError('');
+    setPushSuggestionsVisible(false);
+    if (!preserveFeedback) {
+      setPushError('');
+      setPushStatus('');
+    }
+    setPushModalOpen(false);
+  }
+
+  function openSettingsModal() {
+    setPushEmployeeSelection(driverSelection || null);
+    setPushEmployeeQuery(driverSelection?.label || '');
+    setPushSuggestions([]);
+    setPushSuggestionsError('');
+    setPushSuggestionsVisible(false);
+    setPushError('');
+    setPushStatus('');
+    setPushModalOpen(true);
+  }
+
+  function handleSaveDeviceProfile() {
+    if (!hasEmployeeIdentity(pushEmployeeSelection)) {
+      setPushError('Please select your name from the list before saving this device.');
+      return;
+    }
+    commitSelectedDriver(pushEmployeeSelection, { persist: true });
+    setPushError('');
+    setPushStatus(
+      pushEnabled
+        ? 'Driver and app notification settings are saved on this device.'
+        : 'Driver is saved on this device. You can enable app notifications later.',
+    );
+    closeSettingsModal({ preserveFeedback: true });
+  }
+
   async function handleResolveVehicle(explicitVin) {
     const normalizedVin = normalizeVin(explicitVin ?? vinInput);
     if (!normalizedVin) {
@@ -614,10 +683,9 @@ export default function FleetInspectionPublicPage() {
     try {
       const resolvedVehicle = await resolveVehicleByVin(normalizedVin);
       setVehicle(resolvedVehicle);
-      setDriverConfirmed(false);
-      setDriverSelection(null);
-      setDriverModalOpen(true);
-      setDriverSuggestionsVisible(true);
+      if (!hasConfiguredDriver) {
+        openSettingsModal();
+      }
       setInspectionStarted(false);
       setSearchParams({ vin: normalizedVin }, { replace: true });
       setCurrentIndex(0);
@@ -677,11 +745,12 @@ export default function FleetInspectionPublicPage() {
   function handleStartInspection() {
     if (!vehicle) return;
     if (!driverName.trim()) {
-      setError('Driver name is required.');
+      setError('Please choose your name in settings first.');
+      openSettingsModal();
       return;
     }
     if (!driverConfirmed) {
-      setDriverModalOpen(true);
+      openSettingsModal();
       return;
     }
     setError('');
@@ -747,9 +816,6 @@ export default function FleetInspectionPublicPage() {
     setDriverSuggestionsVisible(false);
     setNotes('');
     setNotesOpen(false);
-    setDriverName('');
-    setDriverSelection(null);
-    setDriverConfirmed(false);
     setDriverModalOpen(false);
     setVinInput('');
     setInspectionStarted(false);
@@ -764,6 +830,7 @@ export default function FleetInspectionPublicPage() {
   }
 
   async function handleEnablePushNotifications() {
+    const selectedEmployee = normalizeEmployeeSelection(pushEmployeeSelection);
     if (!pushSupported) {
       setPushError('App notifications are not supported in this browser.');
       return;
@@ -772,7 +839,7 @@ export default function FleetInspectionPublicPage() {
       setPushError('App notifications are not configured on the server yet.');
       return;
     }
-    if (!pushEmployeeSelection?.employeeRef && !pushEmployeeSelection?.kenjoUserId) {
+    if (!hasEmployeeIdentity(selectedEmployee)) {
       setPushError('Please select your name from the list before enabling notifications.');
       return;
     }
@@ -802,9 +869,9 @@ export default function FleetInspectionPublicPage() {
       }
 
       await registerPublicPushDevice({
-        employeeRef: pushEmployeeSelection.employeeRef,
-        employeeId: pushEmployeeSelection.employeeId,
-        kenjoUserId: pushEmployeeSelection.kenjoUserId,
+        employeeRef: selectedEmployee.employeeRef,
+        employeeId: selectedEmployee.employeeId,
+        kenjoUserId: selectedEmployee.kenjoUserId,
         subscription: subscription.toJSON(),
         userAgent: navigator.userAgent,
         platform: inferPushPlatform(),
@@ -812,11 +879,10 @@ export default function FleetInspectionPublicPage() {
         permissionState: permission,
       });
 
-      persistPushEmployee(pushEmployeeSelection);
+      commitSelectedDriver(selectedEmployee, { persist: true });
       setPushEnabled(true);
       setPushStatus('App notifications are enabled on this device.');
-      setPushModalOpen(false);
-      setPushSuggestionsVisible(false);
+      closeSettingsModal({ preserveFeedback: true });
     } catch (error) {
       setPushError(String(error?.message || 'Failed to enable app notifications'));
     } finally {
@@ -842,8 +908,7 @@ export default function FleetInspectionPublicPage() {
       }
       setPushEnabled(false);
       setPushStatus('App notifications are turned off on this device.');
-      setPushModalOpen(false);
-      setPushSuggestionsVisible(false);
+      closeSettingsModal({ preserveFeedback: true });
     } catch (error) {
       setPushError(String(error?.message || 'Failed to disable app notifications'));
     } finally {
@@ -855,83 +920,37 @@ export default function FleetInspectionPublicPage() {
     <div className={`fleet-inspection-page ${inspectionStarted ? 'fleet-inspection-page--camera' : ''}`}>
       <div className={`fleet-inspection-shell ${inspectionStarted ? 'fleet-inspection-shell--camera' : ''}`}>
         {!inspectionStarted ? (
-          <section className="fleet-inspection-public-header">
-            <h1>FleetCheck</h1>
-            <p>Scan the QR code or enter the VIN manually, then choose your name and start the inspection.</p>
+          <section className="fleet-inspection-public-header fleet-inspection-public-header--top">
+            <div>
+              <h1>FleetCheck</h1>
+              <p>Scan the QR code or enter the VIN manually, then start the inspection with the driver saved on this device.</p>
+            </div>
+            <button
+              type="button"
+              className="fleet-inspection-settings-trigger"
+              onClick={openSettingsModal}
+              aria-label="Open FleetCheck settings"
+              title="FleetCheck settings"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 3.75l1.06 2.16a1 1 0 0 0 .75.54l2.38.35-1.72 1.68a1 1 0 0 0-.29.88l.4 2.37-2.13-1.12a1 1 0 0 0-.94 0l-2.13 1.12.4-2.37a1 1 0 0 0-.29-.88L7.81 6.8l2.38-.35a1 1 0 0 0 .75-.54L12 3.75zm0 6a2.25 2.25 0 1 1 0 4.5 2.25 2.25 0 0 1 0-4.5zM4.5 13.5l1.54.31a1 1 0 0 1 .74.55l.69 1.4 1.54.23-1.11 1.08a1 1 0 0 0-.29.89l.26 1.53-1.37-.72a1 1 0 0 0-.93 0l-1.37.72.26-1.53a1 1 0 0 0-.29-.89L2.29 16l1.54-.23a1 1 0 0 0 .74-.55l.69-1.4zm15 0l.69 1.4a1 1 0 0 0 .74.55l1.54.23-1.11 1.08a1 1 0 0 0-.29.89l.26 1.53-1.37-.72a1 1 0 0 0-.93 0l-1.37.72.26-1.53a1 1 0 0 0-.29-.89L14.79 16l1.54-.23a1 1 0 0 0 .74-.55l.69-1.4z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
           </section>
         ) : null}
 
-        {!inspectionStarted ? (
-          <section className="fleet-inspection-card fleet-inspection-push-card">
-            <div className="fleet-inspection-grid">
-              <div>
-                <p className="fleet-inspection-label">App notifications</p>
-                <h2>Get FleetCheck reminders on this phone</h2>
-                <p className="fleet-inspection-muted">
-                  Enable notifications once on your Android device and internal inspection reminders will arrive in the FleetCheck app.
-                </p>
-              </div>
-              <div className="fleet-inspection-actions">
-                {pushEnabled ? (
-                  <span className="fleet-inspection-status" data-tone="success">
-                    Notifications on
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  className="fleet-inspection-button fleet-inspection-button--scan"
-                  onClick={() => setPushModalOpen(true)}
-                  disabled={!pushSupported || pushConfig.loading || !pushConfig.enabled}
-                >
-                  {pushEnabled ? 'Manage notifications' : 'Enable notifications'}
-                </button>
-                {pushEnabled ? (
-                  <button
-                    type="button"
-                    className="fleet-inspection-button fleet-inspection-button--neutral"
-                    onClick={() => void handleDisablePushNotifications()}
-                    disabled={pushBusy}
-                  >
-                    Turn off on this device
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            {pushConfig.loading ? (
-              <p className="fleet-inspection-muted">Checking notification setup...</p>
-            ) : null}
-            {!pushSupported ? (
-              <div className="fleet-inspection-alert fleet-inspection-alert--warning">
-                App notifications are not supported in this browser.
-              </div>
-            ) : null}
-            {pushSupported && !pushConfig.loading && !pushConfig.enabled ? (
-              <div className="fleet-inspection-alert fleet-inspection-alert--warning">
-                App notifications are not configured on the server yet.
-              </div>
-            ) : null}
-            {pushPermission === 'denied' ? (
-              <div className="fleet-inspection-alert fleet-inspection-alert--warning">
-                Browser notifications are blocked for this device. Allow notifications in the browser settings and try again.
-              </div>
-            ) : null}
-            {pushEmployeeSelection?.label ? (
-              <div className="fleet-inspection-driver-summary">
-                <div>
-                  <span className="fleet-inspection-label">This device is linked to</span>
-                  <strong>{pushEmployeeSelection.label}</strong>
-                  {pushEmployeeSelection.subtitle ? (
-                    <small className="fleet-inspection-muted">{pushEmployeeSelection.subtitle}</small>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-            {pushStatus ? (
-              <div className="fleet-inspection-alert fleet-inspection-alert--success">{pushStatus}</div>
-            ) : null}
-            {pushError ? (
-              <div className="fleet-inspection-alert fleet-inspection-alert--error">{pushError}</div>
-            ) : null}
+        {!inspectionStarted && pushStatus ? (
+          <section className="fleet-inspection-card">
+            <div className="fleet-inspection-alert fleet-inspection-alert--success">{pushStatus}</div>
+          </section>
+        ) : null}
+
+        {!inspectionStarted && pushError ? (
+          <section className="fleet-inspection-card">
+            <div className="fleet-inspection-alert fleet-inspection-alert--error">{pushError}</div>
           </section>
         ) : null}
 
@@ -1050,7 +1069,7 @@ export default function FleetInspectionPublicPage() {
                 <button
                   type="button"
                   className="fleet-inspection-button fleet-inspection-button--neutral"
-                  onClick={() => setDriverModalOpen(true)}
+                  onClick={openSettingsModal}
                 >
                   {driverConfirmed ? 'Change driver' : 'Set driver'}
                 </button>
@@ -1286,10 +1305,10 @@ export default function FleetInspectionPublicPage() {
             <div className="fleet-inspection-modal" role="dialog" aria-modal="true" aria-labelledby="fleet-push-modal-title">
               <div className="fleet-inspection-modal__header">
                 <div>
-                  <p className="fleet-inspection-label">FleetCheck notifications</p>
-                  <h3 id="fleet-push-modal-title">Enable app notifications</h3>
+                  <p className="fleet-inspection-label">FleetCheck settings</p>
+                  <h3 id="fleet-push-modal-title">Driver and notifications</h3>
                   <p className="fleet-inspection-muted">
-                    Select your name once on this phone. We will use it for internal inspection reminders.
+                    Select your name once on this phone. FleetCheck will reuse it for every inspection until you change the driver here.
                   </p>
                 </div>
               </div>
@@ -1353,7 +1372,7 @@ export default function FleetInspectionPublicPage() {
               {pushEmployeeSelection ? (
                 <div className="fleet-inspection-driver-summary">
                   <div>
-                    <span className="fleet-inspection-label">Selected employee</span>
+                    <span className="fleet-inspection-label">Selected driver</span>
                     <strong>{pushEmployeeSelection.label}</strong>
                     {pushEmployeeSelection.subtitle ? (
                       <small className="fleet-inspection-muted">{pushEmployeeSelection.subtitle}</small>
@@ -1362,19 +1381,38 @@ export default function FleetInspectionPublicPage() {
                 </div>
               ) : null}
 
+              {pushConfig.loading ? (
+                <p className="fleet-inspection-muted">Checking notification setup...</p>
+              ) : null}
+              {!pushSupported ? (
+                <div className="fleet-inspection-alert fleet-inspection-alert--warning">
+                  App notifications are not supported in this browser.
+                </div>
+              ) : null}
+              {pushSupported && !pushConfig.loading && !pushConfig.enabled ? (
+                <div className="fleet-inspection-alert fleet-inspection-alert--warning">
+                  App notifications are not configured on the server yet. You can still save the driver on this device.
+                </div>
+              ) : null}
+              {pushPermission === 'denied' ? (
+                <div className="fleet-inspection-alert fleet-inspection-alert--warning">
+                  Browser notifications are blocked for this device. Allow notifications in the browser settings and try again.
+                </div>
+              ) : null}
+
               {pushError ? (
                 <div className="fleet-inspection-alert fleet-inspection-alert--error">{pushError}</div>
+              ) : null}
+
+              {pushStatus ? (
+                <div className="fleet-inspection-alert fleet-inspection-alert--success">{pushStatus}</div>
               ) : null}
 
               <div className="fleet-inspection-modal__actions">
                 <button
                   type="button"
                   className="fleet-inspection-button fleet-inspection-button--neutral"
-                  onClick={() => {
-                    setPushModalOpen(false);
-                    setPushSuggestionsVisible(false);
-                    setPushError('');
-                  }}
+                  onClick={closeSettingsModal}
                   disabled={pushBusy}
                 >
                   Cancel
@@ -1393,9 +1431,23 @@ export default function FleetInspectionPublicPage() {
                   type="button"
                   className="fleet-inspection-button fleet-inspection-button--scan"
                   onClick={() => void handleEnablePushNotifications()}
-                  disabled={pushBusy || !pushEmployeeSelection?.kenjoUserId}
+                  disabled={
+                    pushBusy
+                    || !hasDraftDriver
+                    || !pushSupported
+                    || pushConfig.loading
+                    || !pushConfig.enabled
+                  }
                 >
                   {pushBusy ? 'Enabling...' : (pushEnabled ? 'Update device' : 'Enable notifications')}
+                </button>
+                <button
+                  type="button"
+                  className="fleet-inspection-button"
+                  onClick={handleSaveDeviceProfile}
+                  disabled={pushBusy || !hasDraftDriver}
+                >
+                  Done
                 </button>
               </div>
             </div>

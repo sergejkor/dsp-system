@@ -33,6 +33,12 @@
   margin-bottom: 1rem;
 }
 
+.fleet-inspection-public-header--top {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.9rem;
+}
+
 .fleet-inspection-public-header h1 {
   margin: 0;
   font-size: clamp(1.9rem, 5vw, 2.6rem);
@@ -44,6 +50,36 @@
   margin: 0;
   color: #475569;
   max-width: 38rem;
+}
+
+.fleet-inspection-settings-trigger {
+  width: 3rem;
+  height: 3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1e293b;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.fleet-inspection-settings-trigger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+}
+
+.fleet-inspection-settings-trigger:focus-visible {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.44);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+}
+
+.fleet-inspection-settings-trigger svg {
+  width: 1.35rem;
+  height: 1.35rem;
 }
 
 .fleet-inspection-card,
@@ -1230,6 +1266,14 @@ body.dark .fleet-inspection-modal-card {
 
   .fleet-inspection-vin-actions {
     grid-template-columns: 1fr;
+  }
+
+  .fleet-inspection-public-header--top {
+    grid-template-columns: 1fr;
+  }
+
+  .fleet-inspection-settings-trigger {
+    justify-self: end;
   }
 
   .fleet-inspection-driver-summary {
