@@ -7,7 +7,15 @@ function authOpts(options = {}) {
 }
 
 async function parseJson(res) {
-  return res.json().catch(() => ({}));
+  const text = await res.text().catch(() => '');
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    return {
+      error: text.length <= 280 ? text : `${res.status} ${res.statusText || 'Request failed'}`,
+    };
+  }
 }
 
 async function performPublicFetch(url, options, networkErrorMessage) {
@@ -138,6 +146,18 @@ export async function deleteFleetInspectionTask(id) {
     authOpts({ method: 'DELETE' }),
   );
   return ensureOk(res, 'Failed to delete inspection task');
+}
+
+export async function assignFleetInspectionTaskManually(payload) {
+  const res = await fetch(
+    `${API_BASE}/api/fleet-inspections/tasks/manual-assign`,
+    authOpts({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    }),
+  );
+  return ensureOk(res, 'Failed to assign inspection manually');
 }
 
 export async function getInspectionPhotoBlob(inspectionId, photoId) {

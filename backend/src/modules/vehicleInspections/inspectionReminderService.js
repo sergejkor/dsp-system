@@ -137,9 +137,10 @@ async function resolveReminderSettings() {
   return normalizeReminderConfig(config);
 }
 
-async function findMatchingDriverContact(driverIdentifier) {
+async function findMatchingDriverContact(driverIdentifier, preferredKenjoUserId = null) {
   const normalizedDriver = stringOrNull(driverIdentifier, 255);
-  if (!normalizedDriver) {
+  const normalizedKenjoUserId = stringOrNull(preferredKenjoUserId, 128);
+  if (!normalizedDriver && !normalizedKenjoUserId) {
     return {
       driverName: null,
       employeeRef: null,
@@ -150,20 +151,28 @@ async function findMatchingDriverContact(driverIdentifier) {
 
   const res = await query(
     `SELECT
-       e.employee_id,
-       e.kenjo_user_id,
-       e.display_name,
-       e.first_name,
-       e.last_name,
-       e.phone
-     FROM employees e
-     WHERE LOWER(COALESCE(e.display_name, '')) = LOWER($1)
-        OR LOWER(TRIM(COALESCE(e.first_name, '') || ' ' || COALESCE(e.last_name, ''))) = LOWER($1)
-        OR LOWER(COALESCE(e.employee_id, '')) = LOWER($1)
-        OR LOWER(COALESCE(e.email, '')) = LOWER($1)
-     ORDER BY e.is_active DESC, e.id ASC
+       ke.employee_number,
+       ke.kenjo_user_id,
+       ke.transporter_id,
+       ke.display_name,
+       ke.first_name,
+       ke.last_name,
+       ke.whatsapp_number
+     FROM kenjo_employees ke
+     WHERE ($1::text IS NOT NULL AND ke.kenjo_user_id = $1)
+        OR ($2::text IS NOT NULL AND (
+          LOWER(COALESCE(ke.display_name, '')) = LOWER($2)
+          OR LOWER(TRIM(COALESCE(ke.first_name, '') || ' ' || COALESCE(ke.last_name, ''))) = LOWER($2)
+          OR LOWER(COALESCE(ke.employee_number, '')) = LOWER($2)
+          OR LOWER(COALESCE(ke.transporter_id, '')) = LOWER($2)
+          OR LOWER(COALESCE(ke.kenjo_user_id, '')) = LOWER($2)
+        ))
+     ORDER BY
+       CASE WHEN $1::text IS NOT NULL AND ke.kenjo_user_id = $1 THEN 0 ELSE 1 END,
+       ke.is_active DESC,
+       ke.id ASC
      LIMIT 1`,
-    [normalizedDriver],
+    [normalizedKenjoUserId, normalizedDriver],
   ).catch(() => ({ rows: [] }));
 
   const row = res.rows?.[0];
@@ -171,10 +180,11 @@ async function findMatchingDriverContact(driverIdentifier) {
     driverName:
       stringOrNull(row?.display_name, 255)
       || stringOrNull([row?.first_name, row?.last_name].filter(Boolean).join(' '), 255)
-      || normalizedDriver,
-    employeeRef: stringOrNull(row?.employee_id, 128),
+      || normalizedDriver
+      || normalizedKenjoUserId,
+    employeeRef: stringOrNull(row?.employee_number, 128) || stringOrNull(row?.transporter_id, 128),
     kenjoUserId: stringOrNull(row?.kenjo_user_id, 128),
-    phone: stringOrNull(row?.phone, 255),
+    phone: stringOrNull(row?.whatsapp_number, 255),
   };
 }
 
@@ -335,6 +345,30 @@ export class InspectionReminderService {
         UNIQUE (car_id, plan_date)
       )
     `);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS vehicle_id VARCHAR(255)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS license_plate VARCHAR(64)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS vin VARCHAR(64)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS driver_identifier VARCHAR(255)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS driver_employee_ref VARCHAR(128)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS driver_kenjo_user_id VARCHAR(128)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS driver_phone VARCHAR(255)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'pending'`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS reminder_start_at TIMESTAMP WITH TIME ZONE`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS next_reminder_at TIMESTAMP WITH TIME ZONE`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS last_reminder_at TIMESTAMP WITH TIME ZONE`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS last_reminder_status VARCHAR(64)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS last_reminder_sid VARCHAR(128)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS last_reminder_error TEXT`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS reminder_count INT NOT NULL DEFAULT 0`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS reminder_message_template TEXT`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS inspection_url TEXT`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS completed_inspection_id INT REFERENCES vehicle_internal_inspections(id) ON DELETE SET NULL`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS failed_at TIMESTAMP WITH TIME ZONE`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`).catch(() => null);
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicle_internal_inspection_tasks_car_plan_date ON vehicle_internal_inspection_tasks (car_id, plan_date)`).catch(() => null);
     await query(`CREATE INDEX IF NOT EXISTS idx_vehicle_internal_inspection_tasks_status ON vehicle_internal_inspection_tasks (status, plan_date DESC, id DESC)`).catch(() => null);
     await query(`CREATE INDEX IF NOT EXISTS idx_vehicle_internal_inspection_tasks_next_reminder ON vehicle_internal_inspection_tasks (next_reminder_at, status)`).catch(() => null);
 
@@ -351,6 +385,12 @@ export class InspectionReminderService {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
     `);
+    await query(`ALTER TABLE vehicle_internal_inspection_reminder_logs ADD COLUMN IF NOT EXISTS channel VARCHAR(32) NOT NULL DEFAULT 'whatsapp'`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_reminder_logs ADD COLUMN IF NOT EXISTS sent_to VARCHAR(255)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_reminder_logs ADD COLUMN IF NOT EXISTS provider_message_id VARCHAR(128)`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_reminder_logs ADD COLUMN IF NOT EXISTS error_message TEXT`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_reminder_logs ADD COLUMN IF NOT EXISTS payload_json JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => null);
+    await query(`ALTER TABLE vehicle_internal_inspection_reminder_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`).catch(() => null);
     await query(`CREATE INDEX IF NOT EXISTS idx_vehicle_internal_inspection_reminder_logs_task ON vehicle_internal_inspection_reminder_logs (task_id, created_at DESC, id DESC)`).catch(() => null);
 
     tablesReady = true;
@@ -479,6 +519,164 @@ export class InspectionReminderService {
     ).catch(() => null);
   }
 
+  async refreshTaskDriverPhone(task, preferredKenjoUserId = null) {
+    const currentTask = mapTaskRow(task);
+    if (!currentTask) return null;
+
+    const refreshedDriver = await findMatchingDriverContact(
+      currentTask.driver_identifier,
+      preferredKenjoUserId || currentTask.driver_kenjo_user_id,
+    ).catch(() => null);
+
+    if (!refreshedDriver) {
+      return currentTask;
+    }
+
+    const nextPhone = stringOrNull(refreshedDriver.phone, 255);
+    const nextEmployeeRef = stringOrNull(refreshedDriver.employeeRef, 128);
+    const nextKenjoUserId = stringOrNull(refreshedDriver.kenjoUserId, 128);
+    const nextDriverName = stringOrNull(refreshedDriver.driverName, 255) || currentTask.driver_identifier;
+    const changed =
+      (nextPhone || null) !== (currentTask.driver_phone || null)
+      || (nextEmployeeRef || null) !== (currentTask.driver_employee_ref || null)
+      || (nextKenjoUserId || null) !== (currentTask.driver_kenjo_user_id || null)
+      || (nextDriverName || null) !== (currentTask.driver_identifier || null);
+
+    if (!changed) {
+      return currentTask;
+    }
+
+    const res = await query(
+      `UPDATE vehicle_internal_inspection_tasks
+       SET driver_identifier = $2,
+           driver_employee_ref = $3,
+           driver_kenjo_user_id = $4,
+           driver_phone = $5,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [currentTask.id, nextDriverName, nextEmployeeRef, nextKenjoUserId, nextPhone],
+    ).catch(() => ({ rows: [] }));
+
+    return mapTaskRow(res.rows?.[0] || {
+      ...currentTask,
+      driver_identifier: nextDriverName,
+      driver_employee_ref: nextEmployeeRef,
+      driver_kenjo_user_id: nextKenjoUserId,
+      driver_phone: nextPhone,
+    });
+  }
+
+  async sendReminderForTask(task, config, now = new Date()) {
+    const currentTask = await this.refreshTaskDriverPhone(task);
+    if (!currentTask) {
+      return { status: 'missing_task', task: null };
+    }
+
+    const today = toDateOnly(now);
+    const sentTo = normalizePhoneForWhatsApp(currentTask.driver_phone, config.defaultCountryCode);
+    if (!sentTo) {
+      const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
+      const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
+      await query(
+        `UPDATE vehicle_internal_inspection_tasks
+         SET last_reminder_status = 'missing_phone',
+             last_reminder_error = 'Driver WhatsApp number is missing or invalid in Employee overview',
+             next_reminder_at = $2,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [currentTask.id, sameDayNextReminder],
+      );
+      await this.logReminderAttempt(currentTask.id, 'missing_phone', {
+        sentTo: currentTask.driver_phone,
+        errorMessage: 'Driver WhatsApp number is missing or invalid in Employee overview',
+        payload: { driverIdentifier: currentTask.driver_identifier, driverKenjoUserId: currentTask.driver_kenjo_user_id },
+      });
+      return {
+        status: 'missing_phone',
+        task: mapTaskRow({
+          ...currentTask,
+          last_reminder_status: 'missing_phone',
+          last_reminder_error: 'Driver WhatsApp number is missing or invalid in Employee overview',
+          next_reminder_at: sameDayNextReminder,
+        }),
+      };
+    }
+
+    const inspectionUrl = buildInspectionUrl(config.publicBaseUrl, currentTask.vin) || currentTask.inspection_url || '';
+    const body = renderReminderMessage(
+      currentTask.reminder_message_template || config.reminderMessage,
+      {
+        driverName: currentTask.driver_identifier || 'driver',
+        licensePlate: currentTask.license_plate || currentTask.vehicle_id || currentTask.vin || '',
+        vehicleId: currentTask.vehicle_id || '',
+        vin: currentTask.vin || '',
+        planDate: currentTask.plan_date || '',
+        inspectionUrl,
+      },
+    );
+
+    try {
+      const result = await sendWhatsAppMessage({
+        to: currentTask.driver_phone,
+        body,
+        defaultCountryCode: config.defaultCountryCode,
+      });
+      const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
+      const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
+      const updateRes = await query(
+        `UPDATE vehicle_internal_inspection_tasks
+         SET status = 'reminded',
+             last_reminder_at = NOW(),
+             last_reminder_status = 'sent',
+             last_reminder_sid = $2,
+             last_reminder_error = NULL,
+             reminder_count = reminder_count + 1,
+             next_reminder_at = $3,
+             inspection_url = COALESCE($4, inspection_url),
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [currentTask.id, result.sid, sameDayNextReminder, inspectionUrl || null],
+      );
+      await this.logReminderAttempt(currentTask.id, 'sent', {
+        sentTo,
+        providerMessageId: result.sid,
+        payload: {
+          status: result.status,
+          body,
+          inspectionUrl,
+        },
+      });
+      return { status: 'sent', task: mapTaskRow(updateRes.rows?.[0] || null), sentTo };
+    } catch (error) {
+      const message = String(error?.message || error || 'Twilio send failed');
+      const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
+      const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
+      const updateRes = await query(
+        `UPDATE vehicle_internal_inspection_tasks
+         SET last_reminder_at = NOW(),
+             last_reminder_status = 'send_failed',
+             last_reminder_error = $2,
+             next_reminder_at = $3,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [currentTask.id, message, sameDayNextReminder],
+      );
+      await this.logReminderAttempt(currentTask.id, 'send_failed', {
+        sentTo,
+        errorMessage: message,
+        payload: { body, inspectionUrl },
+      });
+      return {
+        status: 'send_failed',
+        task: mapTaskRow(updateRes.rows?.[0] || null),
+        errorMessage: message,
+      };
+    }
+  }
+
   async processDueReminderTasks(options = {}) {
     await this.ensureTables();
     const now = options.now instanceof Date ? options.now : new Date();
@@ -504,114 +702,138 @@ export class InspectionReminderService {
 
     let processed = 0;
     for (const row of dueRes.rows || []) {
-      const task = mapTaskRow(row);
-      let driverPhone = task.driver_phone;
-      if (!normalizePhoneForWhatsApp(driverPhone, config.defaultCountryCode) && task.driver_identifier) {
-        const refreshedDriver = await findMatchingDriverContact(task.driver_identifier).catch(() => null);
-        const refreshedPhone = stringOrNull(refreshedDriver?.phone, 255);
-        if (refreshedPhone && refreshedPhone !== driverPhone) {
-          driverPhone = refreshedPhone;
-          await query(
-            `UPDATE vehicle_internal_inspection_tasks
-             SET driver_phone = $2,
-                 updated_at = NOW()
-             WHERE id = $1`,
-            [task.id, refreshedPhone],
-          ).catch(() => null);
-        }
-      }
-
-      const sentTo = normalizePhoneForWhatsApp(driverPhone, config.defaultCountryCode);
-      if (!sentTo) {
-        const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
-        const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
-        await query(
-          `UPDATE vehicle_internal_inspection_tasks
-           SET last_reminder_status = 'missing_phone',
-               last_reminder_error = 'Driver phone is missing or invalid',
-               next_reminder_at = $2,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [task.id, sameDayNextReminder],
-        );
-        await this.logReminderAttempt(task.id, 'missing_phone', {
-          sentTo: driverPhone,
-          errorMessage: 'Driver phone is missing or invalid',
-          payload: { driverIdentifier: task.driver_identifier },
-        });
-        processed += 1;
-        continue;
-      }
-
-      const inspectionUrl = buildInspectionUrl(config.publicBaseUrl, task.vin) || task.inspection_url || '';
-      const body = renderReminderMessage(
-        task.reminder_message_template || config.reminderMessage,
-        {
-          driverName: task.driver_identifier || 'driver',
-          licensePlate: task.license_plate || task.vehicle_id || task.vin || '',
-          vehicleId: task.vehicle_id || '',
-          vin: task.vin || '',
-          planDate: task.plan_date || '',
-          inspectionUrl,
-        },
-      );
-
-      try {
-        const result = await sendWhatsAppMessage({
-          to: driverPhone,
-          body,
-          defaultCountryCode: config.defaultCountryCode,
-        });
-        const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
-        const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
-        await query(
-          `UPDATE vehicle_internal_inspection_tasks
-           SET status = 'reminded',
-               last_reminder_at = NOW(),
-               last_reminder_status = 'sent',
-               last_reminder_sid = $2,
-               last_reminder_error = NULL,
-               reminder_count = reminder_count + 1,
-               next_reminder_at = $3,
-               inspection_url = COALESCE($4, inspection_url),
-               updated_at = NOW()
-           WHERE id = $1`,
-          [task.id, result.sid, sameDayNextReminder, inspectionUrl || null],
-        );
-        await this.logReminderAttempt(task.id, 'sent', {
-          sentTo,
-          providerMessageId: result.sid,
-          payload: {
-            status: result.status,
-            body,
-            inspectionUrl,
-          },
-        });
-      } catch (error) {
-        const message = String(error?.message || error || 'Twilio send failed');
-        const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
-        const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
-        await query(
-          `UPDATE vehicle_internal_inspection_tasks
-           SET last_reminder_at = NOW(),
-               last_reminder_status = 'send_failed',
-               last_reminder_error = $2,
-               next_reminder_at = $3,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [task.id, message, sameDayNextReminder],
-        );
-        await this.logReminderAttempt(task.id, 'send_failed', {
-          sentTo,
-          errorMessage: message,
-          payload: { body, inspectionUrl },
-        });
-      }
-
+      await this.sendReminderForTask(row, config, now);
       processed += 1;
     }
 
     return { processed, failedCount, disabled: false };
+  }
+
+  async assignTaskManually(payload = {}, options = {}) {
+    await this.ensureTables();
+
+    const now = options.now instanceof Date ? options.now : new Date();
+    const planDate = toDateOnly(now);
+    const carId = toInteger(payload.carId, null);
+    const driverKenjoUserId = stringOrNull(payload.driverKenjoUserId, 128);
+
+    if (!carId) {
+      throw new Error('Car is required');
+    }
+    if (!driverKenjoUserId) {
+      throw new Error('Employee is required');
+    }
+
+    const config = await resolveReminderSettings();
+    const [carRes, driver] = await Promise.all([
+      query(
+        `SELECT id, vehicle_id, license_plate, vin
+         FROM cars
+         WHERE id = $1
+         LIMIT 1`,
+        [carId],
+      ),
+      findMatchingDriverContact(null, driverKenjoUserId),
+    ]);
+
+    const car = carRes.rows?.[0] || null;
+    if (!car) {
+      throw new Error('Selected car was not found');
+    }
+    if (!driver?.kenjoUserId) {
+      throw new Error('Selected employee was not found');
+    }
+
+    const existingInspectionMap = await getExistingInspectionMap([planDate], [carId]);
+    const completedInspection = existingInspectionMap.get(`${carId}|${planDate}`) || null;
+    if (completedInspection?.inspectionId) {
+      throw new Error('An inspection for this vehicle is already completed today');
+    }
+
+    const upsertRes = await query(
+      `INSERT INTO vehicle_internal_inspection_tasks (
+         car_id,
+         plan_date,
+         vehicle_id,
+         license_plate,
+         vin,
+         driver_identifier,
+         driver_employee_ref,
+         driver_kenjo_user_id,
+         driver_phone,
+         status,
+         reminder_start_at,
+         next_reminder_at,
+         reminder_count,
+         reminder_message_template,
+         inspection_url,
+         last_reminder_at,
+         last_reminder_status,
+         last_reminder_sid,
+         last_reminder_error,
+         cancelled_at,
+         failed_at,
+         completed_inspection_id,
+         completed_at,
+         updated_at
+       )
+       VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9,
+         'pending', $10, $11, 0, $12, $13,
+         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NOW()
+       )
+       ON CONFLICT (car_id, plan_date) DO UPDATE SET
+         vehicle_id = EXCLUDED.vehicle_id,
+         license_plate = EXCLUDED.license_plate,
+         vin = EXCLUDED.vin,
+         driver_identifier = EXCLUDED.driver_identifier,
+         driver_employee_ref = EXCLUDED.driver_employee_ref,
+         driver_kenjo_user_id = EXCLUDED.driver_kenjo_user_id,
+         driver_phone = EXCLUDED.driver_phone,
+         status = 'pending',
+         reminder_start_at = EXCLUDED.reminder_start_at,
+         next_reminder_at = EXCLUDED.next_reminder_at,
+         reminder_count = 0,
+         reminder_message_template = EXCLUDED.reminder_message_template,
+         inspection_url = EXCLUDED.inspection_url,
+         last_reminder_at = NULL,
+         last_reminder_status = NULL,
+         last_reminder_sid = NULL,
+         last_reminder_error = NULL,
+         cancelled_at = NULL,
+         failed_at = NULL,
+         completed_inspection_id = NULL,
+         completed_at = NULL,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        carId,
+        planDate,
+        stringOrNull(car.vehicle_id, 255),
+        stringOrNull(car.license_plate, 64),
+        stringOrNull(car.vin, 64),
+        stringOrNull(driver.driverName, 255),
+        stringOrNull(driver.employeeRef, 128),
+        stringOrNull(driver.kenjoUserId, 128),
+        stringOrNull(driver.phone, 255),
+        now.toISOString(),
+        now.toISOString(),
+        config.reminderMessage,
+        buildInspectionUrl(config.publicBaseUrl, car.vin),
+      ],
+    );
+
+    const manualTask = mapTaskRow(upsertRes.rows?.[0] || null);
+    const reminderResult = await this.sendReminderForTask(manualTask, config, now);
+
+    if (reminderResult.status === 'missing_phone') {
+      throw new Error('Selected employee does not have a valid WhatsApp number in Employee overview');
+    }
+    if (reminderResult.status === 'send_failed') {
+      throw new Error(reminderResult.errorMessage || 'Failed to send WhatsApp reminder');
+    }
+
+    return reminderResult.task || manualTask;
   }
 
   async listTasks(filters = {}) {

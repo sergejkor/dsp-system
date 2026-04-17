@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
+  assignFleetInspectionTaskManually,
   deleteFleetInspection,
   deleteFleetInspectionTask,
   listFleetInspectionTasks,
   listFleetInspections,
 } from '../services/internalInspectionApi.js';
+import { getFinesEmployees } from '../services/finesApi.js';
+import { getCars } from '../services/carsApi.js';
+import { getSettingsByGroup, updateSettingsGroup } from '../services/settingsApi.js';
 import './fleetInspections.css';
 
 const RESULT_OPTIONS = [
@@ -26,7 +31,7 @@ const TASK_STATUS_OPTIONS = [
 
 function resultTone(result) {
   if (result === 'possible_new_damage') return 'warning';
-  if (result === 'no_new_damage') return 'success';
+  if (result === 'baseline_created' || result === 'no_new_damage') return 'success';
   return 'neutral';
 }
 
@@ -79,6 +84,8 @@ export default function FleetInspectionsPage() {
   const [searchParams] = useSearchParams();
   const [tasks, setTasks] = useState([]);
   const [inspections, setInspections] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [cars, setCars] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -87,8 +94,26 @@ export default function FleetInspectionsPage() {
   const [result, setResult] = useState('');
   const [deletingInspectionId, setDeletingInspectionId] = useState(null);
   const [deletingTaskId, setDeletingTaskId] = useState(null);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [notificationsSaving, setNotificationsSaving] = useState(false);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignError, setAssignError] = useState('');
+  const [assignForm, setAssignForm] = useState({
+    employeeId: '',
+    carId: '',
+  });
 
   const carId = searchParams.get('carId') || '';
+
+  async function reloadPageData() {
+    const [taskRows, inspectionRows] = await Promise.all([
+      listFleetInspectionTasks({ search, status: taskStatus, carId, limit: 120 }),
+      listFleetInspections({ search, result, carId, limit: 120 }),
+    ]);
+    setTasks(Array.isArray(taskRows) ? taskRows : []);
+    setInspections(Array.isArray(inspectionRows) ? inspectionRows : []);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +146,30 @@ export default function FleetInspectionsPage() {
     };
   }, [carId, result, search, taskStatus]);
 
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      getSettingsByGroup('internal_inspections'),
+      getFinesEmployees(),
+      getCars(),
+    ])
+      .then(([settings, employeeRows, carRows]) => {
+        if (cancelled) return;
+        setNotificationsEnabled(settings?.enabled?.value !== false);
+        setEmployees(Array.isArray(employeeRows) ? employeeRows : []);
+        setCars(Array.isArray(carRows) ? carRows : []);
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(loadError.message || 'Failed to load internal inspection configuration');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const summary = useMemo(() => {
     const counts = {
       pending: 0,
@@ -135,6 +184,84 @@ export default function FleetInspectionsPage() {
     });
     return counts;
   }, [tasks]);
+
+  const notificationToggleText = notificationsEnabled
+    ? 'Turn WhatsApp notifications off'
+    : 'Turn WhatsApp notifications on';
+
+  const employeeOptions = useMemo(
+    () => (employees || []).map((employee) => ({
+      value: String(employee.id),
+      label: employee.name || String(employee.id),
+    })),
+    [employees],
+  );
+
+  const carOptions = useMemo(
+    () => (cars || []).map((car) => ({
+      value: String(car.id),
+      label: [car.license_plate, car.vehicle_id, car.vin].filter(Boolean).join(' / ') || `Car ${car.id}`,
+    })),
+    [cars],
+  );
+
+  function openAssignModal() {
+    setAssignError('');
+    setAssignForm({ employeeId: '', carId: carId ? String(carId) : '' });
+    setAssignModalOpen(true);
+  }
+
+  function closeAssignModal(force = false) {
+    if (assignSaving && !force) return;
+    setAssignModalOpen(false);
+    setAssignError('');
+    setAssignForm({ employeeId: '', carId: carId ? String(carId) : '' });
+  }
+
+  async function handleToggleNotifications() {
+    const nextEnabled = !notificationsEnabled;
+    setNotificationsSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await updateSettingsGroup('internal_inspections', { enabled: nextEnabled });
+      setNotificationsEnabled(nextEnabled);
+      setMessage(
+        nextEnabled
+          ? 'WhatsApp notifications are now enabled.'
+          : 'WhatsApp notifications are now disabled.',
+      );
+    } catch (toggleError) {
+      setError(toggleError.message || 'Failed to update WhatsApp notifications setting');
+    } finally {
+      setNotificationsSaving(false);
+    }
+  }
+
+  async function handleManualAssign() {
+    if (!assignForm.employeeId || !assignForm.carId) {
+      setAssignError('Please choose an employee and a car.');
+      return;
+    }
+
+    setAssignSaving(true);
+    setAssignError('');
+    setError('');
+    setMessage('');
+    try {
+      await assignFleetInspectionTaskManually({
+        driverKenjoUserId: assignForm.employeeId,
+        carId: Number(assignForm.carId),
+      });
+      await reloadPageData();
+      closeAssignModal(true);
+      setMessage('Inspection assigned manually and WhatsApp reminder sent.');
+    } catch (assignRequestError) {
+      setAssignError(assignRequestError.message || 'Failed to assign inspection manually');
+    } finally {
+      setAssignSaving(false);
+    }
+  }
 
   async function handleDeleteInspection(inspectionId) {
     const confirmed = window.confirm('Delete this inspection report permanently? This action cannot be undone.');
@@ -194,6 +321,30 @@ export default function FleetInspectionsPage() {
             <p className="fleet-inspection-muted">
               Daily reminder tasks are created from Car Planning when Upwards Control is set. Completed inspections close the task on the same day, otherwise the task becomes failed after midnight.
             </p>
+          </div>
+
+          <div className="fleet-inspection-toolbar fleet-inspection-toolbar--between fleet-inspection-toolbar--stack-mobile">
+            <label className="fleet-inspection-switch">
+              <input
+                type="checkbox"
+                checked={notificationsEnabled}
+                onChange={handleToggleNotifications}
+                disabled={notificationsSaving}
+              />
+              <span className="fleet-inspection-switch__slider" aria-hidden="true" />
+              <span className="fleet-inspection-switch__label">
+                {notificationsSaving ? 'Saving...' : notificationToggleText}
+              </span>
+            </label>
+
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={openAssignModal}
+              disabled={assignSaving}
+            >
+              Assign Inspection manually
+            </button>
           </div>
 
           <div className="fleet-inspection-grid fleet-inspection-grid--two">
@@ -338,20 +489,14 @@ export default function FleetInspectionsPage() {
                 <div className="fleet-inspection-actions">
                   {task.completed_inspection_id ? (
                     <>
-                      <Link to={`/fleet-inspections/${task.completed_inspection_id}`} className="fleet-inspection-button fleet-inspection-button--compact">
+                      <Link to={`/fleet-inspections/${task.completed_inspection_id}`} className="btn-primary">
                         Open completed inspection
                       </Link>
                       <button
                         type="button"
-                        className="fleet-inspection-button fleet-inspection-button--compact"
+                        className="btn-secondary btn-danger"
                         onClick={() => handleDeleteInspection(task.completed_inspection_id)}
                         disabled={deletingInspectionId === task.completed_inspection_id}
-                        style={{
-                          background: '#fef2f2',
-                          color: '#b91c1c',
-                          boxShadow: 'none',
-                          border: '1px solid rgba(220, 38, 38, 0.18)',
-                        }}
                       >
                         {deletingInspectionId === task.completed_inspection_id ? 'Deleting...' : 'Delete report'}
                       </button>
@@ -359,15 +504,9 @@ export default function FleetInspectionsPage() {
                   ) : (
                     <button
                       type="button"
-                      className="fleet-inspection-button fleet-inspection-button--compact"
+                      className="btn-secondary btn-danger"
                       onClick={() => handleDeleteTask(task.id)}
                       disabled={deletingTaskId === task.id}
-                      style={{
-                        background: '#fef2f2',
-                        color: '#b91c1c',
-                        boxShadow: 'none',
-                        border: '1px solid rgba(220, 38, 38, 0.18)',
-                      }}
                     >
                       {deletingTaskId === task.id ? 'Deleting...' : 'Delete task'}
                     </button>
@@ -443,20 +582,14 @@ export default function FleetInspectionsPage() {
                 </div>
 
                 <div className="fleet-inspection-actions">
-                  <Link to={`/fleet-inspections/${item.id}`} className="fleet-inspection-button">
+                  <Link to={`/fleet-inspections/${item.id}`} className="btn-primary">
                     Open inspection
                   </Link>
                   <button
                     type="button"
-                    className="fleet-inspection-button"
+                    className="btn-secondary btn-danger"
                     onClick={() => handleDeleteInspection(item.id)}
                     disabled={deletingInspectionId === item.id}
-                    style={{
-                      background: '#fef2f2',
-                      color: '#b91c1c',
-                      boxShadow: 'none',
-                      border: '1px solid rgba(220, 38, 38, 0.18)',
-                    }}
                   >
                     {deletingInspectionId === item.id ? 'Deleting...' : 'Delete report'}
                   </button>
@@ -611,6 +744,111 @@ export default function FleetInspectionsPage() {
           font-size: 0.84rem;
         }
       `}</style>
+
+      {assignModalOpen && typeof document !== 'undefined'
+        ? createPortal(
+          <div
+            className="fleet-inspection-modal-backdrop"
+            onClick={() => closeAssignModal()}
+            role="presentation"
+          >
+            <div
+              className="fleet-inspection-modal-card"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="manual-inspection-assign-title"
+            >
+              <div className="fleet-inspection-modal-card__header">
+                <div>
+                  <p className="fleet-inspection-label" style={{ margin: 0 }}>Manual reminder</p>
+                  <h3 id="manual-inspection-assign-title" style={{ margin: '0.25rem 0 0' }}>
+                    Assign Inspection manually
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => closeAssignModal()}
+                  disabled={assignSaving}
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="fleet-inspection-modal-card__body">
+                <p className="fleet-inspection-muted" style={{ marginTop: 0 }}>
+                  Manual assignment sends a WhatsApp reminder immediately, even when automatic notifications are turned off. WhatsApp numbers are taken from the employee overview WhatsApp number.
+                </p>
+
+                <div className="fleet-inspection-grid">
+                  <div className="fleet-inspection-field">
+                    <label htmlFor="manual-inspection-employee">Employee</label>
+                    <select
+                      id="manual-inspection-employee"
+                      className="fleet-inspection-select"
+                      value={assignForm.employeeId}
+                      onChange={(event) => setAssignForm((current) => ({ ...current, employeeId: event.target.value }))}
+                      disabled={assignSaving}
+                    >
+                      <option value="">Select employee</option>
+                      {employeeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="fleet-inspection-field">
+                    <label htmlFor="manual-inspection-car">Car number</label>
+                    <select
+                      id="manual-inspection-car"
+                      className="fleet-inspection-select"
+                      value={assignForm.carId}
+                      onChange={(event) => setAssignForm((current) => ({ ...current, carId: event.target.value }))}
+                      disabled={assignSaving}
+                    >
+                      <option value="">Select car</option>
+                      {carOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {assignError ? (
+                  <div className="fleet-inspection-alert fleet-inspection-alert--error">
+                    {assignError}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="fleet-inspection-modal-card__footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => closeAssignModal()}
+                  disabled={assignSaving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleManualAssign}
+                  disabled={assignSaving}
+                >
+                  {assignSaving ? 'Sending...' : 'Send WhatsApp reminder'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+        : null}
     </section>
   );
 }

@@ -48,6 +48,16 @@ router.get('/tasks', async (req, res) => {
   }
 });
 
+router.post('/tasks/manual-assign', async (req, res) => {
+  try {
+    const task = await vehicleInspectionsService.assignInspectionTaskManually(req.body || {});
+    res.status(201).json(task);
+  } catch (error) {
+    console.error('POST /api/fleet-inspections/tasks/manual-assign error', error);
+    res.status(400).json({ error: String(error?.message || error || 'Failed to assign inspection manually') });
+  }
+});
+
 router.delete('/tasks/:id', async (req, res) => {
   try {
     const deleted = await vehicleInspectionsService.deleteInspectionTask(req.params.id);
