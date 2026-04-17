@@ -570,12 +570,13 @@ export class InspectionReminderService {
     });
   }
 
-  async sendReminderForTask(task, config, now = new Date()) {
+  async sendReminderForTask(task, config, now = new Date(), options = {}) {
     const currentTask = await this.refreshTaskDriverPhone(task);
     if (!currentTask) {
       return { status: 'missing_task', task: null };
     }
 
+    const requirePush = options?.requirePush === true;
     const today = toDateOnly(now);
     const sentTo = normalizePhoneForWhatsApp(currentTask.driver_phone, config.defaultCountryCode);
     const inspectionUrl = buildInspectionUrl(config.publicBaseUrl, currentTask.vin) || currentTask.inspection_url || '';
@@ -672,6 +673,45 @@ export class InspectionReminderService {
         status: 'sent_push',
         task: mapTaskRow(updateRes.rows?.[0] || null),
         sentTo: `${pushResult.sentCount} push device(s)`,
+      };
+    }
+
+    if (requirePush) {
+      const nextReminderAt = addMinutes(now, config.reminderIntervalMinutes);
+      const sameDayNextReminder = toDateOnly(nextReminderAt) === today ? nextReminderAt.toISOString() : null;
+      const requirePushMessage = !pushResult.configured
+        ? 'App notifications are not configured on the server yet.'
+        : pushResult.failedCount > 0
+          ? `Failed to send app notification. ${pushResult.lastError || 'Please try again.'}`
+          : 'This driver has no app notifications enabled on any device.';
+      await query(
+        `UPDATE vehicle_internal_inspection_tasks
+         SET last_reminder_status = 'missing_push',
+             last_reminder_error = $2,
+             next_reminder_at = $3,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [currentTask.id, requirePushMessage, sameDayNextReminder],
+      );
+      await this.logReminderAttempt(currentTask.id, 'missing_push', {
+        channel: 'push',
+        errorMessage: requirePushMessage,
+        payload: {
+          inspectionUrl,
+          deviceCount: pushResult.deviceCount,
+          failedCount: pushResult.failedCount,
+          pushConfigured: pushResult.configured,
+        },
+      });
+      return {
+        status: 'missing_push',
+        task: mapTaskRow({
+          ...currentTask,
+          last_reminder_status: 'missing_push',
+          last_reminder_error: requirePushMessage,
+          next_reminder_at: sameDayNextReminder,
+        }),
+        errorMessage: requirePushMessage,
       };
     }
 
@@ -929,21 +969,39 @@ export class InspectionReminderService {
     );
 
     const manualTask = mapTaskRow(upsertRes.rows?.[0] || null);
-    const reminderResult = await this.sendReminderForTask(manualTask, config, now);
+    const reminderResult = await this.sendReminderForTask(manualTask, config, now, { requirePush: true });
 
-    if (reminderResult.status === 'missing_phone') {
+    if (reminderResult.status === 'missing_phone' || reminderResult.status === 'missing_push') {
       throw new Error(
         String(
-          reminderResult?.task?.last_reminder_error
-          || 'Selected employee does not have FleetCheck notifications enabled and does not have a valid WhatsApp number in Employee overview',
+          reminderResult?.errorMessage
+          || reminderResult?.task?.last_reminder_error
+          || 'This driver has no app notifications enabled on any device.',
         ),
       );
     }
     if (reminderResult.status === 'send_failed') {
-      throw new Error(reminderResult.errorMessage || 'Failed to send WhatsApp reminder');
+      throw new Error(reminderResult.errorMessage || 'Failed to send app notification');
     }
 
-    return reminderResult.task || manualTask;
+    if (reminderResult.status === 'sent_whatsapp') {
+      throw new Error(
+        String(
+          reminderResult?.task?.last_reminder_error
+          || 'Manual assignment is limited to app notifications only.',
+        ),
+      );
+    }
+
+    const deliveredTask = reminderResult.task || manualTask;
+    return {
+      task: deliveredTask,
+      delivery: {
+        status: reminderResult.status || deliveredTask?.last_reminder_status || null,
+        sentTo: reminderResult.sentTo || null,
+        errorMessage: reminderResult.errorMessage || null,
+      },
+    };
   }
 
   async listTasks(filters = {}) {

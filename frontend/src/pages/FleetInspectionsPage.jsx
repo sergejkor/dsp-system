@@ -62,7 +62,10 @@ function taskLabel(status) {
 
 function deliveryLabel(status) {
   if (status === 'sent') return 'Sent';
-  if (status === 'missing_phone') return 'Missing phone';
+  if (status === 'sent_push') return 'Sent to app';
+  if (status === 'sent_whatsapp') return 'Sent to saved number';
+  if (status === 'missing_push') return 'No app device';
+  if (status === 'missing_phone') return 'Missing contact number';
   if (status === 'send_failed') return 'Send failed';
   return status || 'Not sent yet';
 }
@@ -79,6 +82,24 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return formatPortalDateTime(date) || value;
+}
+
+function manualAssignMessage(response) {
+  const task = response?.task || response || null;
+  const deliveryStatus = response?.delivery?.status || task?.last_reminder_status || '';
+  const sentTo = String(response?.delivery?.sentTo || '').trim();
+
+  if (deliveryStatus === 'sent_push') {
+    return sentTo
+      ? `Inspection assigned manually and sent to ${sentTo}.`
+      : 'Inspection assigned manually and sent to the linked app device.';
+  }
+  if (deliveryStatus === 'sent_whatsapp') {
+    return sentTo
+      ? `Inspection assigned manually and sent to ${sentTo}.`
+      : 'Inspection assigned manually and sent to the saved contact number.';
+  }
+  return 'Inspection assigned manually.';
 }
 
 export default function FleetInspectionsPage() {
@@ -187,8 +208,8 @@ export default function FleetInspectionsPage() {
   }, [tasks]);
 
   const notificationToggleText = notificationsEnabled
-    ? 'Turn WhatsApp notifications off'
-    : 'Turn WhatsApp notifications on';
+    ? 'Turn notifications off'
+    : 'Turn notifications on';
 
   const employeeOptions = useMemo(
     () => (employees || []).map((employee) => ({
@@ -229,11 +250,11 @@ export default function FleetInspectionsPage() {
       setNotificationsEnabled(nextEnabled);
       setMessage(
         nextEnabled
-          ? 'WhatsApp notifications are now enabled.'
-          : 'WhatsApp notifications are now disabled.',
+          ? 'Notifications are now enabled.'
+          : 'Notifications are now disabled.',
       );
     } catch (toggleError) {
-      setError(toggleError.message || 'Failed to update WhatsApp notifications setting');
+      setError(toggleError.message || 'Failed to update notification setting');
     } finally {
       setNotificationsSaving(false);
     }
@@ -250,13 +271,13 @@ export default function FleetInspectionsPage() {
     setError('');
     setMessage('');
     try {
-      await assignFleetInspectionTaskManually({
+      const assignResult = await assignFleetInspectionTaskManually({
         driverKenjoUserId: assignForm.employeeId,
         carId: Number(assignForm.carId),
       });
       await reloadPageData();
       closeAssignModal(true);
-      setMessage('Inspection assigned manually and WhatsApp reminder sent.');
+      setMessage(manualAssignMessage(assignResult));
     } catch (assignRequestError) {
       setAssignError(assignRequestError.message || 'Failed to assign inspection manually');
     } finally {
@@ -429,7 +450,7 @@ export default function FleetInspectionsPage() {
           <div>
             <p className="fleet-inspection-label" style={{ margin: 0 }}>Daily task queue</p>
             <p className="fleet-inspection-muted">
-              Shows who should receive reminders, current status, last delivery state and when the next WhatsApp reminder will be sent.
+              Shows who should receive reminders, current status, last delivery state and when the next notification will be sent.
             </p>
           </div>
         </div>
@@ -779,7 +800,7 @@ export default function FleetInspectionsPage() {
 
               <div className="fleet-inspection-modal-card__body">
                 <p className="fleet-inspection-muted" style={{ marginTop: 0 }}>
-                  Manual assignment sends a WhatsApp reminder immediately, even when automatic notifications are turned off. WhatsApp numbers are taken from the employee overview WhatsApp number.
+                  Manual assignment sends a notification immediately, even when automatic notifications are turned off. The contact number is taken from the employee overview notification number.
                 </p>
 
                 <div className="fleet-inspection-grid">
@@ -842,7 +863,7 @@ export default function FleetInspectionsPage() {
                   onClick={handleManualAssign}
                   disabled={assignSaving}
                 >
-                  {assignSaving ? 'Sending...' : 'Send WhatsApp reminder'}
+                  {assignSaving ? 'Sending...' : 'Send notification'}
                 </button>
               </div>
             </div>
