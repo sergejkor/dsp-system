@@ -90,15 +90,15 @@ async function resolveIdentityAliases({ kenjoUserId, employeeRef }) {
 
   const res = await query(
     `SELECT
-       ke.kenjo_user_id,
-       ke.employee_number,
-       ke.transporter_id
+       ke.kenjo_user_id::text AS kenjo_user_id,
+       ke.employee_number::text AS employee_number,
+       ke.transporter_id::text AS transporter_id
      FROM kenjo_employees ke
-     WHERE ($1::text IS NOT NULL AND ke.kenjo_user_id = $1)
+     WHERE ($1::text IS NOT NULL AND ke.kenjo_user_id::text = $1::text)
         OR ($2::text IS NOT NULL AND (
-          ke.employee_number = $2
-          OR ke.transporter_id = $2
-          OR ke.kenjo_user_id = $2
+          ke.employee_number::text = $2::text
+          OR ke.transporter_id::text = $2::text
+          OR ke.kenjo_user_id::text = $2::text
         ))
      ORDER BY ke.is_active DESC, ke.id ASC
      LIMIT 10`,

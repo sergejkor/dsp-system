@@ -152,24 +152,24 @@ async function findMatchingDriverContact(driverIdentifier, preferredKenjoUserId 
 
   const res = await query(
     `SELECT
-       ke.employee_number,
-       ke.kenjo_user_id,
-       ke.transporter_id,
+       ke.employee_number::text AS employee_number,
+       ke.kenjo_user_id::text AS kenjo_user_id,
+       ke.transporter_id::text AS transporter_id,
        ke.display_name,
        ke.first_name,
        ke.last_name,
        ke.whatsapp_number
      FROM kenjo_employees ke
-     WHERE ($1::text IS NOT NULL AND ke.kenjo_user_id = $1)
+     WHERE ($1::text IS NOT NULL AND ke.kenjo_user_id::text = $1::text)
         OR ($2::text IS NOT NULL AND (
-          LOWER(COALESCE(ke.display_name, '')) = LOWER($2)
-          OR LOWER(TRIM(COALESCE(ke.first_name, '') || ' ' || COALESCE(ke.last_name, ''))) = LOWER($2)
-          OR LOWER(COALESCE(ke.employee_number, '')) = LOWER($2)
-          OR LOWER(COALESCE(ke.transporter_id, '')) = LOWER($2)
-          OR LOWER(COALESCE(ke.kenjo_user_id, '')) = LOWER($2)
+          LOWER(COALESCE(ke.display_name, '')) = LOWER($2::text)
+          OR LOWER(TRIM(COALESCE(ke.first_name, '') || ' ' || COALESCE(ke.last_name, ''))) = LOWER($2::text)
+          OR LOWER(COALESCE(ke.employee_number::text, '')) = LOWER($2::text)
+          OR LOWER(COALESCE(ke.transporter_id::text, '')) = LOWER($2::text)
+          OR LOWER(COALESCE(ke.kenjo_user_id::text, '')) = LOWER($2::text)
         ))
      ORDER BY
-       CASE WHEN $1::text IS NOT NULL AND ke.kenjo_user_id = $1 THEN 0 ELSE 1 END,
+       CASE WHEN $1::text IS NOT NULL AND ke.kenjo_user_id::text = $1::text THEN 0 ELSE 1 END,
        ke.is_active DESC,
        ke.id ASC
      LIMIT 1`,

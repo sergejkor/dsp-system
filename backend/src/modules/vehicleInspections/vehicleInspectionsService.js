@@ -680,23 +680,33 @@ async function deleteInspection(id) {
     if (task) {
       const planDate = toDateOnly(task.plan_date);
       const isPastTask = Boolean(planDate && today && planDate < today);
-      await client.query(
-        `UPDATE vehicle_internal_inspection_tasks
-         SET status = $2,
-             completed_inspection_id = NULL,
-             completed_at = NULL,
-             failed_at = CASE WHEN $2 = 'failed' THEN COALESCE(failed_at, NOW()) ELSE NULL END,
-             next_reminder_at = CASE
-               WHEN $2 = 'failed' THEN NULL
-               ELSE COALESCE(next_reminder_at, reminder_start_at, NOW())
-             END,
-             updated_at = NOW()
-         WHERE id = $1`,
-        [
-          task.id,
-          isPastTask ? 'failed' : (Number(task.reminder_count || 0) > 0 ? 'reminded' : 'pending'),
-        ],
-      );
+      const nextStatus = isPastTask ? 'failed' : (Number(task.reminder_count || 0) > 0 ? 'reminded' : 'pending');
+      if (nextStatus === 'failed') {
+        await client.query(
+          `UPDATE vehicle_internal_inspection_tasks
+           SET status = 'failed',
+               completed_inspection_id = NULL,
+               completed_at = NULL,
+               failed_at = COALESCE(failed_at, NOW()),
+               next_reminder_at = NULL,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [task.id],
+        );
+      } else {
+        const nextStatusSql = nextStatus === 'reminded' ? 'reminded' : 'pending';
+        await client.query(
+          `UPDATE vehicle_internal_inspection_tasks
+           SET status = '${nextStatusSql}',
+               completed_inspection_id = NULL,
+               completed_at = NULL,
+               failed_at = NULL,
+               next_reminder_at = COALESCE(next_reminder_at, reminder_start_at, NOW()),
+               updated_at = NOW()
+           WHERE id = $1`,
+          [task.id],
+        );
+      }
     }
 
     await client.query(

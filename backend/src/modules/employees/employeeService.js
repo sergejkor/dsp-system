@@ -294,9 +294,9 @@ async function ensureLocalEmployeeRow(employeeRef) {
 
   const kenjoRes = await query(
     `SELECT
-       kenjo_user_id,
-       employee_number,
-       transporter_id,
+       kenjo_user_id::text AS kenjo_user_id,
+       employee_number::text AS employee_number,
+       transporter_id::text AS transporter_id,
        first_name,
        last_name,
        display_name,
@@ -304,7 +304,9 @@ async function ensureLocalEmployeeRow(employeeRef) {
        contract_end,
        is_active
      FROM kenjo_employees
-     WHERE kenjo_user_id = $1 OR employee_number = $1 OR transporter_id = $1
+     WHERE kenjo_user_id::text = $1::text
+        OR employee_number::text = $1::text
+        OR transporter_id::text = $1::text
      LIMIT 1`,
     [ref]
   ).catch(() => ({ rows: [] }));
@@ -584,11 +586,14 @@ async function resolveEmployeeRefs(employeeRef) {
     const candidates = [...refs];
     if (!candidates.length) return;
     const kenjoRes = await query(
-      `SELECT kenjo_user_id, employee_number, transporter_id
+      `SELECT
+         kenjo_user_id::text AS kenjo_user_id,
+         employee_number::text AS employee_number,
+         transporter_id::text AS transporter_id
        FROM kenjo_employees
-       WHERE kenjo_user_id = ANY($1::text[])
-          OR employee_number = ANY($1::text[])
-          OR transporter_id = ANY($1::text[])`,
+       WHERE kenjo_user_id::text = ANY($1::text[])
+          OR employee_number::text = ANY($1::text[])
+          OR transporter_id::text = ANY($1::text[])`,
       [candidates]
     ).catch(() => ({ rows: [] }));
 
@@ -636,17 +641,20 @@ async function resolveEmployeeRescueTarget(employeeRef) {
 
     if (candidateRefs.length) {
       const kenjoRes = await query(
-        `SELECT kenjo_user_id, employee_number, transporter_id
+        `SELECT
+           kenjo_user_id::text AS kenjo_user_id,
+           employee_number::text AS employee_number,
+           transporter_id::text AS transporter_id
          FROM kenjo_employees
-         WHERE kenjo_user_id = ANY($1::text[])
-            OR employee_number = ANY($1::text[])
-            OR transporter_id = ANY($1::text[])
+         WHERE kenjo_user_id::text = ANY($1::text[])
+            OR employee_number::text = ANY($1::text[])
+            OR transporter_id::text = ANY($1::text[])
          ORDER BY CASE
-           WHEN employee_number = ANY($1::text[]) THEN 0
-           WHEN transporter_id = ANY($1::text[]) THEN 1
-           WHEN kenjo_user_id = ANY($1::text[]) THEN 2
+           WHEN employee_number::text = ANY($1::text[]) THEN 0
+           WHEN transporter_id::text = ANY($1::text[]) THEN 1
+           WHEN kenjo_user_id::text = ANY($1::text[]) THEN 2
            ELSE 3
-         END, kenjo_user_id ASC
+         END, kenjo_user_id::text ASC
          LIMIT 1`,
         [candidateRefs]
       ).catch(() => ({ rows: [] }));
@@ -979,9 +987,9 @@ async function buildEmployeeTimeOffNameCandidates(employee, target) {
     const res = await query(
       `SELECT display_name, first_name, last_name
        FROM kenjo_employees
-       WHERE kenjo_user_id = ANY($1::text[])
-          OR employee_number = ANY($1::text[])
-          OR transporter_id = ANY($1::text[])`,
+       WHERE kenjo_user_id::text = ANY($1::text[])
+          OR employee_number::text = ANY($1::text[])
+          OR transporter_id::text = ANY($1::text[])`,
       [refs]
     ).catch(() => ({ rows: [] }));
     for (const row of res.rows || []) {
