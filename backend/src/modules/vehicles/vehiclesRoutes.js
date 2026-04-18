@@ -15,16 +15,11 @@ router.get('/by-vin/:vin', async (req, res) => {
     if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
-    if (!vehicle.vehicleType) {
-      return res.status(409).json({
-        error: 'Vehicle inspection type is not configured for this VIN',
-        vehicleId: vehicle.vehicleId,
-      });
-    }
 
     return res.json({
       vehicleId: vehicle.vehicleId,
-      vehicleType: vehicle.vehicleType,
+      vehicleType: vehicle.vehicleType || null,
+      inspectionProfileConfigured: Boolean(vehicle.vehicleType),
       carId: vehicle.carId,
       vin: vehicle.vin,
       licensePlate: vehicle.licensePlate,

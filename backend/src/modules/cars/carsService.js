@@ -19,19 +19,77 @@ function normalizeInspectionVehicleType(value) {
   return INSPECTION_VEHICLE_TYPES.has(normalized) ? normalized : null;
 }
 
+function normalizeVinToken(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
 function inferInspectionVehicleType(car) {
   const direct = normalizeInspectionVehicleType(car?.inspection_vehicle_type);
   if (direct) return direct;
 
-  const combined = [car?.model, car?.vehicle_type, car?.vehicle_id]
+  const combined = [
+    car?.model,
+    car?.vehicle_type,
+    car?.vehicle_id,
+    car?.fleet_provider,
+    car?.station,
+    car?.license_plate,
+  ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
+  const vinToken = normalizeVinToken(car?.vin);
 
-  if (combined.includes('sprinter')) return 'sprinter_high_roof_long';
-  if (combined.includes('boxer')) return 'peugeot_boxer';
   if (combined.includes('rivian') || combined.includes('edv') || combined.includes('step van')) {
     return 'rivian_edv';
+  }
+  if (
+    combined.includes('boxer') ||
+    combined.includes('ducato') ||
+    combined.includes('jumper') ||
+    combined.includes('relay') ||
+    combined.includes('movano')
+  ) {
+    return 'peugeot_boxer';
+  }
+  if (
+    combined.includes('sprinter') ||
+    combined.includes('esprinter') ||
+    combined.includes('mercedes sprinter') ||
+    combined.includes('benz sprinter') ||
+    combined.includes('vs30') ||
+    combined.includes('906') ||
+    combined.includes('907') ||
+    combined.includes('910') ||
+    combined.includes('high roof') ||
+    combined.includes('l2h2') ||
+    combined.includes('l2h3') ||
+    combined.includes('l3h2') ||
+    combined.includes('l3h3')
+  ) {
+    return 'sprinter_high_roof_long';
+  }
+
+  // Use VIN WMI/prefix heuristics when the fleet master row lacks a usable model string.
+  if (/^(7FC|7FH|7PD)/.test(vinToken)) return 'rivian_edv';
+  if (/^(VF3|VF7|ZFA|W0V|VXE)/.test(vinToken)) return 'peugeot_boxer';
+  if (/^(W1V|W1W|W1Y|WD3|WD4|WDB|WDF)/.test(vinToken)) return 'sprinter_high_roof_long';
+
+  // FleetCheck currently supports only three van profiles. For generic delivery vans
+  // without a curated inspection type, default to the Sprinter profile so the vehicle
+  // can still be loaded and inspected instead of failing at VIN resolve time.
+  if (
+    combined.includes('van') ||
+    combined.includes('cargo') ||
+    combined.includes('transporter') ||
+    combined.includes('delivery') ||
+    combined.includes('amazon') ||
+    combined.includes('prime')
+  ) {
+    return 'sprinter_high_roof_long';
   }
   return null;
 }
@@ -450,14 +508,11 @@ async function deleteCar(id) {
 
 async function resolveVehicleByVin(vin) {
   await ensureInspectionVehicleColumns();
-  const normalizedVin = String(vin || '')
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+  const normalizedVin = normalizeVinToken(vin);
   if (!normalizedVin) return null;
 
   const res = await query(
-    `SELECT id, vehicle_id, license_plate, vin, model, vehicle_type, inspection_vehicle_type
+    `SELECT id, vehicle_id, license_plate, vin, model, vehicle_type, inspection_vehicle_type, fleet_provider, station
      FROM cars
      WHERE REGEXP_REPLACE(UPPER(COALESCE(vin, '')), '[^A-Z0-9]', '', 'g') = $1
      LIMIT 1`,
@@ -465,6 +520,18 @@ async function resolveVehicleByVin(vin) {
   );
   const car = res.rows[0];
   if (!car) return null;
+  const inferredVehicleType = inferInspectionVehicleType(car);
+
+  if (inferredVehicleType && !normalizeInspectionVehicleType(car.inspection_vehicle_type)) {
+    await query(
+      `UPDATE cars
+       SET inspection_vehicle_type = $2,
+           updated_at = NOW()
+       WHERE id = $1
+         AND COALESCE(TRIM(inspection_vehicle_type), '') = ''`,
+      [car.id, inferredVehicleType],
+    ).catch(() => null);
+  }
 
   return {
     carId: car.id,
@@ -472,7 +539,7 @@ async function resolveVehicleByVin(vin) {
     vin: car.vin || normalizedVin,
     licensePlate: car.license_plate || null,
     model: car.model || null,
-    vehicleType: inferInspectionVehicleType(car),
+    vehicleType: inferredVehicleType,
   };
 }
 
