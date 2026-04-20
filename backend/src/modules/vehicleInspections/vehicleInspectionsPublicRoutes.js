@@ -55,7 +55,7 @@ router.get('/operators', async (req, res) => {
          first_name,
          last_name,
          display_name,
-         email,
+         NULL::text AS email,
          is_active
        FROM kenjo_employees
        WHERE COALESCE(is_active, FALSE) = TRUE
@@ -63,7 +63,6 @@ router.get('/operators', async (req, res) => {
            LOWER(COALESCE(display_name, '')) LIKE $1
            OR LOWER(COALESCE(first_name, '')) LIKE $1
            OR LOWER(COALESCE(last_name, '')) LIKE $1
-           OR LOWER(COALESCE(email, '')) LIKE $1
            OR LOWER(COALESCE(employee_number::text, '')) LIKE $1
            OR LOWER(COALESCE(transporter_id::text, '')) LIKE $1
            OR LOWER(
@@ -73,7 +72,6 @@ router.get('/operators', async (req, res) => {
                  COALESCE(first_name, ''),
                  COALESCE(last_name, ''),
                  COALESCE(display_name, ''),
-                 COALESCE(email, ''),
                  COALESCE(employee_number::text, ''),
                  COALESCE(transporter_id::text, '')
                )
@@ -81,7 +79,7 @@ router.get('/operators', async (req, res) => {
            ) LIKE $1
          )
        ORDER BY
-         LOWER(COALESCE(display_name, CONCAT_WS(' ', first_name, last_name), email, employee_number::text, transporter_id::text)),
+         LOWER(COALESCE(display_name, CONCAT_WS(' ', first_name, last_name), employee_number::text, transporter_id::text)),
          kenjo_user_id::text
        LIMIT 100`,
       [searchTerm]
