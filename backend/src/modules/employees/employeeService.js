@@ -206,16 +206,31 @@ async function listEmployees({ search, onlyActive } = {}) {
 
   if (search && String(search).trim()) {
     const term = `%${String(search).trim().toLowerCase()}%`;
-    params.push(term, term, term, term, term, term, term);
+    const baseIndex = params.length + 1;
+    params.push(term, term, term, term, term, term, term, term);
     where.push(
       `(
-        LOWER(COALESCE(e.first_name, '')) LIKE $${params.length - 6}
-        OR LOWER(COALESCE(e.last_name, '')) LIKE $${params.length - 5}
-        OR LOWER(COALESCE(e.display_name, '')) LIKE $${params.length - 4}
-        OR LOWER(COALESCE(e.email, '')) LIKE $${params.length - 3}
-        OR LOWER(COALESCE(e.employee_id, '')) LIKE $${params.length - 2}
-        OR LOWER(COALESCE(e.pn, '')) LIKE $${params.length - 1}
-        OR LOWER(COALESCE(e.transporter_id, '')) LIKE $${params.length}
+        LOWER(COALESCE(e.first_name, '')) LIKE $${baseIndex}
+        OR LOWER(COALESCE(e.last_name, '')) LIKE $${baseIndex + 1}
+        OR LOWER(COALESCE(e.display_name, '')) LIKE $${baseIndex + 2}
+        OR LOWER(COALESCE(e.email, '')) LIKE $${baseIndex + 3}
+        OR LOWER(COALESCE(e.employee_id, '')) LIKE $${baseIndex + 4}
+        OR LOWER(COALESCE(e.pn, '')) LIKE $${baseIndex + 5}
+        OR LOWER(COALESCE(e.transporter_id, '')) LIKE $${baseIndex + 6}
+        OR LOWER(
+          TRIM(
+            CONCAT_WS(
+              ' ',
+              COALESCE(e.first_name, ''),
+              COALESCE(e.last_name, ''),
+              COALESCE(e.display_name, ''),
+              COALESCE(e.email, ''),
+              COALESCE(e.employee_id, ''),
+              COALESCE(e.pn, ''),
+              COALESCE(e.transporter_id, '')
+            )
+          )
+        ) LIKE $${baseIndex + 7}
       )`
     );
   }

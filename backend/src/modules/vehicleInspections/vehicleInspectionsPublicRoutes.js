@@ -66,6 +66,19 @@ router.get('/operators', async (req, res) => {
            OR LOWER(COALESCE(email, '')) LIKE $1
            OR LOWER(COALESCE(employee_number::text, '')) LIKE $1
            OR LOWER(COALESCE(transporter_id::text, '')) LIKE $1
+           OR LOWER(
+             TRIM(
+               CONCAT_WS(
+                 ' ',
+                 COALESCE(first_name, ''),
+                 COALESCE(last_name, ''),
+                 COALESCE(display_name, ''),
+                 COALESCE(email, ''),
+                 COALESCE(employee_number::text, ''),
+                 COALESCE(transporter_id::text, '')
+               )
+             )
+           ) LIKE $1
          )
        ORDER BY
          LOWER(COALESCE(display_name, CONCAT_WS(' ', first_name, last_name), email, employee_number::text, transporter_id::text)),
