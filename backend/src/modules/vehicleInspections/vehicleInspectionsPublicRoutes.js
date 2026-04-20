@@ -3,6 +3,7 @@ import multer from 'multer';
 import { query } from '../../db.js';
 import vehicleInspectionsService from './vehicleInspectionsService.js';
 import employeeService from '../employees/employeeService.js';
+import { getKenjoUsersList } from '../kenjo/kenjoClient.js';
 
 const router = Router();
 const upload = multer({
@@ -85,6 +86,23 @@ router.get('/operators', async (req, res) => {
       [searchTerm]
     ).catch(() => ({ rows: [] }));
 
+    const kenjoUsers = await getKenjoUsersList().catch(() => []);
+    const remoteRows = (Array.isArray(kenjoUsers) ? kenjoUsers : []).filter((row) => {
+      const haystack = [
+        row?.displayName,
+        row?.firstName,
+        row?.lastName,
+        row?.email,
+        row?.employeeNumber,
+        row?.transportationId,
+        [row?.firstName, row?.lastName].filter(Boolean).join(' '),
+      ]
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+        .join(' ');
+      return Boolean(row?.isActive ?? true) && haystack.includes(search.toLowerCase());
+    });
+
     const seen = new Set();
     const normalizeOperator = (row) => {
       const label =
@@ -111,7 +129,7 @@ router.get('/operators', async (req, res) => {
       };
     };
 
-    const out = [...(employees || []), ...(kenjoRows.rows || [])]
+    const out = [...(employees || []), ...(kenjoRows.rows || []), ...remoteRows]
       .map(normalizeOperator)
       .filter(Boolean)
       .slice(0, 8);
