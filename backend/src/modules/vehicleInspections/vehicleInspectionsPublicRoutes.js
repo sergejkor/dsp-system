@@ -106,15 +106,46 @@ router.get('/operators', async (req, res) => {
     const seen = new Set();
     const normalizeOperator = (row) => {
       const label =
-        String(row?.display_name || '').trim() ||
-        [row?.first_name, row?.last_name].filter(Boolean).join(' ').trim() ||
+        String(row?.display_name || row?.displayName || '').trim() ||
+        [row?.first_name || row?.firstName, row?.last_name || row?.lastName].filter(Boolean).join(' ').trim() ||
         String(row?.email || '').trim() ||
-        String(row?.employee_id || row?.employee_number || row?.transporter_id || row?.id || row?.kenjo_user_id || '').trim();
+        String(
+          row?.employee_id
+          || row?.employeeId
+          || row?.employee_number
+          || row?.employeeNumber
+          || row?.transporter_id
+          || row?.transportationId
+          || row?.id
+          || row?._id
+          || row?.kenjo_user_id
+          || ''
+        ).trim();
       if (!label) return null;
 
-      const employeeId = String(row?.employee_id || row?.employee_number || row?.id || row?.kenjo_user_id || label).trim();
-      const employeeRef = String(row?.employee_id || row?.employee_number || row?.transporter_id || row?.id || row?.kenjo_user_id || label).trim();
-      const kenjoUserId = String(row?.kenjo_user_id || '').trim() || null;
+      const employeeId = String(
+        row?.employee_id
+        || row?.employeeId
+        || row?.employee_number
+        || row?.employeeNumber
+        || row?.id
+        || row?._id
+        || row?.kenjo_user_id
+        || label
+      ).trim();
+      const employeeRef = String(
+        row?.employee_id
+        || row?.employeeId
+        || row?.employee_number
+        || row?.employeeNumber
+        || row?.transporter_id
+        || row?.transportationId
+        || row?.id
+        || row?._id
+        || row?.kenjo_user_id
+        || label
+      ).trim();
+      const kenjoUserId = String(row?.kenjo_user_id || row?._id || '').trim() || null;
       const dedupeKey = [kenjoUserId, employeeRef, label.toLowerCase()].filter(Boolean).join('|');
       if (!dedupeKey || seen.has(dedupeKey)) return null;
       seen.add(dedupeKey);
