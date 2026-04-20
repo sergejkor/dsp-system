@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { query } from '../../db.js';
 import vehicleInspectionsService from './vehicleInspectionsService.js';
 import employeeService from '../employees/employeeService.js';
 
@@ -43,26 +44,67 @@ router.get('/operators', async (req, res) => {
     if (search.length < 2) {
       return res.json([]);
     }
+
     const employees = await employeeService.listEmployees({ search, onlyActive: true });
-    const out = (employees || [])
-      .map((row) => {
-        const label =
-          String(row.display_name || '').trim() ||
-          [row.first_name, row.last_name].filter(Boolean).join(' ').trim() ||
-          String(row.email || '').trim() ||
-          String(row.employee_id || row.id || '').trim();
-        if (!label) return null;
-        return {
-          id: String(row.employee_id || row.id || row.kenjo_user_id || label),
-          employeeId: String(row.id || row.employee_id || row.kenjo_user_id || label),
-          employeeRef: String(row.employee_id || row.transporter_id || row.id || label),
-          kenjoUserId: String(row.kenjo_user_id || '').trim() || null,
-          label,
-          subtitle: String(row.email || '').trim() || null,
-        };
-      })
+    const searchTerm = `%${search.toLowerCase()}%`;
+    const kenjoRows = await query(
+      `SELECT
+         kenjo_user_id::text AS kenjo_user_id,
+         employee_number::text AS employee_number,
+         transporter_id::text AS transporter_id,
+         first_name,
+         last_name,
+         display_name,
+         email,
+         is_active
+       FROM kenjo_employees
+       WHERE COALESCE(is_active, FALSE) = TRUE
+         AND (
+           LOWER(COALESCE(display_name, '')) LIKE $1
+           OR LOWER(COALESCE(first_name, '')) LIKE $1
+           OR LOWER(COALESCE(last_name, '')) LIKE $1
+           OR LOWER(COALESCE(email, '')) LIKE $1
+           OR LOWER(COALESCE(employee_number::text, '')) LIKE $1
+           OR LOWER(COALESCE(transporter_id::text, '')) LIKE $1
+         )
+       ORDER BY
+         LOWER(COALESCE(display_name, CONCAT_WS(' ', first_name, last_name), email, employee_number::text, transporter_id::text)),
+         kenjo_user_id::text
+       LIMIT 100`,
+      [searchTerm]
+    ).catch(() => ({ rows: [] }));
+
+    const seen = new Set();
+    const normalizeOperator = (row) => {
+      const label =
+        String(row?.display_name || '').trim() ||
+        [row?.first_name, row?.last_name].filter(Boolean).join(' ').trim() ||
+        String(row?.email || '').trim() ||
+        String(row?.employee_id || row?.employee_number || row?.transporter_id || row?.id || row?.kenjo_user_id || '').trim();
+      if (!label) return null;
+
+      const employeeId = String(row?.employee_id || row?.employee_number || row?.id || row?.kenjo_user_id || label).trim();
+      const employeeRef = String(row?.employee_id || row?.employee_number || row?.transporter_id || row?.id || row?.kenjo_user_id || label).trim();
+      const kenjoUserId = String(row?.kenjo_user_id || '').trim() || null;
+      const dedupeKey = [kenjoUserId, employeeRef, label.toLowerCase()].filter(Boolean).join('|');
+      if (!dedupeKey || seen.has(dedupeKey)) return null;
+      seen.add(dedupeKey);
+
+      return {
+        id: employeeId,
+        employeeId,
+        employeeRef,
+        kenjoUserId,
+        label,
+        subtitle: String(row?.email || '').trim() || null,
+      };
+    };
+
+    const out = [...(employees || []), ...(kenjoRows.rows || [])]
+      .map(normalizeOperator)
       .filter(Boolean)
       .slice(0, 8);
+
     return res.json(out);
   } catch (error) {
     console.error('GET /api/public/fleet-inspections/operators error', error);
