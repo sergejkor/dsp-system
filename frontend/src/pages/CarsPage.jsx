@@ -55,6 +55,28 @@ function formatMileage(n) {
   return Number.isFinite(num) ? `${num.toLocaleString('de-DE')} km` : '—';
 }
 
+function getCarDisplayIdentifier(car) {
+  if (!car) return 'Car Details';
+  return car.license_plate || car.vehicle_id || car.vin || 'Car Details';
+}
+
+function isDateWithinLastDays(dateOnly, days) {
+  const date = parseDateOnlyAsLocal(dateOnly);
+  const today = parseDateOnlyAsLocal(getLocalToday());
+  if (!date || !today || !Number.isFinite(days) || days <= 0) return false;
+  const diffDays = Math.floor((today.getTime() - date.getTime()) / 86400000);
+  return diffDays >= 0 && diffDays < days;
+}
+
+function hasWorkshopAppointment(car) {
+  return Boolean(
+    car?.planned_workshop_from ||
+    car?.planned_workshop_to ||
+    (car?.planned_workshop_name || '').trim() ||
+    (car?.planned_workshop_comment || '').trim()
+  );
+}
+
 function getCarDriverLabel(car) {
   if (!car) return '—';
   return (
@@ -186,6 +208,24 @@ export default function CarsPage() {
       .finally(() => setLoading(false));
   }
 
+  async function refreshCarsAndDetails(updatedCar = null) {
+    loadCars();
+    loadKpis();
+    if (updatedCar && Number.isFinite(Number(updatedCar.id))) {
+      setDetailsCar(updatedCar);
+      return updatedCar;
+    }
+    if (!detailsCarId) return null;
+    try {
+      const freshCar = await getCarById(detailsCarId);
+      setDetailsCar(freshCar);
+      return freshCar;
+    } catch {
+      setDetailsCar(null);
+      return null;
+    }
+  }
+
   useEffect(() => {
     loadKpis();
   }, []);
@@ -206,8 +246,16 @@ export default function CarsPage() {
     if (assignCarId) getKenjoUsers().then(setKenjoUsers).catch(() => setKenjoUsers([]));
   }, [assignCarId]);
 
-  function openDetails(id) {
-    setDetailsCarId(id);
+  function openDetails(carOrId) {
+    const nextId =
+      typeof carOrId === 'object' && carOrId != null ? carOrId.id : carOrId;
+    if (!Number.isFinite(Number(nextId))) return;
+    const previewCar =
+      typeof carOrId === 'object' && carOrId != null
+        ? carOrId
+        : cars.find((item) => item.id === nextId) || null;
+    setDetailsCar(previewCar);
+    setDetailsCarId(nextId);
   }
 
   function handleExport() {
@@ -498,7 +546,7 @@ export default function CarsPage() {
                         <button
                           type="button"
                           className="cars-link"
-                          onClick={() => openDetails(c.id)}
+                          onClick={() => openDetails(c)}
                         >
                           {c.license_plate || '—'}
                         </button>
@@ -631,7 +679,7 @@ export default function CarsPage() {
         </div>
         {detailsCarId && detailsCar && (
           <div className="cars-selected-bar">
-            <strong>Selected car:</strong> {detailsCar.vehicle_id} · {detailsCar.license_plate || '—'} · {detailsCar.model || '—'} · {detailsCar.status}
+            <strong>Selected car:</strong> {getCarDisplayIdentifier(detailsCar)} · {detailsCar.model || '—'} · {detailsCar.status}
           </div>
         )}
         </>
@@ -658,7 +706,7 @@ export default function CarsPage() {
           car={detailsCar}
           loading={!detailsCar}
           onClose={() => setDetailsCarId(null)}
-          onRefresh={() => { loadCars(); loadKpis(); getCarById(detailsCarId).then(setDetailsCar); }}
+          onRefresh={refreshCarsAndDetails}
           onAssignDriver={() => { setDetailsCarId(null); setAssignCarId(detailsCarId); }}
           onOpenVinQr={openVinQr}
         />
@@ -776,7 +824,7 @@ export default function CarsPage() {
                               className="cars-link"
                               onClick={() => {
                                 closeKpiModal();
-                                openDetails(car.id);
+                                openDetails(car);
                               }}
                             >
                               {car.license_plate || '—'}
@@ -832,7 +880,7 @@ export default function CarsPage() {
               type="button"
               className="cars-action-menu-item"
               onClick={() => {
-                openDetails(actionsMenuCarRef.current.id);
+                openDetails(actionsMenuCarRef.current);
                 setActionsOpenId(null);
                 setActionsMenuPos(null);
                 actionsMenuCarRef.current = null;
@@ -1650,6 +1698,8 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
   const [localDocuments, setLocalDocuments] = useState([]);
   const [workshopForm, setWorkshopForm] = useState({ from: '', to: '', workshop: '', comment: '' });
   const [workshopSaving, setWorkshopSaving] = useState(false);
+  const [workshopEditing, setWorkshopEditing] = useState(false);
+  const [planningHistoryModalOpen, setPlanningHistoryModalOpen] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState('');
 
   useEffect(() => {
@@ -1724,18 +1774,18 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
   }, [car?.documents]);
 
   useEffect(() => {
-    setWorkshopForm({
-      from: car?.planned_workshop_from ? String(car.planned_workshop_from).slice(0, 10) : '',
-      to: car?.planned_workshop_to ? String(car.planned_workshop_to).slice(0, 10) : '',
-      workshop: car?.planned_workshop_name || '',
-      comment: car?.planned_workshop_comment || '',
-    });
+    setWorkshopForm({ from: '', to: '', workshop: '', comment: '' });
+    setWorkshopEditing(false);
     setDrawerMessage('');
   }, [car?.planned_workshop_from, car?.planned_workshop_to, car?.planned_workshop_name, car?.planned_workshop_comment]);
 
   if (!car && !loading) return null;
 
   const driverName = car ? [car.driver_first_name, car.driver_last_name].filter(Boolean).join(' ') : '';
+  const planningHistoryRows = Array.isArray(car?.planning_history) ? car.planning_history : [];
+  const recentPlanningHistory = planningHistoryRows.filter((row) => isDateWithinLastDays(row.plan_date, 7));
+  const hasSavedWorkshopAppointment = hasWorkshopAppointment(car);
+  const drawerTitle = getCarDisplayIdentifier(car);
 
   async function handleAddComment(e) {
     e.preventDefault();
@@ -1795,16 +1845,53 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
     setDrawerError('');
     setDrawerMessage('');
     try {
-      await updateCar(carId, {
+      const updatedCar = await updateCar(carId, {
         planned_workshop_from: workshopForm.from || null,
         planned_workshop_to: workshopForm.to || null,
         planned_workshop_name: workshopForm.workshop.trim() || null,
         planned_workshop_comment: workshopForm.comment.trim() || null,
       });
       setDrawerMessage('Planned workshop appointment saved.');
-      onRefresh();
+      setWorkshopForm({ from: '', to: '', workshop: '', comment: '' });
+      setWorkshopEditing(false);
+      await onRefresh?.(updatedCar);
     } catch (err) {
       setDrawerError(err?.message || 'Failed to save workshop appointment');
+    } finally {
+      setWorkshopSaving(false);
+    }
+  }
+
+  function handleEditWorkshopAppointment() {
+    setDrawerError('');
+    setDrawerMessage('');
+    setWorkshopEditing(true);
+    setWorkshopForm({
+      from: car?.planned_workshop_from ? String(car.planned_workshop_from).slice(0, 10) : '',
+      to: car?.planned_workshop_to ? String(car.planned_workshop_to).slice(0, 10) : '',
+      workshop: car?.planned_workshop_name || '',
+      comment: car?.planned_workshop_comment || '',
+    });
+  }
+
+  async function handleDeleteWorkshopAppointment() {
+    if (!carId) return;
+    setWorkshopSaving(true);
+    setDrawerError('');
+    setDrawerMessage('');
+    try {
+      const updatedCar = await updateCar(carId, {
+        planned_workshop_from: null,
+        planned_workshop_to: null,
+        planned_workshop_name: null,
+        planned_workshop_comment: null,
+      });
+      setWorkshopForm({ from: '', to: '', workshop: '', comment: '' });
+      setWorkshopEditing(false);
+      setDrawerMessage('Planned workshop appointment deleted.');
+      await onRefresh?.(updatedCar);
+    } catch (err) {
+      setDrawerError(err?.message || 'Failed to delete workshop appointment');
     } finally {
       setWorkshopSaving(false);
     }
@@ -1814,7 +1901,7 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
     <div className="drawer-backdrop" onClick={onClose}>
       <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
-          <h3>{loading ? '…' : (car?.vehicle_id || 'Car Details')}</h3>
+          <h3>{loading && !car ? 'Loading...' : drawerTitle}</h3>
           <button type="button" className="modal-close" onClick={onClose}>×</button>
         </div>
         <div className="drawer-body">
@@ -1825,7 +1912,10 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
               {/* Car summary at top */}
               <section className="drawer-section drawer-car-summary">
                 <div className="drawer-car-line">
-                  <strong>{car.vehicle_id}</strong> · {car.license_plate || '—'} · {car.model || '—'} · {car.status}
+                  <strong>{drawerTitle}</strong>
+                  {car.vehicle_id && car.vehicle_id !== drawerTitle ? ` · ${car.vehicle_id}` : ''}
+                  {car.model ? ` · ${car.model}` : ''}
+                  {car.status ? ` · ${car.status}` : ''}
                 </div>
               </section>
               <section className="drawer-section">
@@ -1911,29 +2001,13 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
                     </table>
                   </div>
                 )}
-                {Array.isArray(car.planning_history) && car.planning_history.length > 0 && (
+                {planningHistoryRows.length > 0 && (
                   <>
-                    <div style={{ marginTop: '0.75rem' }}>
-                      <label style={{ fontSize: '0.85rem' }}>
-                        Previous drivers from Car Planning
-                        <select
-                          style={{ marginLeft: '0.5rem', padding: '0.25rem 0.4rem' }}
-                          defaultValue=""
-                          onChange={() => {}}
-                        >
-                          <option value="">— Select —</option>
-                          {[...new Set(
-                            car.planning_history
-                              .map((p) => (p.driver_identifier || '').toString().trim())
-                              .filter((v) => v),
-                          )].map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                    <div className="drawer-subsection-header" style={{ marginTop: '0.75rem' }}>
+                      <strong>Assigned Drivers</strong>
+                      <span className="muted">Last 7 days</span>
                     </div>
+                    {recentPlanningHistory.length > 0 ? (
                     <div className="drawer-table-wrap" style={{ marginTop: '0.5rem' }}>
                       <table className="cars-table">
                         <thead>
@@ -1944,15 +2018,27 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
                           </tr>
                         </thead>
                         <tbody>
-                          {car.planning_history.map((p) => (
+                          {recentPlanningHistory.map((p) => (
                             <tr key={p.id}>
                               <td>{formatDate(p.plan_date)}</td>
-                              <td>{p.driver_identifier || '—'}</td>
+                                <td>{p.driver_identifier || '-'}</td>
                               <td>{p.abfahrtskontrolle ? 'Yes' : 'No'}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+                    </div>
+                    ) : (
+                      <p className="muted" style={{ marginTop: '0.5rem' }}>No assigned drivers in the last 7 days.</p>
+                    )}
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <button
+                        type="button"
+                        className="cars-btn cars-btn--secondary"
+                        onClick={() => setPlanningHistoryModalOpen(true)}
+                      >
+                        View Assigned Driver History
+                      </button>
                     </div>
                   </>
                 )}
@@ -2164,15 +2250,107 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
                       placeholder="Comment"
                     />
                   </label>
-                  <button type="submit" disabled={workshopSaving}>
-                    {workshopSaving ? 'Saving...' : 'Save workshop appointment'}
-                  </button>
+                  <div className="drawer-inline-actions">
+                    <button type="submit" disabled={workshopSaving}>
+                      {workshopSaving ? 'Saving...' : workshopEditing ? 'Update workshop appointment' : 'Save workshop appointment'}
+                    </button>
+                    {workshopEditing && (
+                      <button
+                        type="button"
+                        className="cars-btn cars-btn--secondary"
+                        onClick={() => {
+                          setWorkshopForm({ from: '', to: '', workshop: '', comment: '' });
+                          setWorkshopEditing(false);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </form>
+                {hasSavedWorkshopAppointment && (
+                  <div className="drawer-table-wrap" style={{ marginTop: '0.75rem' }}>
+                    <table className="cars-table">
+                      <thead>
+                        <tr>
+                          <th>From</th>
+                          <th>To</th>
+                          <th>Workshop</th>
+                          <th>Comment</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>{formatDate(car.planned_workshop_from)}</td>
+                          <td>{formatDate(car.planned_workshop_to)}</td>
+                          <td>{car.planned_workshop_name || '-'}</td>
+                          <td>{car.planned_workshop_comment || '-'}</td>
+                          <td>
+                            <div className="drawer-row-actions">
+                              <button
+                                type="button"
+                                className="cars-btn cars-btn--secondary drawer-compact-btn"
+                                onClick={handleEditWorkshopAppointment}
+                                disabled={workshopSaving}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="cars-btn cars-btn--secondary drawer-compact-btn drawer-compact-btn--danger"
+                                onClick={handleDeleteWorkshopAppointment}
+                                disabled={workshopSaving}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </section>
             </>
           )}
         </div>
       </div>
+      {planningHistoryModalOpen && (
+        <div className="drawer-history-modal-backdrop" onClick={() => setPlanningHistoryModalOpen(false)}>
+          <div className="drawer-history-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="drawer-history-modal-header">
+              <div>
+                <h4>Assigned Driver History</h4>
+                <p className="muted">{drawerTitle}</p>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setPlanningHistoryModalOpen(false)}>Close</button>
+            </div>
+            <div className="drawer-history-modal-body">
+              <div className="drawer-table-wrap">
+                <table className="cars-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Driver</th>
+                      <th>Abfahrtskontrolle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planningHistoryRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{formatDate(row.plan_date)}</td>
+                        <td>{row.driver_identifier || '-'}</td>
+                        <td>{row.abfahrtskontrolle ? 'Yes' : 'No'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <style>{`.drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; display: flex; justify-content: flex-end; }
         .drawer-panel { width: 460px; max-width: 95vw; height: 100%; background: #fff; box-shadow: -4px 0 20px rgba(0,0,0,0.2); overflow: auto; }
         .drawer-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid #eee; }
@@ -2219,7 +2397,44 @@ function CarDetailsDrawer({ carId, car, loading, onClose, onRefresh, onAssignDri
         .drawer-doc-dl { margin-left: auto; }
         .drawer-upload-form { display: flex; flex-direction: column; gap: 0.5rem; }
         .drawer-upload-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.9rem; }
-        .drawer-upload-form button { padding: 0.4rem 0.75rem; cursor: pointer; background: #1976d2; color: #fff; border: none; border-radius: 6px; align-self: flex-start; }`}</style>
+        .drawer-upload-form button { padding: 0.4rem 0.75rem; cursor: pointer; background: #1976d2; color: #fff; border: none; border-radius: 6px; align-self: flex-start; }
+        .drawer-subsection-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+        .drawer-inline-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+        .drawer-row-actions { display: flex; align-items: center; gap: 0.35rem; justify-content: flex-end; }
+        .drawer-compact-btn { min-width: 64px; padding: 0.3rem 0.55rem; font-size: 0.82rem; }
+        .drawer-compact-btn--danger { color: #c62828; border-color: rgba(198, 40, 40, 0.35); }
+        .drawer-history-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.42);
+          z-index: 1100;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 1rem;
+        }
+        .drawer-history-modal {
+          width: min(880px, 100%);
+          max-height: 80vh;
+          background: #fff;
+          border-radius: 12px;
+          box-shadow: 0 18px 48px rgba(15, 23, 42, 0.24);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .drawer-history-modal-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 0.75rem;
+          padding: 0.9rem 1rem;
+          border-bottom: 1px solid #eee;
+        }
+        .drawer-history-modal-header h4 { margin: 0; }
+        .drawer-history-modal-header .modal-close { font-size: 0.95rem; padding: 0.35rem 0.65rem; border: 1px solid #ddd; border-radius: 999px; }
+        .drawer-history-modal-body { padding: 1rem; overflow: auto; }
+        `}</style>
     </div>
   );
 }

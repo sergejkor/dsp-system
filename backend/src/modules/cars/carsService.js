@@ -13,6 +13,7 @@ const INSPECTION_VEHICLE_TYPES = new Set([
 ]);
 
 let inspectionVehicleColumnsReady = false;
+let workshopColumnsReady = false;
 
 function normalizeInspectionVehicleType(value) {
   const normalized = value == null ? '' : String(value).trim();
@@ -100,6 +101,15 @@ async function ensureInspectionVehicleColumns() {
   inspectionVehicleColumnsReady = true;
 }
 
+async function ensureWorkshopColumns() {
+  if (workshopColumnsReady) return;
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_from DATE`).catch(() => null);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_to DATE`).catch(() => null);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_name TEXT`).catch(() => null);
+  await query(`ALTER TABLE cars ADD COLUMN IF NOT EXISTS planned_workshop_comment TEXT`).catch(() => null);
+  workshopColumnsReady = true;
+}
+
 function toDateOnly(value) {
   if (!value) return value;
   if (value instanceof Date && Number.isFinite(value.getTime())) {
@@ -122,6 +132,8 @@ function normalizeCarDates(car) {
     insurance_expiry: toDateOnly(car.insurance_expiry),
     lease_expiry: toDateOnly(car.lease_expiry),
     planned_defleeting_date: toDateOnly(car.planned_defleeting_date),
+    planned_workshop_from: toDateOnly(car.planned_workshop_from),
+    planned_workshop_to: toDateOnly(car.planned_workshop_to),
     created_at: toDateOnly(car.created_at),
     updated_at: toDateOnly(car.updated_at),
   };
@@ -200,6 +212,7 @@ function buildCarsWhere(filters, params) {
  */
 async function getCars(filters = {}) {
   await ensureInspectionVehicleColumns();
+  await ensureWorkshopColumns();
   const params = [];
   const where = buildCarsWhere(filters, params);
   const res = await query(
@@ -208,6 +221,7 @@ async function getCars(filters = {}) {
             c.last_maintenance_date, c.next_maintenance_date, c.next_maintenance_mileage,
             c.safety_score, c.incidents, c.registration_expiry, c.insurance_expiry, c.lease_expiry,
             c.planned_defleeting_date,
+            c.planned_workshop_from, c.planned_workshop_to, c.planned_workshop_name, c.planned_workshop_comment,
             c.created_at, c.updated_at,
             k.first_name AS driver_first_name, k.last_name AS driver_last_name,
             p_today.driver_identifier AS today_planning_driver,
@@ -297,6 +311,7 @@ async function getCarsKpis() {
  */
 async function getCarById(id) {
   await ensureInspectionVehicleColumns();
+  await ensureWorkshopColumns();
   const carRes = await query(
     `SELECT c.*, k.first_name AS driver_first_name, k.last_name AS driver_last_name
      FROM cars c
@@ -424,16 +439,17 @@ async function createCar(data) {
  */
 async function updateCar(id, data) {
   await ensureInspectionVehicleColumns();
+  await ensureWorkshopColumns();
   const fields = [];
   const values = [];
   let idx = 1;
-  const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'inspection_vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date'];
+  const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'inspection_vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to', 'planned_workshop_name', 'planned_workshop_comment'];
   for (const key of allow) {
     if (data[key] !== undefined) {
       fields.push(`${key} = $${idx}`);
       if (['year', 'mileage', 'incidents', 'safety_score'].includes(key) && data[key] !== null) values.push(Number(data[key]));
       else if (key === 'inspection_vehicle_type') values.push(normalizeInspectionVehicleType(data[key]));
-      else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date'].includes(key)) values.push(data[key] || null);
+      else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to'].includes(key)) values.push(data[key] || null);
       else values.push(data[key] ?? null);
       idx++;
     }
