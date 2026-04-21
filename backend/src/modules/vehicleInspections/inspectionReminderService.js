@@ -4,6 +4,8 @@ import pushService from '../push/pushService.js';
 import { normalizePhoneForWhatsApp, sendWhatsAppMessage } from './twilioWhatsAppService.js';
 
 let tablesReady = false;
+const INTERNAL_INSPECTION_TIME_ZONE = String(process.env.INTERNAL_INSPECTION_TIME_ZONE || 'Europe/Berlin').trim() || 'Europe/Berlin';
+const INTERNAL_INSPECTION_TIME_ZONE_SQL = INTERNAL_INSPECTION_TIME_ZONE.replace(/'/g, "''");
 
 function stringOrNull(value, maxLen = 5000) {
   if (value == null) return null;
@@ -28,6 +30,56 @@ function toDateOnly(value) {
   const raw = String(value).trim();
   if (!raw) return null;
   return raw.slice(0, 10);
+}
+
+function formatDateForTimeZone(date, timeZone = INTERNAL_INSPECTION_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+function toOperationalDateOnly(value, timeZone = INTERNAL_INSPECTION_TIME_ZONE) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return toDateOnly(value);
+  }
+  return formatDateForTimeZone(date, timeZone) || toDateOnly(value);
+}
+
+function buildInspectionLocalDateExpr(columnSql) {
+  return `((COALESCE(${columnSql}) AT TIME ZONE '${INTERNAL_INSPECTION_TIME_ZONE_SQL}')::date)`;
+}
+
+function buildDateRange(dateFrom, dateTo, maxDays = 31) {
+  const start = toDateOnly(dateFrom);
+  const end = toDateOnly(dateTo);
+  if (!start && !end) return [];
+  const first = start || end;
+  const last = end || start;
+  const startDate = new Date(`${first}T00:00:00`);
+  const endDate = new Date(`${last}T00:00:00`);
+  if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime())) return [];
+  const ascending = startDate <= endDate;
+  const from = ascending ? startDate : endDate;
+  const to = ascending ? endDate : startDate;
+  const dates = [];
+  for (let cursor = new Date(from); cursor <= to && dates.length < maxDays; cursor.setDate(cursor.getDate() + 1)) {
+    dates.push(toDateOnly(cursor));
+  }
+  return dates;
 }
 
 function toIso(value) {
@@ -196,17 +248,18 @@ async function getExistingInspectionMap(planDates, carIds) {
     return new Map();
   }
 
+  const inspectionDateExpr = buildInspectionLocalDateExpr('submitted_at, created_at');
   const res = await query(
-    `SELECT DISTINCT ON (car_id, submitted_at::date)
+    `SELECT DISTINCT ON (car_id, ${inspectionDateExpr})
        id,
        car_id,
-       submitted_at::date AS inspection_date,
+       ${inspectionDateExpr} AS inspection_date,
        overall_result,
        new_damages_count
      FROM vehicle_internal_inspections
      WHERE car_id = ANY($1::int[])
-       AND submitted_at::date = ANY($2::date[])
-     ORDER BY car_id, submitted_at::date, submitted_at DESC, id DESC`,
+       AND ${inspectionDateExpr} = ANY($2::date[])
+     ORDER BY car_id, ${inspectionDateExpr}, COALESCE(submitted_at, created_at) DESC, id DESC`,
     [normalizedCarIds, normalizedDates],
   ).catch(() => ({ rows: [] }));
 
@@ -475,10 +528,44 @@ export class InspectionReminderService {
     return Number(res.rowCount || 0);
   }
 
+  async reconcileCompletedTasksForPlanDates(planDates = []) {
+    await this.ensureTables();
+    const normalizedDates = [...new Set((Array.isArray(planDates) ? planDates : [planDates]).map((value) => toDateOnly(value)).filter(Boolean))];
+    if (!normalizedDates.length) return 0;
+
+    const inspectionDateExpr = buildInspectionLocalDateExpr('i.submitted_at, i.created_at');
+    const res = await query(
+      `WITH latest_inspections AS (
+         SELECT DISTINCT ON (i.car_id, ${inspectionDateExpr})
+           i.id,
+           i.car_id,
+           ${inspectionDateExpr} AS inspection_date
+         FROM vehicle_internal_inspections i
+         WHERE ${inspectionDateExpr} = ANY($1::date[])
+         ORDER BY i.car_id, ${inspectionDateExpr}, COALESCE(i.submitted_at, i.created_at) DESC, i.id DESC
+       )
+       UPDATE vehicle_internal_inspection_tasks t
+       SET status = 'completed',
+           completed_inspection_id = li.id,
+           completed_at = COALESCE(t.completed_at, NOW()),
+           next_reminder_at = NULL,
+           failed_at = NULL,
+           updated_at = NOW()
+       FROM latest_inspections li
+       WHERE t.car_id = li.car_id
+         AND t.plan_date = li.inspection_date
+         AND t.status IN ('pending', 'reminded', 'failed')
+         AND (t.completed_inspection_id IS DISTINCT FROM li.id OR t.status <> 'completed')
+       RETURNING t.id`,
+      [normalizedDates],
+    );
+    return Number(res.rowCount || 0);
+  }
+
   async completeTaskFromInspection(inspection) {
     await this.ensureTables();
     const carId = toInteger(inspection?.car_id, null);
-    const submittedDate = toDateOnly(inspection?.submitted_at || inspection?.created_at || new Date());
+    const submittedDate = toOperationalDateOnly(inspection?.submitted_at || inspection?.created_at || new Date());
     const inspectionId = toInteger(inspection?.id, null);
     if (!carId || !submittedDate || !inspectionId) return null;
 
@@ -1006,6 +1093,10 @@ export class InspectionReminderService {
 
   async listTasks(filters = {}) {
     await this.ensureTables();
+    const reconcileDates = buildDateRange(filters.dateFrom, filters.dateTo);
+    if (reconcileDates.length) {
+      await this.reconcileCompletedTasksForPlanDates(reconcileDates).catch(() => null);
+    }
     const params = [];
     const conditions = [];
     let index = 1;

@@ -34,6 +34,8 @@ const DIFFERENCE_RATIO_THRESHOLD = 0.026;
 const DIFFERENCE_PIXELS_THRESHOLD = 2600;
 
 let tablesReady = false;
+const INTERNAL_INSPECTION_TIME_ZONE = String(process.env.INTERNAL_INSPECTION_TIME_ZONE || 'Europe/Berlin').trim() || 'Europe/Berlin';
+const INTERNAL_INSPECTION_TIME_ZONE_SQL = INTERNAL_INSPECTION_TIME_ZONE.replace(/'/g, "''");
 
 function stringOrNull(value, maxLen = 5000) {
   if (value == null) return null;
@@ -58,6 +60,10 @@ function toDateOnly(value) {
   const raw = String(value).trim();
   if (!raw) return null;
   return raw.slice(0, 10);
+}
+
+function buildInspectionLocalDateExpr(columnSql) {
+  return `((COALESCE(${columnSql}) AT TIME ZONE '${INTERNAL_INSPECTION_TIME_ZONE_SQL}')::date)`;
 }
 
 function normalizeDateTime(value) {
@@ -469,6 +475,16 @@ async function listInspections(filters = {}) {
     )`);
     params.push(`%${String(filters.search).trim()}%`);
     index += 1;
+  }
+
+  if (toDateOnly(filters?.dateFrom)) {
+    conditions.push(`${buildInspectionLocalDateExpr('i.submitted_at, i.created_at')} >= $${index++}`);
+    params.push(toDateOnly(filters.dateFrom));
+  }
+
+  if (toDateOnly(filters?.dateTo)) {
+    conditions.push(`${buildInspectionLocalDateExpr('i.submitted_at, i.created_at')} <= $${index++}`);
+    params.push(toDateOnly(filters.dateTo));
   }
 
   const limit = Math.min(Math.max(toInteger(filters?.limit, 60) || 60, 1), 250);
