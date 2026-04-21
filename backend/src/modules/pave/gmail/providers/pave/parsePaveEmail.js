@@ -1,3 +1,68 @@
+const PAVE_REPORT_ID_RE = /\bAMDE-[A-Z0-9-]{4,}\b/i;
+
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#x2F;/gi, '/')
+    .replace(/&#47;/gi, '/')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function normalizeUrlCandidate(url) {
+  return decodeHtmlEntities(String(url || '').trim()).replace(/[)>.,;]+$/g, '');
+}
+
+function collectUrlCandidates(text) {
+  const source = decodeHtmlEntities(text);
+  const matches = source.match(/https?:\/\/[^\s<>"')\]]+/gi) || [];
+  const unique = [];
+  for (const raw of matches) {
+    const normalized = normalizeUrlCandidate(raw);
+    if (!normalized) continue;
+    if (!unique.includes(normalized)) unique.push(normalized);
+  }
+  return unique;
+}
+
+function extractExternalReportIdFromUrl(url) {
+  const value = String(url || '').trim();
+  if (!value) return null;
+  const direct = value.match(/\/park\/([A-Za-z0-9-]+)/i);
+  if (direct?.[1]) return direct[1];
+  const queryId = value.match(/[?&](?:reportId|report_id|inspectionId|inspection_id|sessionKey|session_key|id)=([A-Za-z0-9-]+)/i);
+  if (queryId?.[1]) return queryId[1];
+  const embedded = value.match(PAVE_REPORT_ID_RE);
+  return embedded?.[0] || null;
+}
+
+function scoreReportUrlCandidate(url) {
+  const value = String(url || '').toLowerCase();
+  let score = 0;
+  if (!value.startsWith('http://') && !value.startsWith('https://')) return -1;
+  if (value.includes('dashboard.paveapi.com/park/')) score += 100;
+  if (value.includes('paveapi.com')) score += 60;
+  if (value.includes('/park/')) score += 40;
+  if (value.includes('click.connect.justeattakeaway.com')) score += 30;
+  if (value.includes('inspection') || value.includes('report')) score += 10;
+  if (PAVE_REPORT_ID_RE.test(value)) score += 15;
+  return score;
+}
+
+function pickBestReportUrl(urls) {
+  const list = Array.isArray(urls) ? urls : [];
+  let best = null;
+  let bestScore = -1;
+  for (const candidate of list) {
+    const score = scoreReportUrlCandidate(candidate);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return bestScore > 0 ? best : null;
+}
+
 function parseLanguageFromUrl(url) {
   try {
     const u = new URL(url);
@@ -32,44 +97,49 @@ function extractReportIdAndVehicleFromSubject(subject) {
   return { external_report_id: null, vehicle_label: null, status: null };
 }
 
+function extractExternalReportIdFromText(text) {
+  const value = String(text || '');
+  const match = value.match(PAVE_REPORT_ID_RE);
+  return match?.[0] || null;
+}
+
 export function isLikelyPaveEmail({ subject, fromEmail, rawBodyText, rawBodyHtml }) {
   const from = String(fromEmail || '').toLowerCase();
-  const text = `${subject || ''}\n${rawBodyText || ''}\n${rawBodyHtml || ''}`.toLowerCase();
+  const textRaw = `${subject || ''}\n${rawBodyText || ''}\n${rawBodyHtml || ''}`;
+  const text = textRaw.toLowerCase();
   const subjectValue = String(subject || '');
   const subjectLooksPave =
     /inspection\s+[a-z0-9-]{6,}\s+of\s+.+\s+is\s+(completed|complete|expired|processed|in\s+progress)/i.test(subjectValue) ||
     /^\s*(?:your\s+)?inspection\s+[a-z0-9-]{6,}\b/i.test(subjectValue);
+  const urls = collectUrlCandidates(textRaw);
+  const reportUrl = pickBestReportUrl(urls);
   return (
     from.includes('pave') ||
     from.includes('paveapi') ||
+    text.includes(' condition report') ||
+    text.includes('vehicle condition report') ||
+    text.includes('pave inspection') ||
     text.includes('dashboard.paveapi.com/park/') ||
+    text.includes('paveapi.com') ||
+    text.includes('/park/') ||
     text.includes('click.connect.justeattakeaway.com') ||
+    Boolean(extractExternalReportIdFromText(textRaw)) ||
+    Boolean(reportUrl) ||
     subjectLooksPave
   );
 }
 
 export default function parsePaveEmail({ subject, fromEmail, rawBodyText, rawBodyHtml }) {
   const body = `${rawBodyText || ''}\n${rawBodyHtml || ''}`;
-  const urlPatterns = [
-    /https:\/\/dashboard\.paveapi\.com\/park\/[A-Za-z0-9-]+(?:\?[^\s<>"')\]]*)?/i,
-    /https:\/\/click\.connect\.justeattakeaway\.com\/\?[^\s<>"')\]]+/i,
-  ];
-  let report_url = null;
-  for (const p of urlPatterns) {
-    const m = body.match(p);
-    if (m?.[0]) {
-      report_url = m[0];
-      break;
-    }
-  }
+  const urls = collectUrlCandidates(body);
+  let report_url = pickBestReportUrl(urls);
 
   const subjectParts = extractReportIdAndVehicleFromSubject(subject);
 
-  let external_report_id = subjectParts.external_report_id;
-  if (!external_report_id && report_url) {
-    const m = report_url.match(/\/park\/([A-Za-z0-9-]+)/i);
-    if (m) external_report_id = m[1];
-  }
+  let external_report_id =
+    subjectParts.external_report_id ||
+    extractExternalReportIdFromUrl(report_url) ||
+    extractExternalReportIdFromText(body);
 
   // If the mail client stripped links from plain text, we can still open the report from the AMDE id in the subject.
   let urlSynthesized = false;
@@ -83,7 +153,10 @@ export default function parsePaveEmail({ subject, fromEmail, rawBodyText, rawBod
   if (
     report_url &&
     external_report_id &&
-    String(report_url).toLowerCase().includes('click.connect.justeattakeaway.com')
+    (
+      String(report_url).toLowerCase().includes('click.connect.justeattakeaway.com') ||
+      !String(report_url).toLowerCase().includes('dashboard.paveapi.com/park/')
+    )
   ) {
     report_url = `https://dashboard.paveapi.com/park/${encodeURIComponent(external_report_id)}?l=en`;
     urlSynthesized = true;
@@ -110,6 +183,7 @@ export default function parsePaveEmail({ subject, fromEmail, rawBodyText, rawBod
       subject: subject || null,
       from_email: fromEmail || null,
       matched_url: report_url || null,
+      candidate_urls: urls,
     },
     warnings,
   };

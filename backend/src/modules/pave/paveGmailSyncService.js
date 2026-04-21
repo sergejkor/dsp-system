@@ -100,7 +100,8 @@ async function ensureDirs() {
 }
 
 /**
- * True when a stored pave_reports row is missing core parsed fields (list shows "—" / date falls back to email).
+ * True when a stored pave_reports row is missing any core parsed field
+ * advertised in the UI re-fetch toggle: inspection date, VIN or grade.
  * Used to re-queue emails that were marked processed/partial but never got portal/PDF data.
  * @param {number} incomingEmailId
  */
@@ -118,7 +119,8 @@ export async function incomingPaveSummaryLooksIncomplete(incomingEmailId) {
   if (!r) return false;
   const vinEmpty = !String(r.vin || '').trim() && !String(r.vin_display || '').trim();
   if (r.inspection_date == null) return true;
-  if (vinEmpty && r.total_grade == null) return true;
+  if (vinEmpty) return true;
+  if (r.total_grade == null) return true;
   return false;
 }
 
@@ -244,11 +246,9 @@ async function requeueSparsePaveIncomingEmails(providerNorm, maxRows = 100) {
        AND ie.extracted_report_url IS NOT NULL
        AND (
          pr.inspection_date IS NULL
-         OR (
-           NULLIF(TRIM(COALESCE(pr.vin, '')), '') IS NULL
-           AND NULLIF(TRIM(COALESCE(pr.vin_display, '')), '') IS NULL
-           AND pr.total_grade IS NULL
-         )
+         OR NULLIF(TRIM(COALESCE(pr.vin, '')), '') IS NULL
+         OR NULLIF(TRIM(COALESCE(pr.vin_display, '')), '') IS NULL
+         OR pr.total_grade IS NULL
        )
      ORDER BY ie.received_at DESC NULLS LAST, ie.id DESC
      LIMIT $2`,

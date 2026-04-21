@@ -44,7 +44,7 @@ export async function backfillPaveReports({
     if (String(provider || '').toLowerCase() !== 'pave') return true;
     if (!isLikelyPaveEmail(e)) return false;
     const parsed = parsePaveEmail(e);
-    return Boolean(parsed?.report_url && parsed?.external_report_id);
+    return Boolean(parsed?.report_url);
   });
 
   let syncResult;

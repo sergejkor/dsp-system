@@ -21,6 +21,32 @@ test('parsePaveEmail extracts deterministic fields', () => {
   assert.equal(parsed.status, 'completed');
 });
 
+test('parsePaveEmail synthesizes dashboard url from body report id when only tracking url exists', () => {
+  const parsed = parsePaveEmail({
+    subject: 'Vehicle condition report completed',
+    fromEmail: 'noreply@mailer.example.com',
+    rawBodyText:
+      'Open your inspection report here: https://example.mailer.com/click?id=abc123\nReference: AMDE-JWLICL014X',
+    rawBodyHtml: '',
+  });
+
+  assert.equal(parsed.external_report_id, 'AMDE-JWLICL014X');
+  assert.equal(parsed.report_url, 'https://dashboard.paveapi.com/park/AMDE-JWLICL014X?l=en');
+});
+
+test('parsePaveEmail decodes html escaped dashboard urls', () => {
+  const parsed = parsePaveEmail({
+    subject: 'Vehicle condition report completed',
+    fromEmail: 'noreply@paveapi.com',
+    rawBodyText: '',
+    rawBodyHtml:
+      '<a href="https://dashboard.paveapi.com/park/AMDE-XYZ12345?l=en&amp;utm_source=email">Open report</a>',
+  });
+
+  assert.equal(parsed.external_report_id, 'AMDE-XYZ12345');
+  assert.equal(parsed.report_url, 'https://dashboard.paveapi.com/park/AMDE-XYZ12345?l=en&utm_source=email');
+});
+
 test('isIncomingParseRicher true when incoming has more summary fields', () => {
   const existing = {
     provider: 'pave',

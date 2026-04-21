@@ -204,14 +204,18 @@ export default function PavePage() {
 
   function runSync() {
     setAdminBusy(true);
+    setError('');
+    setMessage('');
     syncPaveGmailReports({
       limit: gmailReprocessSparse ? 150 : 30,
       force: false,
       reprocessSparse: gmailReprocessSparse,
     })
       .then((r) => {
-        const extra = r?.sparseRequeued ? ` (${r.sparseRequeued} incomplete row(s) re-queued)` : '';
-        setMessage(`Sync completed${extra}`);
+        const extra = r?.sparseRequeued ? `, re-queued=${r.sparseRequeued}` : '';
+        setMessage(
+          `Sync done: created=${r?.created ?? 0}, updated=${r?.updated ?? 0}, partial=${r?.partial ?? 0}, failed=${r?.failed ?? 0}${extra}`
+        );
         loadGmail();
         loadStats();
       })
