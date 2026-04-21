@@ -1,8 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { query } from '../../db.js';
 import vehicleInspectionsService from './vehicleInspectionsService.js';
-import employeeService from '../employees/employeeService.js';
 import { getKenjoUsersList } from '../kenjo/kenjoClient.js';
 
 const router = Router();
@@ -45,123 +43,44 @@ router.get('/operators', async (req, res) => {
     if (search.length < 2) {
       return res.json([]);
     }
-
-    const employees = await employeeService.listEmployees({ search, onlyActive: true });
-    const searchTerm = `%${search.toLowerCase()}%`;
-    const kenjoRows = await query(
-      `SELECT
-         kenjo_user_id::text AS kenjo_user_id,
-         employee_number::text AS employee_number,
-         transporter_id::text AS transporter_id,
-         first_name,
-         last_name,
-         display_name,
-         NULL::text AS email,
-         is_active
-       FROM kenjo_employees
-       WHERE COALESCE(is_active, FALSE) = TRUE
-         AND (
-           LOWER(COALESCE(display_name, '')) LIKE $1
-           OR LOWER(COALESCE(first_name, '')) LIKE $1
-           OR LOWER(COALESCE(last_name, '')) LIKE $1
-           OR LOWER(COALESCE(employee_number::text, '')) LIKE $1
-           OR LOWER(COALESCE(transporter_id::text, '')) LIKE $1
-           OR LOWER(
-             TRIM(
-               CONCAT_WS(
-                 ' ',
-                 COALESCE(first_name, ''),
-                 COALESCE(last_name, ''),
-                 COALESCE(display_name, ''),
-                 COALESCE(employee_number::text, ''),
-                 COALESCE(transporter_id::text, '')
-               )
-             )
-           ) LIKE $1
-         )
-       ORDER BY
-         LOWER(COALESCE(display_name, CONCAT_WS(' ', first_name, last_name), employee_number::text, transporter_id::text)),
-         kenjo_user_id::text
-       LIMIT 100`,
-      [searchTerm]
-    ).catch(() => ({ rows: [] }));
-
     const kenjoUsers = await getKenjoUsersList().catch(() => []);
-    const remoteRows = (Array.isArray(kenjoUsers) ? kenjoUsers : []).filter((row) => {
-      const haystack = [
-        row?.displayName,
-        row?.firstName,
-        row?.lastName,
-        row?.email,
-        row?.employeeNumber,
-        row?.transportationId,
-        [row?.firstName, row?.lastName].filter(Boolean).join(' '),
-      ]
-        .map((value) => String(value || '').trim().toLowerCase())
-        .filter(Boolean)
-        .join(' ');
-      return Boolean(row?.isActive ?? true) && haystack.includes(search.toLowerCase());
-    });
-
-    const seen = new Set();
-    const normalizeOperator = (row) => {
-      const label =
-        String(row?.display_name || row?.displayName || '').trim() ||
-        [row?.first_name || row?.firstName, row?.last_name || row?.lastName].filter(Boolean).join(' ').trim() ||
-        String(row?.email || '').trim() ||
-        String(
-          row?.employee_id
-          || row?.employeeId
-          || row?.employee_number
-          || row?.employeeNumber
-          || row?.transporter_id
-          || row?.transportationId
-          || row?.id
-          || row?._id
-          || row?.kenjo_user_id
-          || ''
-        ).trim();
-      if (!label) return null;
-
-      const employeeId = String(
-        row?.employee_id
-        || row?.employeeId
-        || row?.employee_number
-        || row?.employeeNumber
-        || row?.id
-        || row?._id
-        || row?.kenjo_user_id
-        || label
-      ).trim();
-      const employeeRef = String(
-        row?.employee_id
-        || row?.employeeId
-        || row?.employee_number
-        || row?.employeeNumber
-        || row?.transporter_id
-        || row?.transportationId
-        || row?.id
-        || row?._id
-        || row?.kenjo_user_id
-        || label
-      ).trim();
-      const kenjoUserId = String(row?.kenjo_user_id || row?._id || '').trim() || null;
-      const dedupeKey = [kenjoUserId, employeeRef, label.toLowerCase()].filter(Boolean).join('|');
-      if (!dedupeKey || seen.has(dedupeKey)) return null;
-      seen.add(dedupeKey);
-
-      return {
-        id: employeeId,
-        employeeId,
-        employeeRef,
-        kenjoUserId,
-        label,
-        subtitle: String(row?.email || '').trim() || null,
-      };
-    };
-
-    const out = [...(employees || []), ...(kenjoRows.rows || []), ...remoteRows]
-      .map(normalizeOperator)
+    const q = search.toLowerCase();
+    const out = (Array.isArray(kenjoUsers) ? kenjoUsers : [])
+      .filter((user) => {
+        if (!user) return false;
+        if (!(user.isActive ?? true)) return false;
+        const name = String(user.displayName || `${user.firstName || ''} ${user.lastName || ''}`).trim().toLowerCase();
+        const email = String(user.email || '').trim().toLowerCase();
+        const role = String(user.jobTitle || '').trim().toLowerCase();
+        const employeeNumber = String(user.employeeNumber || '').trim().toLowerCase();
+        const transportationId = String(user.transportationId || '').trim().toLowerCase();
+        return (
+          name.includes(q)
+          || email.includes(q)
+          || role.includes(q)
+          || employeeNumber.includes(q)
+          || transportationId.includes(q)
+        );
+      })
+      .map((user) => {
+        const label =
+          String(user.displayName || '').trim()
+          || [user.firstName, user.lastName].filter(Boolean).join(' ').trim()
+          || String(user.email || '').trim()
+          || String(user.employeeNumber || user.transportationId || user._id || '').trim();
+        if (!label) return null;
+        const employeeId = String(user.employeeNumber || user._id || label).trim();
+        const employeeRef = String(user.employeeNumber || user.transportationId || user._id || label).trim();
+        const kenjoUserId = String(user._id || '').trim() || null;
+        return {
+          id: employeeId,
+          employeeId,
+          employeeRef,
+          kenjoUserId,
+          label,
+          subtitle: String(user.email || '').trim() || null,
+        };
+      })
       .filter(Boolean)
       .slice(0, 8);
 
