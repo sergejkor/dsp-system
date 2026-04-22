@@ -76,3 +76,12 @@ test('merge ignores colour blob HTML vehicle; uses PDF vehicle', () => {
   );
   assert.equal(merged.vehicle_label, '2026 MERCEDES ESPRINTER L2H3');
 });
+
+test('merge ignores absurd HTML side score and falls back to PDF score', () => {
+  const merged = mergeHtmlAndPdfReportSummary(
+    { left_score: 130070 },
+    { left_score: 8 },
+    {},
+  );
+  assert.equal(merged.left_score, 8);
+});

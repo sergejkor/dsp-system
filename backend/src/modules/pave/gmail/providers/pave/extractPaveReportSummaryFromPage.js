@@ -259,6 +259,22 @@ function parseNum(s) {
   return Number.isFinite(n) ? n : null;
 }
 
+function sanitizeMetricNumber(n, { min = 0, max = Number.POSITIVE_INFINITY } = {}) {
+  if (n == null || Number.isNaN(Number(n))) return null;
+  const x = Number(n);
+  if (!Number.isFinite(x)) return null;
+  if (x < min || x > max) return null;
+  return x;
+}
+
+function sanitizeSideScore(n) {
+  return sanitizeMetricNumber(n, { min: 0, max: 100 });
+}
+
+function sanitizeTotalDamageScore(n) {
+  return sanitizeMetricNumber(n, { min: 0, max: 1000 });
+}
+
 function cleanOneLine(s) {
   return String(s || '').replace(/\s+/g, ' ').trim();
 }
@@ -493,12 +509,19 @@ const RIGHT_SCORE_DOM_LABELS = ['RIGHT SCORE', 'RIGHT SIDE SCORE', 'RIGHT', 'REC
  * @param {string[]} labels
  * @returns {Promise<{ n: number | null, meta: object | null }>}
  */
-async function extractNumericLabelValue(page, labels) {
+async function extractNumericLabelValue(page, labels, opts = {}) {
   const res = await extractValueByLabel(page, labels);
   if (!res.value) return { n: null, meta: null };
   const raw = cleanOneLine(res.value);
-  const n = parseNum(raw);
-  if (n == null || Number.isNaN(n)) return { n: null, meta: { ...res, raw } };
+  const parsed = parseNum(raw);
+  if (parsed == null || Number.isNaN(parsed)) return { n: null, meta: { ...res, raw } };
+  const n = sanitizeMetricNumber(parsed, opts);
+  if (n == null) {
+    return {
+      n: null,
+      meta: { matchedLabel: res.matchedLabel, method: res.method, raw, rejectedAsOutOfRange: true },
+    };
+  }
   return { n, meta: { matchedLabel: res.matchedLabel, method: res.method, raw } };
 }
 
@@ -809,11 +832,11 @@ export async function extractPaveReportSummaryFromPage(page) {
     }
   }
 
-  const damageR = await extractNumericLabelValue(page, DAMAGE_SCORE_DOM_LABELS);
-  const frontR = await extractNumericLabelValue(page, FRONT_SCORE_DOM_LABELS);
-  const backR = await extractNumericLabelValue(page, BACK_SCORE_DOM_LABELS);
-  const leftR = await extractNumericLabelValue(page, LEFT_SCORE_DOM_LABELS);
-  const rightR = await extractNumericLabelValue(page, RIGHT_SCORE_DOM_LABELS);
+  const damageR = await extractNumericLabelValue(page, DAMAGE_SCORE_DOM_LABELS, { min: 0, max: 1000 });
+  const frontR = await extractNumericLabelValue(page, FRONT_SCORE_DOM_LABELS, { min: 0, max: 100 });
+  const backR = await extractNumericLabelValue(page, BACK_SCORE_DOM_LABELS, { min: 0, max: 100 });
+  const leftR = await extractNumericLabelValue(page, LEFT_SCORE_DOM_LABELS, { min: 0, max: 100 });
+  const rightR = await extractNumericLabelValue(page, RIGHT_SCORE_DOM_LABELS, { min: 0, max: 100 });
   domTrace.TOTAL_DAMAGE_SCORE = damageR.meta;
   domTrace.FRONT_SCORE = frontR.meta;
   domTrace.BACK_SCORE = backR.meta;
@@ -915,11 +938,11 @@ export function mergeHtmlAndPdfReportSummary(htmlSummary, pdfReport, emailMeta =
     inspection_date: h.inspection_date || p.inspection_date || null,
     total_grade: h.total_grade != null && !Number.isNaN(h.total_grade) ? h.total_grade : p.total_grade ?? null,
     total_grade_label: h.total_grade_label || p.total_grade_label || null,
-    total_damage_score: firstFiniteNumber(h.total_damage_score, p.total_damage_score),
-    front_score: firstFiniteNumber(h.front_score, p.front_score),
-    back_score: firstFiniteNumber(h.back_score, p.back_score),
-    left_score: firstFiniteNumber(h.left_score, p.left_score),
-    right_score: firstFiniteNumber(h.right_score, p.right_score),
+    total_damage_score: firstFiniteNumber(sanitizeTotalDamageScore(h.total_damage_score), sanitizeTotalDamageScore(p.total_damage_score)),
+    front_score: firstFiniteNumber(sanitizeSideScore(h.front_score), sanitizeSideScore(p.front_score)),
+    back_score: firstFiniteNumber(sanitizeSideScore(h.back_score), sanitizeSideScore(p.back_score)),
+    left_score: firstFiniteNumber(sanitizeSideScore(h.left_score), sanitizeSideScore(p.left_score)),
+    right_score: firstFiniteNumber(sanitizeSideScore(h.right_score), sanitizeSideScore(p.right_score)),
     windshield_status: p.windshield_status || h.windshield_status || null,
   };
 }

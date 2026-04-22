@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import parsePavePdf, {
   normalizePdfText,
   extractSummaryField,
@@ -97,5 +100,20 @@ test('parsePavePdf returns partial on invalid buffer', async () => {
   assert.ok(Array.isArray(result.warnings));
   assert.ok(result.warnings.length > 0);
   assert.ok(Array.isArray(result.items));
+});
+
+test('parsePavePdf parses real April sample PDF', async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const pdfPath = path.resolve(here, '../../../../backend-uploads/pave-gmail/AMDE-DXYCKL8ENU_en.pdf');
+  const buffer = await fs.readFile(pdfPath);
+  const result = await parsePavePdf(buffer);
+
+  assert.equal(result.report.inspection_date, '2026-03-17');
+  assert.equal(result.report.vehicle_label, '2023 Rivian Delivery');
+  assert.equal(result.report.vin, '7FCEFEB5*N***0100');
+  assert.equal(result.report.total_grade, 3);
+  assert.equal(result.report.total_damage_score, 13);
+  assert.equal(result.report.left_score, 8);
+  assert.equal(result.report.right_score, 4);
 });
 
