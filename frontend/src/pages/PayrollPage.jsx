@@ -346,9 +346,13 @@ export default function PayrollPage() {
     if (!Number.isFinite(nextYear) || !Number.isFinite(nextMonth) || nextMonth < 1 || nextMonth > 12) {
       return;
     }
+    const periodId = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+    const lastDay = new Date(nextYear, nextMonth, 0).getDate();
     setCalendarYear(nextYear);
     setCalendarMonth(nextMonth);
-    setMonth(`${nextYear}-${String(nextMonth).padStart(2, '0')}`);
+    setMonth(periodId);
+    setFromDate(`${periodId}-01`);
+    setToDate(`${periodId}-${String(lastDay).padStart(2, '0')}`);
   };
 
   const monthOptions = useMemo(() => {
