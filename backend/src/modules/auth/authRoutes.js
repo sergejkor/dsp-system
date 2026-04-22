@@ -15,11 +15,12 @@ function getUserId(req) {
 // ---- Public ----
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
-    if (!email || !password) {
+    const { email, identifier, password } = req.body || {};
+    const loginIdentifier = String(identifier || email || '').trim();
+    if (!loginIdentifier || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
-    const user = await authService.findUserByEmail(email);
+    const user = await authService.findUserByEmail(loginIdentifier);
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { NetworkLoadingBackground } from '../components/NetworkLoadingBackground';
@@ -6,10 +6,10 @@ import { useAuth } from '../context/AuthContext';
 import styles from './LoginPage.module.css';
 
 export default function LoginPage() {
-  const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const identifierRef = useRef(null);
+  const passwordRef = useRef(null);
   const { login } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -17,10 +17,21 @@ export default function LoginPage() {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    const trimmedIdentifier = identifier.trim();
+    const formData = new FormData(event.currentTarget);
+    const trimmedIdentifier = String(
+      identifierRef.current?.value
+      || formData.get('email')
+      || formData.get('identifier')
+      || '',
+    ).trim();
+    const resolvedPassword = String(
+      passwordRef.current?.value
+      || formData.get('password')
+      || '',
+    );
 
-    if (!trimmedIdentifier || !password) {
-      setError('Enter your username and password to continue.');
+    if (!trimmedIdentifier || !resolvedPassword) {
+      setError('Enter your email and password to continue.');
       return;
     }
 
@@ -28,7 +39,7 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      await login(trimmedIdentifier, password);
+      await login(trimmedIdentifier, resolvedPassword);
       navigate(returnTo, { replace: true });
     } catch (submitError) {
       setError(submitError.message || 'Unable to sign in.');
@@ -55,14 +66,13 @@ export default function LoginPage() {
 
               <form className={styles.form} onSubmit={handleSubmit}>
                 <label className={styles.field}>
-                  <span>Email or username</span>
+                  <span>Email</span>
                   <input
-                    type="text"
-                    name="identifier"
+                    ref={identifierRef}
+                    type="email"
+                    name="email"
                     autoComplete="username"
-                    value={identifier}
-                    onChange={(event) => setIdentifier(event.target.value)}
-                    placeholder="Enter your e-mail"
+                    placeholder="Enter your email"
                     disabled={submitting}
                     required
                   />
@@ -71,11 +81,10 @@ export default function LoginPage() {
                 <label className={styles.field}>
                   <span>Password</span>
                   <input
+                    ref={passwordRef}
                     type="password"
                     name="password"
                     autoComplete="current-password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
                     placeholder="Enter your password"
                     disabled={submitting}
                     required
