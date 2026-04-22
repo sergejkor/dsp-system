@@ -313,7 +313,7 @@ async function selectPendingReportDownloads(providerNorm, limit) {
        AND ie.extracted_report_url IS NOT NULL
        AND ie.processing_status = 'pending'
        AND NOT EXISTS (SELECT 1 FROM pave_reports pr WHERE pr.incoming_email_id = ie.id)
-     ORDER BY ie.received_at ASC NULLS LAST, ie.id ASC
+     ORDER BY ie.received_at DESC NULLS LAST, ie.id DESC
      LIMIT $2`,
     [providerNorm, lim]
   );
@@ -679,9 +679,10 @@ export async function syncGmailReports({
       5000,
       Math.max(1, Number(process.env.PAVE_REPORT_PROCESS_MAX_PER_RUN || requestedLimit || 100))
     );
-    const pendingDownloadCap = reprocessSparse
+    const sparseRequeueCap = reprocessSparse
       ? Math.min(2000, Math.max(processMax, Number(process.env.PAVE_REQUEUE_SPARSE_MAX || 200)))
-      : processMax;
+      : 0;
+    const pendingDownloadCap = processMax;
 
     const timings = {
       emailSearchMs: 0,
@@ -755,11 +756,11 @@ export async function syncGmailReports({
     });
 
     try {
-    if (reprocessSparse) {
-      const n = await requeueSparsePaveIncomingEmails(providerNorm, pendingDownloadCap);
-      results.sparseRequeued = n;
-      if (n) console.log('[pave-sync] requeued sparse pave imports for re-parse', { count: n, cap: pendingDownloadCap });
-    }
+      if (reprocessSparse) {
+        const n = await requeueSparsePaveIncomingEmails(providerNorm, sparseRequeueCap);
+        results.sparseRequeued = n;
+        if (n) console.log('[pave-sync] requeued sparse pave imports for re-parse', { count: n, cap: sparseRequeueCap });
+      }
 
     const tStageA = Date.now();
     for (let i = 0; i < emails.length; i++) {
