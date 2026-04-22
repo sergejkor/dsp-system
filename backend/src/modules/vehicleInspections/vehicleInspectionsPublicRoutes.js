@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import vehicleInspectionsService from './vehicleInspectionsService.js';
 import { getKenjoUsersList } from '../kenjo/kenjoClient.js';
+import carPlanningService from '../carPlanning/carPlanningService.js';
 
 const router = Router();
 const upload = multer({
@@ -88,6 +89,21 @@ router.get('/operators', async (req, res) => {
   } catch (error) {
     console.error('GET /api/public/fleet-inspections/operators error', error);
     return res.status(500).json({ error: 'Failed to load operator suggestions' });
+  }
+});
+
+router.get('/assignment', async (req, res) => {
+  try {
+    const assignment = await carPlanningService.getTodayAssignmentForDriver({
+      employeeRef: req.query?.employeeRef,
+      employeeId: req.query?.employeeId,
+      kenjoUserId: req.query?.kenjoUserId,
+      displayName: req.query?.displayName,
+    });
+    return res.json(assignment || null);
+  } catch (error) {
+    console.error('GET /api/public/fleet-inspections/assignment error', error);
+    return res.status(500).json({ error: 'Failed to load today assignment' });
   }
 });
 

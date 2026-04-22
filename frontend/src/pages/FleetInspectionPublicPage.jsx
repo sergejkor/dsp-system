@@ -8,6 +8,7 @@ import {
 } from '../components/personalQuestionnaireI18n.js';
 import { getOverlaySet, REQUIRED_SHOT_IDS, SHOT_SEQUENCE } from '../services/overlayRegistry.js';
 import {
+  getFleetCheckAssignment,
   resolveVehicleByVin,
   searchFleetInspectionOperators,
   submitPublicInspection,
@@ -55,7 +56,7 @@ const SHOT_VAN_ICON_ASSETS = {
 const FLEETCHECK_PUSH_EMPLOYEE_KEY = 'fleetcheck_push_employee';
 const FLEETCHECK_INSPECTION_DRAFT_KEY = 'fleetcheck_inspection_draft';
 const FLEETCHECK_OVERLAYS_ENABLED = false;
-const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-2';
+const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-4';
 
 const FLEETCHECK_SHOT_COPY = {
   en: {
@@ -1474,13 +1475,23 @@ function parseFleetCheckAssignmentNotice(searchParams) {
     return normalized ? normalized.slice(0, maxLen) : null;
   };
   const notice = normalize(searchParams.get('notice'), 64);
+  const fromPush = normalize(searchParams.get('fromPush'), 16);
   const vin = normalize(normalizeVin(searchParams.get('vin')), 64);
   const licensePlate = normalize(searchParams.get('plate'), 64);
   const vehicleId = normalize(searchParams.get('vehicleId'), 255);
   const planDate = normalize(searchParams.get('planDate'), 32);
-  const isAssignmentNotice = notice === 'assignment' || Boolean(licensePlate || vehicleId || planDate);
+  const isAssignmentNotice =
+    notice === 'assignment'
+    || fromPush === '1'
+    || Boolean(licensePlate || vehicleId || planDate);
   if (!isAssignmentNotice) return null;
-  return { vin, licensePlate, vehicleId, planDate };
+  return {
+    vin,
+    licensePlate,
+    vehicleId,
+    planDate,
+    fromPush: fromPush === '1',
+  };
 }
 
 function isFleetCheckRtl(locale) {
@@ -2100,6 +2111,7 @@ export default function FleetInspectionPublicPage() {
   const [pushSuggestionsLoading, setPushSuggestionsLoading] = useState(false);
   const [pushSuggestionsError, setPushSuggestionsError] = useState('');
   const [pushSuggestionsVisible, setPushSuggestionsVisible] = useState(false);
+  const [currentAssignment, setCurrentAssignment] = useState(null);
   const [assignmentNoticeOpen, setAssignmentNoticeOpen] = useState(() => Boolean(assignmentNotice));
   const scannerVideoRef = useRef(null);
   const driverInputRef = useRef(null);
@@ -2112,6 +2124,7 @@ export default function FleetInspectionPublicPage() {
   const driverSuggestionRequestRef = useRef(0);
   const pushSuggestionRequestRef = useRef(0);
   const lastAnimatedShotRef = useRef('');
+  const assignmentHydrationRef = useRef('');
 
   const cameraSupported =
     typeof window !== 'undefined' &&
@@ -2143,23 +2156,32 @@ export default function FleetInspectionPublicPage() {
   const allCaptured = capturedCount === REQUIRED_SHOT_IDS.length;
   const hasConfiguredDriver = hasEmployeeIdentity(driverSelection) && Boolean(driverName.trim());
   const hasDraftDriver = hasEmployeeIdentity(pushEmployeeSelection);
+  const hasTodayAssignment = Boolean(currentAssignment);
   const vehicleDisplayTitle = vehicle?.licensePlate || vehicle?.vehicleId || vehicle?.vin || copy.vinLabel;
   const vehicleDisplayMeta = vehicle
     ? `${overlaySet?.label || vehicle.vehicleType || copy.vehicleStatusReady} • VIN ${vehicle.vin}`
     : copy.pageSubtitle;
+  const assignmentVehicle = currentAssignment || assignmentNotice || null;
   const assignmentVehicleTitle =
-    assignmentNotice?.licensePlate
+    assignmentVehicle?.license_plate
+    || assignmentVehicle?.licensePlate
     || vehicle?.licensePlate
-    || assignmentNotice?.vehicleId
+    || assignmentVehicle?.vehicle_id
+    || assignmentVehicle?.vehicleId
     || vehicle?.vehicleId
-    || assignmentNotice?.vin
+    || assignmentVehicle?.vin
     || vehicle?.vin
     || copy.vehicleLabel;
   const assignmentVehicleMeta = [
-    assignmentNotice?.vehicleId || vehicle?.vehicleId || null,
-    assignmentNotice?.vin || vehicle?.vin ? `VIN ${assignmentNotice?.vin || vehicle?.vin}` : null,
+    assignmentVehicle?.vehicle_id || assignmentVehicle?.vehicleId || vehicle?.vehicleId || null,
+    assignmentVehicle?.vin || vehicle?.vin ? `VIN ${assignmentVehicle?.vin || vehicle?.vin}` : null,
   ].filter(Boolean).join(' • ');
   const driverDisplayName = driverName || pushEmployeeSelection?.label || copy.waitingDriver;
+  const headerSignalLabel = hasTodayAssignment ? assignmentCopy.eyebrow : copy.vehicleLabel;
+  const headerSignalTitle = hasTodayAssignment ? assignmentVehicleTitle : vehicleDisplayTitle;
+  const headerSignalMeta = hasTodayAssignment
+    ? [assignmentVehicleMeta, driverDisplayName].filter(Boolean).join(' â€¢ ') || assignmentCopy.body
+    : driverDisplayName;
   const deviceStatusLabel = pushEnabled
     ? copy.notificationsEnabledOnDevice
     : (pushSupported ? copy.notificationsNotEnabledYet : copy.notificationsUnsupported);
@@ -2185,6 +2207,84 @@ export default function FleetInspectionPublicPage() {
   useEffect(() => {
     setAssignmentNoticeOpen(Boolean(assignmentNotice));
   }, [assignmentNoticeKey]);
+
+  useEffect(() => {
+    const selectedEmployee = normalizeEmployeeSelection(driverSelection || savedPushEmployee || pushEmployeeSelection);
+    if (!selectedEmployee?.label && !hasEmployeeIdentity(selectedEmployee)) {
+      setCurrentAssignment(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    getFleetCheckAssignment({
+      employeeRef: selectedEmployee?.employeeRef,
+      employeeId: selectedEmployee?.employeeId,
+      kenjoUserId: selectedEmployee?.kenjoUserId,
+      displayName: selectedEmployee?.label,
+    })
+      .then((assignment) => {
+        if (!cancelled) {
+          setCurrentAssignment(assignment || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCurrentAssignment(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    driverSelection?.employeeRef,
+    driverSelection?.employeeId,
+    driverSelection?.kenjoUserId,
+    driverSelection?.label,
+    pushEmployeeSelection?.employeeRef,
+    pushEmployeeSelection?.employeeId,
+    pushEmployeeSelection?.kenjoUserId,
+    pushEmployeeSelection?.label,
+    savedPushEmployee?.employeeRef,
+    savedPushEmployee?.employeeId,
+    savedPushEmployee?.kenjoUserId,
+    savedPushEmployee?.label,
+  ]);
+
+  useEffect(() => {
+    if (!currentAssignment) return;
+    if (assignmentNotice) {
+      setAssignmentNoticeOpen(true);
+      return;
+    }
+    const queryVinValue = normalizeVin(searchParams.get('vin'));
+    if (queryVinValue && queryVinValue === normalizeVin(currentAssignment?.vin)) {
+      setAssignmentNoticeOpen(true);
+    }
+  }, [assignmentNotice, currentAssignment, searchParams]);
+
+  useEffect(() => {
+    const assignedVin = normalizeVin(currentAssignment?.vin || assignmentNotice?.vin);
+    if (!assignedVin) return;
+
+    const queryVinValue = normalizeVin(searchParams.get('vin'));
+    const currentVehicleVin = normalizeVin(vehicle?.vin);
+    const shouldHydrateAssignmentVehicle =
+      Boolean(assignmentNotice)
+      || Boolean(queryVinValue && queryVinValue === assignedVin);
+
+    if (!shouldHydrateAssignmentVehicle || currentVehicleVin === assignedVin) {
+      return;
+    }
+
+    const hydrationKey = `${assignedVin}|${queryVinValue || ''}|${assignmentNoticeKey || ''}`;
+    if (assignmentHydrationRef.current === hydrationKey) {
+      return;
+    }
+    assignmentHydrationRef.current = hydrationKey;
+    setVinInput(assignedVin);
+    void handleResolveVehicle(assignedVin);
+  }, [assignmentNotice, assignmentNoticeKey, currentAssignment?.vin, searchParams, vehicle?.vin]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -2615,9 +2715,11 @@ export default function FleetInspectionPublicPage() {
 
   function dismissAssignmentNotice() {
     setAssignmentNoticeOpen(false);
+    assignmentHydrationRef.current = '';
     if (!assignmentNotice) return;
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete('notice');
+    nextParams.delete('fromPush');
     nextParams.delete('plate');
     nextParams.delete('vehicleId');
     nextParams.delete('planDate');
@@ -2836,6 +2938,7 @@ export default function FleetInspectionPublicPage() {
 
   function startAnotherVehicle() {
     autoResolvedRef.current = false;
+    assignmentHydrationRef.current = '';
     setVehicle(null);
     setResult(null);
     setError('');
@@ -3009,12 +3112,31 @@ export default function FleetInspectionPublicPage() {
                   <p>{copy.pageSubtitle}</p>
                 </div>
                 <div className="fleet-inspection-public-header__signal">
-                  <span className="fleet-inspection-label">{copy.vehicleLabel}</span>
-                  <strong>{vehicleDisplayTitle}</strong>
-                  <small className="fleet-inspection-muted">{driverDisplayName}</small>
+                  <span className="fleet-inspection-label">{headerSignalLabel}</span>
+                  <strong>{headerSignalTitle}</strong>
+                  <small className="fleet-inspection-muted">{headerSignalMeta}</small>
                 </div>
               </div>
             </section>
+
+            {hasTodayAssignment ? (
+              <section className="fleet-inspection-card fleet-inspection-assignment-banner">
+                <div className="fleet-inspection-assignment-banner__copy">
+                  <span className="fleet-inspection-assignment-card__eyebrow">{assignmentCopy.eyebrow}</span>
+                  <div className="fleet-inspection-assignment-banner__vehicle">
+                    <span className="fleet-inspection-label">{assignmentCopy.title}</span>
+                    <strong>{assignmentVehicleTitle}</strong>
+                    {assignmentVehicleMeta ? (
+                      <small className="fleet-inspection-muted">{assignmentVehicleMeta}</small>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="fleet-inspection-assignment-banner__tip">
+                  <span className="fleet-inspection-label">{assignmentCopy.safetyTitle}</span>
+                  <p>{assignmentCopy.safetyTip}</p>
+                </div>
+              </section>
+            ) : null}
 
             {!(vehicle && !result && !inspectionStarted) ? (
               <section className="fleet-inspection-card fleet-inspection-app-summary">

@@ -45,6 +45,7 @@ self.addEventListener('notificationclick', (event) => {
     const vin = String(rawData.vin || '').trim();
     const planDate = String(rawData.planDate || '').trim();
 
+    url.searchParams.set('fromPush', '1');
     if (licensePlate || vehicleId || vin || planDate) {
       url.searchParams.set('notice', 'assignment');
       if (licensePlate) {

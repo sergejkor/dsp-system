@@ -60,6 +60,7 @@ function buildFleetcheckAssignmentUrl(vin, options = {}) {
     params.set('vin', normalizedVin);
   }
   params.set('notice', 'assignment');
+  params.set('fromPush', '1');
   if (stringOrNull(options.licensePlate, 64)) {
     params.set('plate', stringOrNull(options.licensePlate, 64));
   }
@@ -110,6 +111,89 @@ async function resolvePlanningDriverContact(driverIdentifier) {
       || normalizedDriver,
     employeeRef: stringOrNull(row?.employee_number, 128) || stringOrNull(row?.transporter_id, 128),
     kenjoUserId: stringOrNull(row?.kenjo_user_id, 128),
+  };
+}
+
+async function resolvePlanningDriverAliases(identity = {}) {
+  const rawCandidates = [
+    stringOrNull(identity.employeeRef, 128),
+    stringOrNull(identity.employeeId, 128),
+    stringOrNull(identity.kenjoUserId, 128),
+    stringOrNull(identity.displayName, 255),
+  ].filter(Boolean);
+  if (!rawCandidates.length) return [];
+
+  const lowerCandidates = [...new Set(rawCandidates.map((value) => value.toLowerCase()))];
+  const res = await query(
+    `SELECT
+       ke.employee_number::text AS employee_number,
+       ke.kenjo_user_id::text AS kenjo_user_id,
+       ke.transporter_id::text AS transporter_id,
+       ke.display_name,
+       ke.first_name,
+       ke.last_name
+     FROM kenjo_employees ke
+     WHERE ke.employee_number::text = ANY($1::text[])
+        OR ke.transporter_id::text = ANY($1::text[])
+        OR ke.kenjo_user_id::text = ANY($1::text[])
+        OR LOWER(COALESCE(ke.display_name, '')) = ANY($2::text[])
+        OR LOWER(TRIM(COALESCE(ke.first_name, '') || ' ' || COALESCE(ke.last_name, ''))) = ANY($2::text[])
+     ORDER BY ke.is_active DESC, ke.id ASC
+     LIMIT 5`,
+    [rawCandidates, lowerCandidates],
+  ).catch(() => ({ rows: [] }));
+
+  const aliases = new Set(lowerCandidates);
+  for (const row of res.rows || []) {
+    [
+      row?.employee_number,
+      row?.transporter_id,
+      row?.kenjo_user_id,
+      row?.display_name,
+      [row?.first_name, row?.last_name].filter(Boolean).join(' '),
+    ].forEach((value) => {
+      const normalized = stringOrNull(value, 255);
+      if (normalized) aliases.add(normalized.toLowerCase());
+    });
+  }
+  return [...aliases];
+}
+
+async function getTodayAssignmentForDriver(identity = {}) {
+  const aliases = await resolvePlanningDriverAliases(identity);
+  if (!aliases.length) return null;
+
+  const res = await query(
+    `SELECT
+       p.plan_date::text AS plan_date,
+       p.driver_identifier,
+       p.abfahrtskontrolle,
+       c.id AS car_id,
+       c.vehicle_id,
+       c.license_plate,
+       c.vin,
+       c.service_type
+     FROM car_planning p
+     INNER JOIN cars c ON c.id = p.car_id
+     WHERE p.plan_date = CURRENT_DATE
+       AND LOWER(COALESCE(p.driver_identifier, '')) = ANY($1::text[])
+     ORDER BY p.abfahrtskontrolle DESC, c.vehicle_id ASC, c.id ASC
+     LIMIT 1`,
+    [aliases],
+  ).catch(() => ({ rows: [] }));
+
+  const row = res.rows?.[0];
+  if (!row) return null;
+
+  return {
+    car_id: row.car_id,
+    plan_date: toDateOnly(row.plan_date),
+    driver_identifier: stringOrNull(row.driver_identifier, 255),
+    abfahrtskontrolle: Boolean(row.abfahrtskontrolle),
+    vehicle_id: stringOrNull(row.vehicle_id, 255),
+    license_plate: stringOrNull(row.license_plate, 64),
+    vin: stringOrNull(row.vin, 64),
+    service_type: stringOrNull(row.service_type, 128),
   };
 }
 
@@ -446,6 +530,7 @@ export default {
   getPlanningData,
   savePlanningData,
   savePlanningDataAndNotifyDrivers,
+  getTodayAssignmentForDriver,
   getReport,
   addCarWithWindow,
 };

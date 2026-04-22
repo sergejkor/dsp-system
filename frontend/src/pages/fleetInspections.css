@@ -149,6 +149,41 @@
   color: #f8fbff;
 }
 
+.fleet-inspection-assignment-banner {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border-radius: 28px;
+  border: 1px solid rgba(125, 172, 226, 0.16);
+  background:
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.14), transparent 30%),
+    linear-gradient(180deg, rgba(11, 22, 40, 0.94), rgba(8, 18, 33, 0.92));
+}
+
+.fleet-inspection-assignment-banner__copy,
+.fleet-inspection-assignment-banner__vehicle,
+.fleet-inspection-assignment-banner__tip {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.fleet-inspection-assignment-banner__vehicle strong {
+  font-size: clamp(1.35rem, 4.8vw, 1.9rem);
+  line-height: 1.04;
+  color: #f8fbff;
+}
+
+.fleet-inspection-assignment-banner__tip {
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(125, 172, 226, 0.12);
+}
+
+.fleet-inspection-assignment-banner__tip p {
+  margin: 0;
+  color: rgba(214, 229, 249, 0.78);
+  line-height: 1.5;
+}
+
 .fleet-inspection-home > .fleet-inspection-card + .fleet-inspection-card,
 .fleet-inspection-home > .fleet-inspection-public-header + .fleet-inspection-card,
 .fleet-inspection-home > .fleet-inspection-card + .fleet-inspection-public-header {

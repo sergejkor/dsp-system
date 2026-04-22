@@ -71,6 +71,23 @@ export async function searchFleetInspectionOperators(search) {
   return ensurePublicOk(res, 'Failed to load operator suggestions');
 }
 
+export async function getFleetCheckAssignment(identity = {}) {
+  const qs = new URLSearchParams();
+  if (identity.employeeRef) qs.set('employeeRef', String(identity.employeeRef).trim());
+  if (identity.employeeId) qs.set('employeeId', String(identity.employeeId).trim());
+  if (identity.kenjoUserId) qs.set('kenjoUserId', String(identity.kenjoUserId).trim());
+  if (identity.displayName) qs.set('displayName', String(identity.displayName).trim());
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const res = await performPublicFetch(
+    `${API_BASE}/api/public/fleet-inspections/assignment${suffix}`,
+    {
+      headers: { ...apiBaseHeaders() },
+    },
+    'Unable to reach the FleetCheck backend. Check the current API URL or ngrok tunnel.',
+  );
+  return ensurePublicOk(res, 'Failed to load today assignment');
+}
+
 export async function submitPublicInspection({ vin, operatorName, vehicleType, notes, shots }) {
   const form = new FormData();
   form.append('vin', String(vin || '').trim());
@@ -108,6 +125,8 @@ export async function listFleetInspections(filters = {}) {
   if (filters.status) qs.set('status', filters.status);
   if (filters.result) qs.set('result', filters.result);
   if (filters.carId) qs.set('carId', filters.carId);
+  if (filters.dateFrom) qs.set('dateFrom', filters.dateFrom);
+  if (filters.dateTo) qs.set('dateTo', filters.dateTo);
   if (filters.limit) qs.set('limit', String(filters.limit));
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
   const res = await fetch(`${API_BASE}/api/fleet-inspections${suffix}`, authOpts());
@@ -160,9 +179,12 @@ export async function assignFleetInspectionTaskManually(payload) {
   return ensureOk(res, 'Failed to assign inspection manually');
 }
 
-export async function getInspectionPhotoBlob(inspectionId, photoId) {
+export async function getInspectionPhotoBlob(inspectionId, photoId, options = {}) {
+  const qs = new URLSearchParams();
+  if (options.variant) qs.set('variant', String(options.variant));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
   const res = await fetch(
-    `${API_BASE}/api/fleet-inspections/${inspectionId}/photos/${photoId}/download`,
+    `${API_BASE}/api/fleet-inspections/${inspectionId}/photos/${photoId}/download${suffix}`,
     authOpts(),
   );
   if (await checkUnauthorized(res)) throw new Error('Unauthorized');
