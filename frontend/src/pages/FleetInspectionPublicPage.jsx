@@ -2489,6 +2489,7 @@ export default function FleetInspectionPublicPage() {
       employeeRef: selectedEmployee.employeeRef,
       employeeId: selectedEmployee.employeeId,
       kenjoUserId: selectedEmployee.kenjoUserId,
+      displayName: selectedEmployee.label,
       subscription: subscription.toJSON(),
       userAgent: navigator.userAgent,
       platform: inferPushPlatform(),
