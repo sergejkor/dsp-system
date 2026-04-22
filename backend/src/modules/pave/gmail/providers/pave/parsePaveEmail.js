@@ -113,19 +113,24 @@ export function isLikelyPaveEmail({ subject, fromEmail, rawBodyText, rawBodyHtml
     /^\s*(?:your\s+)?inspection\s+[a-z0-9-]{6,}\b/i.test(subjectValue);
   const urls = collectUrlCandidates(textRaw);
   const reportUrl = pickBestReportUrl(urls);
-  return (
+  const hasPaveSender =
     from.includes('pave') ||
     from.includes('paveapi') ||
+    from.includes('discoveryloft');
+  const hasTrackingLink = text.includes('click.connect.justeattakeaway.com');
+  const hasDashboardLink = text.includes('dashboard.paveapi.com/park/');
+  const hasReportId = Boolean(extractExternalReportIdFromText(textRaw));
+  const hasPaveWords =
     text.includes(' condition report') ||
     text.includes('vehicle condition report') ||
-    text.includes('pave inspection') ||
-    text.includes('dashboard.paveapi.com/park/') ||
-    text.includes('paveapi.com') ||
-    text.includes('/park/') ||
-    text.includes('click.connect.justeattakeaway.com') ||
-    Boolean(extractExternalReportIdFromText(textRaw)) ||
-    Boolean(reportUrl) ||
-    subjectLooksPave
+    text.includes('pave inspection');
+  return (
+    hasPaveSender ||
+    hasDashboardLink ||
+    subjectLooksPave ||
+    hasReportId ||
+    (hasTrackingLink && (subjectLooksPave || hasReportId || hasPaveSender || hasPaveWords)) ||
+    (Boolean(reportUrl) && (subjectLooksPave || hasReportId || hasPaveSender || hasPaveWords))
   );
 }
 
@@ -160,6 +165,14 @@ export default function parsePaveEmail({ subject, fromEmail, rawBodyText, rawBod
   ) {
     report_url = `https://dashboard.paveapi.com/park/${encodeURIComponent(external_report_id)}?l=en`;
     urlSynthesized = true;
+  }
+
+  if (
+    report_url &&
+    String(report_url).toLowerCase().includes('click.connect.justeattakeaway.com') &&
+    !external_report_id
+  ) {
+    report_url = null;
   }
 
   const language = report_url ? parseLanguageFromUrl(report_url) : null;

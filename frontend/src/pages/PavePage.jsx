@@ -214,7 +214,7 @@ export default function PavePage() {
       .then((r) => {
         const extra = r?.sparseRequeued ? `, re-queued=${r.sparseRequeued}` : '';
         setMessage(
-          `Sync done: created=${r?.created ?? 0}, updated=${r?.updated ?? 0}, partial=${r?.partial ?? 0}, failed=${r?.failed ?? 0}${extra}`
+          `Sync done: created=${r?.created ?? 0}, updated=${r?.updated ?? 0}, skipped=${r?.skipped ?? 0}, partial=${r?.partial ?? 0}, failed=${r?.failed ?? 0}${extra}`
         );
         loadGmail();
         loadStats();
