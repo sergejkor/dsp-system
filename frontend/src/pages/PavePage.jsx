@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   getPaveGmailReports,
@@ -96,6 +97,8 @@ export default function PavePage() {
   const returnKey = searchParams.get('return');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [showAdminToolsModal, setShowAdminToolsModal] = useState(false);
+  const [adminBusyLabel, setAdminBusyLabel] = useState('');
 
   const [inspectStats, setInspectStats] = useState(null);
   const [statsError, setStatsError] = useState('');
@@ -202,8 +205,18 @@ export default function PavePage() {
     };
   }, [showPendingCars]);
 
+  useEffect(() => {
+    if (!showAdminToolsModal) return undefined;
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setShowAdminToolsModal(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showAdminToolsModal]);
+
   function runSync() {
     setAdminBusy(true);
+    setAdminBusyLabel('Loading old mails...');
     setError('');
     setMessage('');
     syncPaveGmailReports({
@@ -214,17 +227,21 @@ export default function PavePage() {
       .then((r) => {
         const extra = r?.sparseRequeued ? `, re-queued=${r.sparseRequeued}` : '';
         setMessage(
-          `Sync done: created=${r?.created ?? 0}, updated=${r?.updated ?? 0}, skipped=${r?.skipped ?? 0}, partial=${r?.partial ?? 0}, failed=${r?.failed ?? 0}${extra}`
+          `Sync done: scanned=${r?.scanned ?? 0}, matched=${r?.matched ?? 0}, created=${r?.created ?? 0}, updated=${r?.updated ?? 0}, duplicates=${r?.duplicateSkipped ?? 0}, skipped=${r?.skipped ?? 0}, partial=${r?.partial ?? 0}, failed=${r?.failed ?? 0}${extra}`
         );
         loadGmail();
         loadStats();
       })
       .catch((e) => setError(e.message))
-      .finally(() => setAdminBusy(false));
+      .finally(() => {
+        setAdminBusy(false);
+        setAdminBusyLabel('');
+      });
   }
 
   function handleBackfill() {
     setAdminBusy(true);
+    setAdminBusyLabel('Loading old mails...');
     backfillPaveGmailReports({
       dateFrom: backfillDateFrom || undefined,
       dateTo: backfillDateTo || undefined,
@@ -247,7 +264,10 @@ export default function PavePage() {
         loadStats();
       })
       .catch((e) => setError(e.message))
-      .finally(() => setAdminBusy(false));
+      .finally(() => {
+        setAdminBusy(false);
+        setAdminBusyLabel('');
+      });
   }
 
   const s = inspectStats;
@@ -262,6 +282,16 @@ export default function PavePage() {
       <p className="pave-toolbar" style={{ marginTop: 0 }}>
         <Link to="/pave/new" className="pave-btn pave-btn--primary">+ New PAVE session</Link>
         <Link to="/pave/settings" className="pave-btn">PAVE API settings</Link>
+        <button
+          type="button"
+          className={`pave-btn${showPendingCars ? ' pave-btn--active' : ''}`}
+          onClick={() => setShowPendingCars((v) => !v)}
+        >
+          {showPendingCars ? 'Hide' : 'Show'} Vehicles without Pave Inspection
+        </button>
+        <button type="button" className="pave-btn" onClick={() => setShowAdminToolsModal(true)}>
+          Admin Tools
+        </button>
       </p>
 
       {returnKey && (
@@ -327,7 +357,7 @@ export default function PavePage() {
         </>
       )}
 
-      <div className="pave-pending-toolbar">
+      <div className="pave-pending-toolbar" style={{ display: 'none' }}>
         <button
           type="button"
           className={`pave-btn${showPendingCars ? ' pave-btn--active' : ''}`}
@@ -342,6 +372,9 @@ export default function PavePage() {
 
       {showPendingCars && (
         <div className="pave-pending-panel">
+          <p className="muted pave-pending-hint" style={{ marginTop: 0 }}>
+            Uses the same <strong>VIN last 4</strong> match as the table; email-imported reports only.
+          </p>
           {pendingCarsLoading && <p className="muted">Loading fleet list…</p>}
           {pendingCarsError && <p className="pave-msg pave-msg--err">{pendingCarsError}</p>}
           {!pendingCarsLoading && !pendingCarsError && pendingCarsPayload && (
@@ -445,7 +478,7 @@ export default function PavePage() {
         </div>
       )}
 
-      <div className="pave-admin-tools">
+      <div className="pave-admin-tools" style={{ display: 'none' }}>
         <h3 style={{ marginTop: 0 }}>Admin tools</h3>
         <div className="pave-toolbar">
           <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -502,6 +535,8 @@ export default function PavePage() {
         </div>
       </div>
 
+      {false && (
+      <>
       <p className="muted" style={{ marginBottom: '0.5rem' }}>
         Rows with <strong>(email received)</strong> still lack a parsed inspection date until portal/PDF succeeds.
       </p>
@@ -519,6 +554,8 @@ export default function PavePage() {
           Sync
         </button>
       </div>
+      </>
+      )}
 
       {gmailLoading ? (
         <p className="muted">Loading…</p>
@@ -622,6 +659,115 @@ export default function PavePage() {
         </div>
       )}
 
+      {showAdminToolsModal && typeof document !== 'undefined' && createPortal((
+        <div className="pave-modal-backdrop" onClick={() => setShowAdminToolsModal(false)}>
+          <div
+            className="pave-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pave-admin-tools-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pave-modal__header">
+              <div>
+                <h3 id="pave-admin-tools-title" className="pave-modal__title">Admin Tools</h3>
+                <p className="muted pave-modal__subtitle">Sync and backfill controls for PAVE email import.</p>
+              </div>
+              <button
+                type="button"
+                className="pave-modal__close"
+                onClick={() => setShowAdminToolsModal(false)}
+                aria-label="Close Admin Tools"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="pave-admin-tools pave-admin-tools--modal">
+              <div className="pave-toolbar">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={gmailReprocessSparse}
+                    onChange={(e) => setGmailReprocessSparse(e.target.checked)}
+                  />
+                  Re-fetch incomplete imports (missing inspection date / VIN / grade in DB)
+                </label>
+                <button type="button" onClick={runSync} className="pave-btn pave-btn--primary" disabled={adminBusy}>
+                  {adminBusy ? 'Running…' : 'Sync now'}
+                </button>
+              </div>
+              <div className="pave-toolbar">
+                <input type="date" value={backfillDateFrom} onChange={(e) => setBackfillDateFrom(e.target.value)} />
+                <input type="date" value={backfillDateTo} onChange={(e) => setBackfillDateTo(e.target.value)} />
+                <input
+                  type="number"
+                  min={1}
+                  max={5000}
+                  value={backfillMaxEmails}
+                  onChange={(e) => setBackfillMaxEmails(e.target.value)}
+                  placeholder="Max emails"
+                  style={{ width: 130 }}
+                />
+                <input
+                  type="text"
+                  value={backfillSender}
+                  onChange={(e) => setBackfillSender(e.target.value)}
+                  placeholder="From filter (optional)"
+                  className="pave-search"
+                  style={{ width: 220 }}
+                />
+                <input
+                  type="text"
+                  value={backfillSubject}
+                  onChange={(e) => setBackfillSubject(e.target.value)}
+                  placeholder="Subject contains (optional)"
+                  className="pave-search"
+                  style={{ width: 160 }}
+                />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={backfillReprocess}
+                    onChange={(e) => setBackfillReprocess(e.target.checked)}
+                  />
+                  Reprocess existing
+                </label>
+                <button type="button" onClick={handleBackfill} className="pave-btn" disabled={adminBusy}>
+                  {adminBusy ? 'Running…' : 'Run backfill'}
+                </button>
+              </div>
+              <p className="muted" style={{ marginBottom: '0.5rem' }}>
+                Rows with <strong>(email received)</strong> still lack a parsed inspection date until portal/PDF succeeds.
+              </p>
+              {gmailError && <p className="pave-msg pave-msg--err">{gmailError}</p>}
+              <div className="pave-toolbar">
+                <input type="text" placeholder="Plateâ€¦" value={gmailPlate} onChange={(e) => setGmailPlate(e.target.value)} className="pave-search" />
+                <input type="text" placeholder="Driverâ€¦" value={gmailDriver} onChange={(e) => setGmailDriver(e.target.value)} className="pave-search" />
+                <input type="text" placeholder="Report typeâ€¦" value={gmailReportType} onChange={(e) => setGmailReportType(e.target.value)} className="pave-search" />
+                <input type="text" placeholder="Statusâ€¦" value={gmailStatus} onChange={(e) => setGmailStatus(e.target.value)} className="pave-search" />
+                <input type="date" value={gmailDateFrom} onChange={(e) => setGmailDateFrom(e.target.value)} />
+                <input type="date" value={gmailDateTo} onChange={(e) => setGmailDateTo(e.target.value)} />
+                <button type="button" onClick={() => { loadGmail(); loadStats(); }}>Refresh</button>
+                <button type="button" onClick={runSync} className="pave-btn pave-btn--primary" disabled={adminBusy}>
+                  Sync
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ), document.body)}
+
+      {adminBusy && (
+        <div className="pave-loading-overlay" role="status" aria-live="polite" aria-busy="true">
+          <div className="pave-loading-overlay__card">
+            <div className="pave-loading-overlay__spinner" aria-hidden />
+            <strong>{adminBusyLabel || 'Loading...'}</strong>
+            <span className="muted">PAVE import is still running.</span>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .pave-page { max-width: 100%; }
         .pave-return-msg { background: #e3f2fd; padding: 0.5rem; border-radius: 6px; margin-bottom: 0.5rem; }
@@ -652,6 +798,39 @@ export default function PavePage() {
         .pave-pending-h3 { margin: 0 0 0.35rem; font-size: 1rem; }
         .pave-pending-panel .small { font-size: 0.8rem; margin: 0 0 0.5rem; }
         .pave-admin-tools { background: #fafafa; border: 1px solid #ececec; border-radius: 10px; padding: 0.75rem; margin-bottom: 1rem; }
+        .pave-admin-tools--modal { margin-bottom: 0; }
+        .pave-modal-backdrop {
+          position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+          padding: 1rem; background: rgba(15, 23, 42, 0.45);
+        }
+        .pave-modal {
+          width: min(980px, 100%); max-height: calc(100vh - 2rem); overflow: auto;
+          background: #fff; border-radius: 14px; border: 1px solid rgba(15, 23, 42, 0.08);
+          box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25); padding: 1rem;
+        }
+        .pave-modal__header {
+          display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;
+        }
+        .pave-modal__title { margin: 0; }
+        .pave-modal__subtitle { margin: 0.25rem 0 0; }
+        .pave-modal__close {
+          width: 2rem; height: 2rem; border: 1px solid #d0d7de; border-radius: 999px;
+          background: #fff; cursor: pointer; font-size: 1.25rem; line-height: 1;
+        }
+        .pave-loading-overlay {
+          position: fixed; inset: 0; z-index: 1100; display: flex; align-items: flex-start; justify-content: center;
+          padding-top: 1.5rem; background: rgba(255, 255, 255, 0.35); backdrop-filter: blur(2px);
+        }
+        .pave-loading-overlay__card {
+          display: flex; align-items: center; gap: 0.75rem; min-width: 320px; padding: 0.85rem 1rem;
+          background: #0f172a; color: #fff; border-radius: 999px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.35);
+        }
+        .pave-loading-overlay__card .muted { color: rgba(255, 255, 255, 0.78); }
+        .pave-loading-overlay__spinner {
+          width: 1rem; height: 1rem; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35);
+          border-top-color: #fff; animation: pave-spin 0.8s linear infinite;
+        }
+        @keyframes pave-spin { to { transform: rotate(360deg); } }
         .pave-table-wrap { overflow: auto; }
         .pave-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         .pave-table th, .pave-table td { border: 1px solid #ddd; padding: 0.35rem 0.5rem; text-align: left; }
