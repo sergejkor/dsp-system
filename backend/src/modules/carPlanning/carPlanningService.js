@@ -52,11 +52,25 @@ function isStatusAutoDeactivated(status) {
   ].includes(normalized);
 }
 
-function buildFleetcheckAssignmentUrl(vin) {
+function buildFleetcheckAssignmentUrl(vin, options = {}) {
   const safeBase = DEFAULT_FLEETCHECK_PUBLIC_BASE_URL.replace(/\/+$/, '');
   const normalizedVin = stringOrNull(vin, 64);
-  if (!normalizedVin) return `${safeBase}/fleet-check`;
-  return `${safeBase}/fleet-check?vin=${encodeURIComponent(normalizedVin)}`;
+  const params = new URLSearchParams();
+  if (normalizedVin) {
+    params.set('vin', normalizedVin);
+  }
+  params.set('notice', 'assignment');
+  if (stringOrNull(options.licensePlate, 64)) {
+    params.set('plate', stringOrNull(options.licensePlate, 64));
+  }
+  if (stringOrNull(options.vehicleId, 255)) {
+    params.set('vehicleId', stringOrNull(options.vehicleId, 255));
+  }
+  if (stringOrNull(options.planDate, 32)) {
+    params.set('planDate', stringOrNull(options.planDate, 32));
+  }
+  const suffix = params.toString();
+  return suffix ? `${safeBase}/fleet-check?${suffix}` : `${safeBase}/fleet-check`;
 }
 
 async function resolvePlanningDriverContact(driverIdentifier) {
@@ -336,7 +350,11 @@ async function savePlanningDataAndNotifyDrivers(carStates = {}, slots = []) {
     const licensePlate = stringOrNull(car.license_plate, 64);
     const vehicleId = stringOrNull(car.vehicle_id, 255);
     const assignmentLabel = licensePlate || vehicleId || `car ${slot.carId}`;
-    const targetUrl = buildFleetcheckAssignmentUrl(car.vin);
+    const targetUrl = buildFleetcheckAssignmentUrl(car.vin, {
+      licensePlate,
+      vehicleId,
+      planDate: slot.planDate,
+    });
     const pushResult = await pushService.sendNotificationToEmployee(
       {
         kenjoUserId: driverContact.kenjoUserId,

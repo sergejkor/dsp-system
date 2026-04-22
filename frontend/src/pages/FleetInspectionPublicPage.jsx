@@ -1337,6 +1337,105 @@ Object.assign(FLEETCHECK_COPY, {
   },
 });
 
+const FLEETCHECK_ASSIGNMENT_COPY = {
+  en: {
+    eyebrow: "Today's assignment",
+    title: 'Today you will drive this vehicle',
+    body: 'Open FleetCheck below and complete the inspection before starting your route.',
+    safetyTitle: 'Safety tip',
+    safetyTip: 'Drive carefully, keep distance, and complete a quick walk-around before departure.',
+    open: 'Open FleetCheck',
+  },
+  de: {
+    eyebrow: 'Heutige Zuteilung',
+    title: 'Heute fährst du dieses Fahrzeug',
+    body: 'Öffne unten FleetCheck und schließe die Kontrolle ab, bevor du deine Route startest.',
+    safetyTitle: 'Sicherheitstipp',
+    safetyTip: 'Fahre vorsichtig, halte Abstand und mache vor der Abfahrt einen kurzen Rundgang ums Fahrzeug.',
+    open: 'FleetCheck öffnen',
+  },
+  ru: {
+    eyebrow: 'Назначение на сегодня',
+    title: 'Сегодня вы едете на этом автомобиле',
+    body: 'Откройте FleetCheck ниже и завершите осмотр перед началом маршрута.',
+    safetyTitle: 'Совет по безопасности',
+    safetyTip: 'Езжайте аккуратно, держите дистанцию и сделайте быстрый обход автомобиля перед выездом.',
+    open: 'Открыть FleetCheck',
+  },
+  fr: {
+    eyebrow: "Affectation du jour",
+    title: "Aujourd'hui, vous conduirez ce véhicule",
+    body: 'Ouvrez FleetCheck ci-dessous et terminez le contrôle avant de commencer votre tournée.',
+    safetyTitle: 'Conseil sécurité',
+    safetyTip: 'Conduisez prudemment, gardez vos distances et faites un rapide tour du véhicule avant le départ.',
+    open: 'Ouvrir FleetCheck',
+  },
+  it: {
+    eyebrow: 'Assegnazione di oggi',
+    title: 'Oggi guiderai questo veicolo',
+    body: 'Apri FleetCheck qui sotto e completa il controllo prima di iniziare il tuo giro.',
+    safetyTitle: 'Suggerimento di sicurezza',
+    safetyTip: 'Guida con prudenza, mantieni la distanza e fai un rapido controllo esterno prima della partenza.',
+    open: 'Apri FleetCheck',
+  },
+  es: {
+    eyebrow: 'Asignación de hoy',
+    title: 'Hoy conducirás este vehículo',
+    body: 'Abre FleetCheck abajo y completa la inspección antes de iniciar tu ruta.',
+    safetyTitle: 'Consejo de seguridad',
+    safetyTip: 'Conduce con cuidado, mantén la distancia y haz una revisión rápida del vehículo antes de salir.',
+    open: 'Abrir FleetCheck',
+  },
+  pl: {
+    eyebrow: 'Dzisiejszy przydział',
+    title: 'Dziś jedziesz tym pojazdem',
+    body: 'Otwórz poniżej FleetCheck i zakończ kontrolę przed rozpoczęciem trasy.',
+    safetyTitle: 'Wskazówka bezpieczeństwa',
+    safetyTip: 'Jedź ostrożnie, zachowaj odstęp i zrób krótki obchód pojazdu przed wyjazdem.',
+    open: 'Otwórz FleetCheck',
+  },
+  uk: {
+    eyebrow: 'Призначення на сьогодні',
+    title: 'Сьогодні ви їдете на цьому автомобілі',
+    body: 'Відкрийте FleetCheck нижче та завершіть огляд перед початком маршруту.',
+    safetyTitle: 'Порада з безпеки',
+    safetyTip: 'Керуйте обережно, тримайте дистанцію та зробіть швидкий огляд автомобіля перед виїздом.',
+    open: 'Відкрити FleetCheck',
+  },
+  nl: {
+    eyebrow: 'Toewijzing van vandaag',
+    title: 'Vandaag rijd je met dit voertuig',
+    body: 'Open hieronder FleetCheck en rond de controle af voordat je aan je rit begint.',
+    safetyTitle: 'Veiligheidstip',
+    safetyTip: 'Rijd voorzichtig, houd afstand en loop voor vertrek snel om het voertuig heen.',
+    open: 'Open FleetCheck',
+  },
+  ro: {
+    eyebrow: 'Alocarea de azi',
+    title: 'Astăzi vei conduce acest vehicul',
+    body: 'Deschide FleetCheck mai jos și finalizează verificarea înainte să începi cursa.',
+    safetyTitle: 'Sfat de siguranță',
+    safetyTip: 'Condu cu grijă, păstrează distanța și fă o verificare rapidă a vehiculului înainte de plecare.',
+    open: 'Deschide FleetCheck',
+  },
+  hu: {
+    eyebrow: 'Mai beosztás',
+    title: 'Ma ezzel a járművel mész',
+    body: 'Nyisd meg lent a FleetChecket, és indulás előtt fejezd be az ellenőrzést.',
+    safetyTitle: 'Biztonsági tipp',
+    safetyTip: 'Vezess óvatosan, tarts követési távolságot, és indulás előtt gyorsan járd körbe a járművet.',
+    open: 'FleetCheck megnyitása',
+  },
+  ar: {
+    eyebrow: 'مهمة اليوم',
+    title: 'اليوم ستقود هذه المركبة',
+    body: 'افتح FleetCheck في الأسفل وأكمل الفحص قبل بدء رحلتك.',
+    safetyTitle: 'نصيحة سلامة',
+    safetyTip: 'قد بحذر، حافظ على مسافة آمنة، وقم بجولة سريعة حول المركبة قبل الانطلاق.',
+    open: 'افتح FleetCheck',
+  },
+};
+
 function normalizeFleetCheckLocale(locale) {
   return normalizePersonalQuestionnaireLocale(locale);
 }
@@ -1358,9 +1457,27 @@ function getFleetCheckCopy(locale) {
   return FLEETCHECK_COPY[resolveFleetCheckCopyLocale(locale)] || FLEETCHECK_COPY.en;
 }
 
+function getFleetCheckAssignmentCopy(locale) {
+  return FLEETCHECK_ASSIGNMENT_COPY[resolveFleetCheckCopyLocale(locale)] || FLEETCHECK_ASSIGNMENT_COPY.en;
+}
+
 function getLocalizedShotCopy(locale, shotId) {
   const copyLocale = resolveFleetCheckCopyLocale(locale);
   return FLEETCHECK_SHOT_COPY[copyLocale]?.[shotId] || FLEETCHECK_SHOT_COPY.en[shotId] || null;
+}
+
+function parseFleetCheckAssignmentNotice(searchParams) {
+  if (!searchParams || searchParams.get('notice') !== 'assignment') return null;
+  const normalize = (value, maxLen = 255) => {
+    const normalized = String(value || '').trim();
+    return normalized ? normalized.slice(0, maxLen) : null;
+  };
+  return {
+    vin: normalize(normalizeVin(searchParams.get('vin')), 64),
+    licensePlate: normalize(searchParams.get('plate'), 64),
+    vehicleId: normalize(searchParams.get('vehicleId'), 255),
+    planDate: normalize(searchParams.get('planDate'), 32),
+  };
 }
 
 function isFleetCheckRtl(locale) {
@@ -1929,6 +2046,12 @@ export default function FleetInspectionPublicPage() {
   const [locale, setLocale] = useState(() => readSavedFleetCheckLocale());
   const copy = useMemo(() => getFleetCheckCopy(locale), [locale]);
   const [searchParams, setSearchParams] = useSearchParams();
+  const assignmentCopy = useMemo(() => getFleetCheckAssignmentCopy(locale), [locale]);
+  const assignmentNotice = useMemo(() => parseFleetCheckAssignmentNotice(searchParams), [searchParams]);
+  const assignmentNoticeKey = useMemo(
+    () => (assignmentNotice ? JSON.stringify(assignmentNotice) : ''),
+    [assignmentNotice],
+  );
   const initialQueryVin = normalizeVin(searchParams.get('vin'));
   const initialDraft = initialQueryVin ? null : savedInspectionDraft;
   const initialDriverSelection = initialDraft?.driverSelection || savedPushEmployee;
@@ -1974,6 +2097,7 @@ export default function FleetInspectionPublicPage() {
   const [pushSuggestionsLoading, setPushSuggestionsLoading] = useState(false);
   const [pushSuggestionsError, setPushSuggestionsError] = useState('');
   const [pushSuggestionsVisible, setPushSuggestionsVisible] = useState(false);
+  const [assignmentNoticeOpen, setAssignmentNoticeOpen] = useState(() => Boolean(assignmentNotice));
   const scannerVideoRef = useRef(null);
   const driverInputRef = useRef(null);
   const pushInputRef = useRef(null);
@@ -2020,6 +2144,18 @@ export default function FleetInspectionPublicPage() {
   const vehicleDisplayMeta = vehicle
     ? `${overlaySet?.label || vehicle.vehicleType || copy.vehicleStatusReady} • VIN ${vehicle.vin}`
     : copy.pageSubtitle;
+  const assignmentVehicleTitle =
+    assignmentNotice?.licensePlate
+    || vehicle?.licensePlate
+    || assignmentNotice?.vehicleId
+    || vehicle?.vehicleId
+    || assignmentNotice?.vin
+    || vehicle?.vin
+    || copy.vehicleLabel;
+  const assignmentVehicleMeta = [
+    assignmentNotice?.vehicleId || vehicle?.vehicleId || null,
+    assignmentNotice?.vin || vehicle?.vin ? `VIN ${assignmentNotice?.vin || vehicle?.vin}` : null,
+  ].filter(Boolean).join(' • ');
   const driverDisplayName = driverName || pushEmployeeSelection?.label || copy.waitingDriver;
   const deviceStatusLabel = pushEnabled
     ? copy.notificationsEnabledOnDevice
@@ -2042,6 +2178,10 @@ export default function FleetInspectionPublicPage() {
       setCurrentShotId(shots[0].id);
     }
   }, [currentShotId, shots]);
+
+  useEffect(() => {
+    setAssignmentNoticeOpen(Boolean(assignmentNotice));
+  }, [assignmentNoticeKey]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -2470,6 +2610,17 @@ export default function FleetInspectionPublicPage() {
     setPushStatus('');
   }
 
+  function dismissAssignmentNotice() {
+    setAssignmentNoticeOpen(false);
+    if (!assignmentNotice) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('notice');
+    nextParams.delete('plate');
+    nextParams.delete('vehicleId');
+    nextParams.delete('planDate');
+    setSearchParams(nextParams, { replace: true });
+  }
+
   async function syncDeviceRegistration(employee, permissionOverride = null) {
     const selectedEmployee = normalizeEmployeeSelection(employee);
     if (!hasEmployeeIdentity(selectedEmployee)) {
@@ -2792,6 +2943,37 @@ export default function FleetInspectionPublicPage() {
         key={`fleetcheck-shell-${locale}`}
         className={`fleet-inspection-shell ${inspectionStarted ? 'fleet-inspection-shell--camera' : ''}`}
       >
+        {assignmentNoticeOpen ? (
+          <div className="fleet-inspection-assignment-overlay" role="dialog" aria-modal="true" aria-labelledby="fleetcheck-assignment-title">
+            <div className="fleet-inspection-assignment-card">
+              <span className="fleet-inspection-assignment-card__eyebrow">{assignmentCopy.eyebrow}</span>
+              <h2 id="fleetcheck-assignment-title">{assignmentCopy.title}</h2>
+              <p>{assignmentCopy.body}</p>
+
+              <div className="fleet-inspection-assignment-card__vehicle">
+                <span className="fleet-inspection-label">{copy.vehicleLabel}</span>
+                <strong>{assignmentVehicleTitle}</strong>
+                {assignmentVehicleMeta ? (
+                  <small className="fleet-inspection-muted">{assignmentVehicleMeta}</small>
+                ) : null}
+              </div>
+
+              <div className="fleet-inspection-assignment-card__tip">
+                <span className="fleet-inspection-label">{assignmentCopy.safetyTitle}</span>
+                <p>{assignmentCopy.safetyTip}</p>
+              </div>
+
+              <button
+                type="button"
+                className="fleet-inspection-button fleet-inspection-button--large"
+                onClick={dismissAssignmentNotice}
+              >
+                {assignmentCopy.open}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {!inspectionStarted ? (
           <div className="fleet-inspection-home">
             <section className="fleet-inspection-public-header fleet-inspection-public-header--top">
