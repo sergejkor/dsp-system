@@ -2166,6 +2166,7 @@ export default function FleetInspectionPublicPage() {
   const [pushSuggestionsVisible, setPushSuggestionsVisible] = useState(false);
   const [currentAssignment, setCurrentAssignment] = useState(null);
   const [assignmentNoticeOpen, setAssignmentNoticeOpen] = useState(() => Boolean(assignmentNotice));
+  const [pendingAssignmentInspectionStart, setPendingAssignmentInspectionStart] = useState(false);
   const scannerVideoRef = useRef(null);
   const driverInputRef = useRef(null);
   const pushInputRef = useRef(null);
@@ -2243,7 +2244,7 @@ export default function FleetInspectionPublicPage() {
   const canStartInspectionForCurrentVehicle = !currentVehicleMatchesAssignment || assignmentRequiresInspection;
   const assignmentCardTitle = assignmentRequiresInspection ? assignmentCopy.title : assignmentCopy.titleNoInspection;
   const assignmentCardBody = assignmentRequiresInspection ? assignmentCopy.body : assignmentCopy.bodyNoInspection;
-  const assignmentOpenLabel = assignmentRequiresInspection ? assignmentCopy.open : assignmentCopy.openNoInspection;
+  const assignmentOpenLabel = assignmentRequiresInspection ? copy.startInspection : assignmentCopy.openNoInspection;
   const driverDisplayName = driverName || pushEmployeeSelection?.label || copy.waitingDriver;
   const headerSignalLabel = hasTodayAssignment ? assignmentCopy.eyebrow : copy.vehicleLabel;
   const headerSignalTitle = hasTodayAssignment ? assignmentVehicleTitle : vehicleDisplayTitle;
@@ -2353,6 +2354,26 @@ export default function FleetInspectionPublicPage() {
     setVinInput(assignedVin);
     void handleResolveVehicle(assignedVin);
   }, [assignmentNotice, assignmentNoticeKey, currentAssignment?.vin, searchParams, vehicle?.vin]);
+
+  useEffect(() => {
+    if (!pendingAssignmentInspectionStart || !assignmentRequiresInspection || assignmentNoticeOpen || loadingVehicle) {
+      return;
+    }
+
+    if (assignedVehicleVin && normalizeVin(vehicle?.vin) !== assignedVehicleVin) {
+      return;
+    }
+
+    setPendingAssignmentInspectionStart(false);
+    handleStartInspection();
+  }, [
+    assignedVehicleVin,
+    assignmentNoticeOpen,
+    assignmentRequiresInspection,
+    loadingVehicle,
+    pendingAssignmentInspectionStart,
+    vehicle?.vin,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -2794,6 +2815,26 @@ export default function FleetInspectionPublicPage() {
     setSearchParams(nextParams, { replace: true });
   }
 
+  async function handleAssignmentPrimaryAction() {
+    if (!assignmentRequiresInspection) {
+      dismissAssignmentNotice();
+      return;
+    }
+
+    const nextAssignedVin = assignedVehicleVin;
+    setPendingAssignmentInspectionStart(true);
+
+    if (nextAssignedVin && normalizeVin(vehicle?.vin) !== nextAssignedVin) {
+      const resolved = await handleResolveVehicle(nextAssignedVin);
+      if (!resolved) {
+        setPendingAssignmentInspectionStart(false);
+        return;
+      }
+    }
+
+    dismissAssignmentNotice();
+  }
+
   async function syncDeviceRegistration(employee, permissionOverride = null) {
     const selectedEmployee = normalizeEmployeeSelection(employee);
     if (!hasEmployeeIdentity(selectedEmployee)) {
@@ -3142,7 +3183,9 @@ export default function FleetInspectionPublicPage() {
               <button
                 type="button"
                 className="fleet-inspection-button fleet-inspection-button--large"
-                onClick={dismissAssignmentNotice}
+                onClick={() => {
+                  void handleAssignmentPrimaryAction();
+                }}
               >
                 {assignmentOpenLabel}
               </button>
