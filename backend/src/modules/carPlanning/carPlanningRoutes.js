@@ -51,6 +51,17 @@ router.put('/data', async (req, res) => {
   }
 });
 
+router.post('/data/save-and-send', async (req, res) => {
+  try {
+    const { carStates = {}, slots = [] } = req.body || {};
+    const result = await carPlanningService.savePlanningDataAndNotifyDrivers(carStates, slots);
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/car-planning/data/save-and-send', err);
+    res.status(400).json({ error: err.message || 'Failed to save and send planning notifications' });
+  }
+});
+
 router.get('/report', async (req, res) => {
   try {
     const date = req.query.date;

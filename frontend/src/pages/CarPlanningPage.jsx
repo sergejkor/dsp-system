@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
 import { useAppSettings } from '../context/AppSettingsContext';
-import { getCars, getDrivers, getPlanningData, savePlanningData, getReport, addCar } from '../services/carPlanningApi';
+import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, addCar } from '../services/carPlanningApi';
 import { syncKenjoEmployees } from '../services/kenjoApi';
 
 /** Day window around today included in planning columns (saved to DB). */
@@ -46,12 +46,24 @@ function isStatusAutoDeactivated(status) {
   return ['maintenance', 'grounded', 'out of service', 'defleeted', 'decommissioned'].includes(normalized);
 }
 
+function countFilledNewDayDrivers(cars, carStates, newDayDrafts, date, isCarUnavailableForPlanning) {
+  let count = 0;
+  (cars || []).forEach((car) => {
+    if (carStates?.[car.id]) return;
+    if (isCarUnavailableForPlanning(car, date)) return;
+    const rawValue = newDayDrafts?.[car.id];
+    if (rawValue && String(rawValue).trim()) count += 1;
+  });
+  return count;
+}
+
 /** Searchable driver cell: input + dropdown filtered by query; supports free text. */
 function DriverCell({
   value,
   drivers,
   usedInColumn,
   onSelect,
+  onDraftChange,
   onAbfahrtskontrolle,
   abfahrtskontrolleMode,
   abfahrtskontrolleDone,
@@ -61,9 +73,9 @@ function DriverCell({
   usePasteButton = false,
 }) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState(value || '');
   const ref = useRef(null);
   const locked = !!abfahrtskontrolleMode;
+  const query = value || '';
 
   const filtered = useMemo(() => {
     const q = (query || '').trim().toLowerCase();
@@ -95,10 +107,6 @@ function DriverCell({
   }, [drivers, query, usedInColumn, value]);
 
   useEffect(() => {
-    setQuery(value || '');
-  }, [value]);
-
-  useEffect(() => {
     if (!open) return;
     if (locked) return;
     function handleClickOutside(e) {
@@ -122,7 +130,9 @@ function DriverCell({
         readOnly={locked || disabled}
         onChange={(e) => {
           if (locked || disabled) return;
-          setQuery(e.target.value);
+          const nextValue = e.target.value;
+          onDraftChange?.(nextValue);
+          onSelect(nextValue.trim());
           setOpen(true);
         }}
         onFocus={() => {
@@ -131,9 +141,11 @@ function DriverCell({
         }}
         onBlur={() => {
           if (locked || disabled) return;
+          const committedValue = (ref.current?.querySelector('input')?.value || '').trim();
           setTimeout(() => {
             setOpen(false);
-            onSelect(query.trim());
+            onDraftChange?.(committedValue);
+            onSelect(committedValue);
           }, 150);
         }}
         disabled={disabled}
@@ -143,8 +155,8 @@ function DriverCell({
           // Delete / Backspace on empty field clears value
           if ((e.key === 'Delete' || e.key === 'Backspace') && !query) {
             e.preventDefault();
+            onDraftChange?.('');
             onSelect('');
-            setQuery('');
             return;
           }
           // Simple paste support from clipboard (Ctrl+V / Cmd+V)
@@ -152,7 +164,7 @@ function DriverCell({
             // Let the browser paste into the input, then sync to state shortly after
             setTimeout(() => {
               const next = e.target.value.trim();
-              setQuery(next);
+              onDraftChange?.(next);
               onSelect(next);
             }, 0);
           }
@@ -173,7 +185,7 @@ function DriverCell({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setQuery('');
+              onDraftChange?.('');
               onSelect('');
             }}
           >
@@ -192,7 +204,7 @@ function DriverCell({
                 const next = text.toLowerCase();
                 const current = (value || '').trim().toLowerCase();
                 if (usedInColumn.has(next) && next !== current) return;
-                setQuery(text);
+                onDraftChange?.(text);
                 onSelect(text);
                 return;
               }
@@ -213,7 +225,13 @@ function DriverCell({
           {query.trim() && !drivers.some((d) => (d.display_name || '').toLowerCase() === query.trim().toLowerCase()) && (
             <li
               className="car-planning-cell-option"
-              onMouseDown={(e) => { e.preventDefault(); onSelect(query.trim()); setOpen(false); }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const nextValue = query.trim();
+                onDraftChange?.(nextValue);
+                onSelect(nextValue);
+                setOpen(false);
+              }}
             >
               {query.trim()} (free text)
             </li>
@@ -224,7 +242,9 @@ function DriverCell({
               className="car-planning-cell-option"
               onMouseDown={(e) => {
                 e.preventDefault();
-                onSelect(d.display_name || d.transporter_id || d.id);
+                const nextValue = d.display_name || d.transporter_id || d.id;
+                onDraftChange?.(nextValue);
+                onSelect(nextValue);
                 setOpen(false);
               }}
             >
@@ -326,9 +346,11 @@ export default function CarPlanningPage() {
   const [abfahrtskontrolleMode, setAbfahrtskontrolleMode] = useState(false);
   const [carStates, setCarStates] = useState({});
   const [slots, setSlots] = useState({});
+  const [newDayDrafts, setNewDayDrafts] = useState({});
   const [reportOpen, setReportOpen] = useState(false);
   const [reportRows, setReportRows] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [newDayAutoSaveStatus, setNewDayAutoSaveStatus] = useState('idle');
   const [sortByDate, setSortByDate] = useState(null);
   const [sortAsc, setSortAsc] = useState(true);
   const [frozen, setFrozen] = useState(false);
@@ -343,10 +365,15 @@ export default function CarPlanningPage() {
     to: '',
   });
   const reportRef = useRef(null);
+  const totalCountNewDayRef = useRef(null);
   const carPlanningFixedTableRef = useRef(null);
   const carPlanningDaysTableRef = useRef(null);
   const carPlanningDaysScrollWrapRef = useRef(null);
   const carPlanningDidInitialScrollRef = useRef(false);
+  const newDayAutoSaveTimeoutRef = useRef(null);
+  const newDayAutoSaveInitializedRef = useRef(false);
+  const newDayAutoSaveLastSignatureRef = useRef('');
+  const newDayAutoSaveRequestIdRef = useRef(0);
   const [screenshotStatus, setScreenshotStatus] = useState('');
 
   const runSyncCarPlanningHeights = useCallback(() => {
@@ -585,6 +612,12 @@ export default function CarPlanningPage() {
           slotMap[key] = { driver_identifier: s.driver_identifier, abfahrtskontrolle: s.abfahrtskontrolle };
         });
         setSlots(slotMap);
+        const nextNewDayDrafts = {};
+        (carsList || []).forEach((car) => {
+          const key = `${car.id}_${newDayDate}`;
+          nextNewDayDrafts[car.id] = slotMap[key]?.driver_identifier || '';
+        });
+        setNewDayDrafts(nextNewDayDrafts);
       })
       .catch((e) => {
         if (!cancelled) setError(e?.message || 'Failed to load');
@@ -612,16 +645,67 @@ export default function CarPlanningPage() {
     return out;
   }, [allPlanningDates, cars, slots]);
 
-  const totalCountNewDay = useMemo(() => {
-    const date = newDayDate;
-    let n = 0;
+  const totalCountNewDay = useMemo(
+    () => countFilledNewDayDrivers(cars, carStates, newDayDrafts, newDayDate, isCarUnavailableForPlanning),
+    [cars, carStates, newDayDrafts, newDayDate, isCarUnavailableForPlanning]
+  );
+
+  useEffect(() => {
+    if (!totalCountNewDayRef.current) return;
+    totalCountNewDayRef.current.textContent = String(totalCountNewDay);
+  }, [totalCountNewDay]);
+
+  const getNewDayDriverValue = useCallback(
+    (carId) => newDayDrafts[carId] ?? '',
+    [newDayDrafts]
+  );
+
+  const setNewDayDraftValue = useCallback((carId, driverIdentifier) => {
+    setNewDayDrafts((prev) => {
+      return {
+        ...prev,
+        [carId]: driverIdentifier,
+      };
+    });
+  }, []);
+
+  const setCarState = useCallback((carId, deactivated) => {
+    setCarStates((prev) => ({ ...prev, [carId]: !!deactivated }));
+  }, []);
+
+  const currentDaySlotList = useMemo(() => {
+    const slotList = [];
     cars.forEach((car) => {
+      const date = newDayDate;
       if (isCarUnavailableForPlanning(car, date)) return;
       const key = `${car.id}_${date}`;
-      if (slots[key]?.driver_identifier && String(slots[key].driver_identifier).trim()) n++;
+      const s = slots[key];
+      slotList.push({
+        car_id: car.id,
+        plan_date: date,
+        driver_identifier: (s?.driver_identifier || '').toString().trim(),
+        abfahrtskontrolle: !!s?.abfahrtskontrolle,
+      });
     });
-    return n;
-  }, [cars, slots, newDayDate, isCarUnavailableForPlanning]);
+    return slotList;
+  }, [cars, newDayDate, slots, isCarUnavailableForPlanning]);
+
+  const buildPayload = useCallback(
+    () => ({ carStates, slots: currentDaySlotList }),
+    [carStates, currentDaySlotList]
+  );
+
+  const newDayAutoSaveSignature = useMemo(
+    () => JSON.stringify(currentDaySlotList),
+    [currentDaySlotList]
+  );
+
+  const clearNewDayAutoSaveTimer = useCallback(() => {
+    if (newDayAutoSaveTimeoutRef.current) {
+      clearTimeout(newDayAutoSaveTimeoutRef.current);
+      newDayAutoSaveTimeoutRef.current = null;
+    }
+  }, []);
 
   const sortedCars = useMemo(() => {
     const out = [...cars].sort((a, b) => {
@@ -681,10 +765,9 @@ export default function CarPlanningPage() {
       ...prev,
       [key]: { driver_identifier: driverIdentifier, abfahrtskontrolle: abfahrtskontrolle ?? prev[key]?.abfahrtskontrolle },
     }));
-  };
-
-  const setCarState = (carId, deactivated) => {
-    setCarStates((prev) => ({ ...prev, [carId]: !!deactivated }));
+    if (date === newDayDate) {
+      setNewDayDraftValue(carId, driverIdentifier);
+    }
   };
 
   const toggleAbfahrtskontrolle = (carId, date) => {
@@ -698,37 +781,82 @@ export default function CarPlanningPage() {
     }));
   };
 
-  const buildPayload = () => {
-    const slotList = [];
-    cars.forEach((car) => {
-      const date = newDayDate;
-      if (isCarUnavailableForPlanning(car, date)) return;
-      const key = `${car.id}_${date}`;
-      const s = slots[key];
-      slotList.push({
-        car_id: car.id,
-        plan_date: date,
-        driver_identifier: (s?.driver_identifier || '').toString().trim(),
-        abfahrtskontrolle: !!s?.abfahrtskontrolle,
-      });
-    });
-    return { carStates, slots: slotList };
-  };
+  useEffect(() => {
+    if (loading) return;
+    if (!newDayAutoSaveInitializedRef.current) {
+      newDayAutoSaveInitializedRef.current = true;
+      newDayAutoSaveLastSignatureRef.current = newDayAutoSaveSignature;
+      return;
+    }
+    if (frozen) {
+      newDayAutoSaveLastSignatureRef.current = newDayAutoSaveSignature;
+      return;
+    }
+    if (newDayAutoSaveSignature === newDayAutoSaveLastSignatureRef.current) return;
+
+    clearNewDayAutoSaveTimer();
+    setNewDayAutoSaveStatus('pending');
+    const requestId = ++newDayAutoSaveRequestIdRef.current;
+
+    newDayAutoSaveTimeoutRef.current = setTimeout(async () => {
+      setNewDayAutoSaveStatus('saving');
+      try {
+        const { carStates: cs, slots: slotList } = buildPayload();
+        await savePlanningData(cs, slotList);
+        if (newDayAutoSaveRequestIdRef.current !== requestId) return;
+        newDayAutoSaveLastSignatureRef.current = newDayAutoSaveSignature;
+        setNewDayAutoSaveStatus('saved');
+        setError('');
+      } catch (e) {
+        if (newDayAutoSaveRequestIdRef.current !== requestId) return;
+        setNewDayAutoSaveStatus('error');
+        setError(e?.message || 'Failed to auto-save New Day');
+      } finally {
+        if (newDayAutoSaveRequestIdRef.current === requestId) {
+          newDayAutoSaveTimeoutRef.current = null;
+        }
+      }
+    }, 650);
+
+    return clearNewDayAutoSaveTimer;
+  }, [buildPayload, clearNewDayAutoSaveTimer, frozen, loading, newDayAutoSaveSignature]);
 
   const handleSave = async () => {
+    clearNewDayAutoSaveTimer();
+    newDayAutoSaveRequestIdRef.current += 1;
     setError('');
     setSaving(true);
     const { carStates: cs, slots: slotList } = buildPayload();
     try {
-      await savePlanningData(cs, slotList);
+      const saveResult = await savePlanningDataAndSend(cs, slotList);
+      const notificationSummary = saveResult?.notifications || null;
+      const notificationIssues = [];
+      if ((notificationSummary?.unresolved || 0) > 0) {
+        notificationIssues.push(`unresolved drivers ${notificationSummary.unresolved}`);
+      }
+      if ((notificationSummary?.noDevice || 0) > 0) {
+        notificationIssues.push(`no device ${notificationSummary.noDevice}`);
+      }
+      if ((notificationSummary?.failed || 0) > 0) {
+        notificationIssues.push(`send failures ${notificationSummary.failed}`);
+      }
+      let warningMessage = '';
+      if (notificationIssues.length) {
+        warningMessage = `Saved. Notifications sent ${notificationSummary?.sent || 0}/${notificationSummary?.attempted || 0}; ${notificationIssues.join(', ')}.`;
+      }
       try {
         const report = await getReport(newDayDate);
         setReportRows(report);
         setReportOpen(true);
       } catch (e) {
         // Saving succeeded, but report failed – show warning only.
-        setError(e?.message || 'Saved, but failed to load report.');
+        warningMessage = warningMessage
+          ? `${warningMessage} ${e?.message || 'Saved, but failed to load report.'}`
+          : (e?.message || 'Saved, but failed to load report.');
       }
+      newDayAutoSaveLastSignatureRef.current = newDayAutoSaveSignature;
+      setNewDayAutoSaveStatus('saved');
+      setError(warningMessage);
       setFrozen(true);
     } catch (e) {
       setError(e?.message || 'Failed to save');
@@ -741,6 +869,8 @@ export default function CarPlanningPage() {
     setReportOpen(false);
     setFrozen(false);
   };
+
+  useEffect(() => () => clearNewDayAutoSaveTimer(), [clearNewDayAutoSaveTimer]);
 
   if (loading) {
     return (
@@ -765,7 +895,7 @@ export default function CarPlanningPage() {
           <span>{t('carPlanning.abfahrtskontrolle')}</span>
         </label>
         <span className="car-planning-total">
-          {t('carPlanning.totalCount')}: {totalCountNewDay}
+          {t('carPlanning.totalCount')}: <span ref={totalCountNewDayRef}>{totalCountNewDay}</span>
         </span>
         <button
           type="button"
@@ -802,13 +932,22 @@ export default function CarPlanningPage() {
         >
           Add Car
         </button>
+        <span className="muted" style={{ minWidth: '10rem', fontSize: '0.82rem' }}>
+          {newDayAutoSaveStatus === 'saving' || newDayAutoSaveStatus === 'pending'
+            ? 'Auto-saving New Day...'
+            : newDayAutoSaveStatus === 'saved'
+              ? 'New Day saved'
+              : newDayAutoSaveStatus === 'error'
+                ? 'New Day save failed'
+                : 'New Day autosave on'}
+        </span>
         <button
           type="button"
           className="btn-primary car-planning-btn-sm car-planning-toolbar-btn"
           onClick={handleSave}
           disabled={saving}
         >
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? 'Saving & sending…' : 'Save&Send'}
         </button>
         <button
           type="button"
@@ -948,11 +1087,12 @@ export default function CarPlanningPage() {
                         </div>
                       ) : (
                         <DriverCell
-                          value={slots[`${car.id}_${newDayDate}`]?.driver_identifier}
+                          value={getNewDayDriverValue(car.id)}
                           drivers={drivers}
                           usedInColumn={usedDriversByDateExcludingCar[`${car.id}_${newDayDate}`] || new Set()}
                           pasteValue={copiedDriverName}
                           onCopyValue={setCopiedDriverName}
+                          onDraftChange={(name) => setNewDayDraftValue(car.id, name)}
                           usePasteButton
                           onSelect={(name) => setSlot(car.id, newDayDate, name, slots[`${car.id}_${newDayDate}`]?.abfahrtskontrolle)}
                           onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, newDayDate)}

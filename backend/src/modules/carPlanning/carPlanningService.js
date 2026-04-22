@@ -1,7 +1,18 @@
 import { query } from '../../db.js';
+import pushService from '../push/pushService.js';
 import inspectionReminderService from '../vehicleInspections/inspectionReminderService.js';
 
 let carPlanningWorkshopColumnsReady = false;
+const DEFAULT_FLEETCHECK_PUBLIC_BASE_URL =
+  String(process.env.FLEETCHECK_PUBLIC_BASE_URL || 'https://fleetcheck.alfamile.com').trim()
+  || 'https://fleetcheck.alfamile.com';
+
+function stringOrNull(value, maxLen = 5000) {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+  return normalized.slice(0, maxLen);
+}
 
 async function ensureCarPlanningWorkshopColumns() {
   if (carPlanningWorkshopColumnsReady) return;
@@ -39,6 +50,69 @@ function isStatusAutoDeactivated(status) {
     'defleeted',
     'decommissioned',
   ].includes(normalized);
+}
+
+function buildFleetcheckAssignmentUrl(vin) {
+  const safeBase = DEFAULT_FLEETCHECK_PUBLIC_BASE_URL.replace(/\/+$/, '');
+  const normalizedVin = stringOrNull(vin, 64);
+  if (!normalizedVin) return `${safeBase}/fleet-check`;
+  return `${safeBase}/fleet-check?vin=${encodeURIComponent(normalizedVin)}`;
+}
+
+async function resolvePlanningDriverContact(driverIdentifier) {
+  const normalizedDriver = stringOrNull(driverIdentifier, 255);
+  if (!normalizedDriver) {
+    return {
+      driverName: null,
+      employeeRef: null,
+      kenjoUserId: null,
+    };
+  }
+
+  const res = await query(
+    `SELECT
+       ke.employee_number::text AS employee_number,
+       ke.kenjo_user_id::text AS kenjo_user_id,
+       ke.transporter_id::text AS transporter_id,
+       ke.display_name,
+       ke.first_name,
+       ke.last_name
+     FROM kenjo_employees ke
+     WHERE LOWER(COALESCE(ke.display_name, '')) = LOWER($1::text)
+        OR LOWER(TRIM(COALESCE(ke.first_name, '') || ' ' || COALESCE(ke.last_name, ''))) = LOWER($1::text)
+        OR LOWER(COALESCE(ke.employee_number::text, '')) = LOWER($1::text)
+        OR LOWER(COALESCE(ke.transporter_id::text, '')) = LOWER($1::text)
+        OR LOWER(COALESCE(ke.kenjo_user_id::text, '')) = LOWER($1::text)
+     ORDER BY ke.is_active DESC, ke.id ASC
+     LIMIT 1`,
+    [normalizedDriver],
+  ).catch(() => ({ rows: [] }));
+
+  const row = res.rows?.[0];
+  return {
+    driverName:
+      stringOrNull(row?.display_name, 255)
+      || stringOrNull([row?.first_name, row?.last_name].filter(Boolean).join(' '), 255)
+      || normalizedDriver,
+    employeeRef: stringOrNull(row?.employee_number, 128) || stringOrNull(row?.transporter_id, 128),
+    kenjoUserId: stringOrNull(row?.kenjo_user_id, 128),
+  };
+}
+
+function normalizeNotificationSlots(slots = []) {
+  const deduped = new Map();
+  for (const slot of Array.isArray(slots) ? slots : []) {
+    const carId = Number.parseInt(slot?.car_id, 10);
+    const planDate = (slot?.plan_date || '').toString().slice(0, 10);
+    const driverIdentifier = stringOrNull(slot?.driver_identifier, 255);
+    if (!Number.isFinite(carId) || !planDate || !driverIdentifier) continue;
+    deduped.set(`${carId}|${planDate}`, {
+      carId,
+      planDate,
+      driverIdentifier,
+    });
+  }
+  return [...deduped.values()];
 }
 
 /**
@@ -221,6 +295,83 @@ async function savePlanningData(carStates = {}, slots = []) {
   return { ok: true };
 }
 
+async function savePlanningDataAndNotifyDrivers(carStates = {}, slots = []) {
+  await savePlanningData(carStates, slots);
+
+  const notificationSlots = normalizeNotificationSlots(slots);
+  const summary = {
+    attempted: notificationSlots.length,
+    sent: 0,
+    unresolved: 0,
+    noDevice: 0,
+    failed: 0,
+  };
+
+  if (!notificationSlots.length) {
+    return { ok: true, notifications: summary };
+  }
+
+  const carIds = [...new Set(notificationSlots.map((slot) => slot.carId))];
+  const carsRes = await query(
+    `SELECT id, vehicle_id, license_plate, vin
+     FROM cars
+     WHERE id = ANY($1::int[])`,
+    [carIds],
+  );
+  const carById = new Map((carsRes.rows || []).map((row) => [row.id, row]));
+
+  for (const slot of notificationSlots) {
+    const car = carById.get(slot.carId);
+    if (!car) {
+      summary.failed += 1;
+      continue;
+    }
+
+    const driverContact = await resolvePlanningDriverContact(slot.driverIdentifier);
+    if (!driverContact.employeeRef && !driverContact.kenjoUserId) {
+      summary.unresolved += 1;
+      continue;
+    }
+
+    const licensePlate = stringOrNull(car.license_plate, 64);
+    const vehicleId = stringOrNull(car.vehicle_id, 255);
+    const assignmentLabel = licensePlate || vehicleId || `car ${slot.carId}`;
+    const targetUrl = buildFleetcheckAssignmentUrl(car.vin);
+    const pushResult = await pushService.sendNotificationToEmployee(
+      {
+        kenjoUserId: driverContact.kenjoUserId,
+        employeeRef: driverContact.employeeRef,
+      },
+      {
+        title: 'Today\'s car assignment',
+        body: `Today you will drive ${assignmentLabel}. Open FleetCheck for details.`,
+        url: targetUrl,
+        tag: `car-planning-${slot.planDate}-${slot.carId}`,
+        data: {
+          url: targetUrl,
+          planDate: slot.planDate,
+          carId: slot.carId,
+          vehicleId,
+          licensePlate,
+          vin: stringOrNull(car.vin, 64),
+        },
+      },
+    );
+
+    if (pushResult?.sentCount > 0) {
+      summary.sent += 1;
+      continue;
+    }
+    if (pushResult?.deviceCount === 0) {
+      summary.noDevice += 1;
+      continue;
+    }
+    summary.failed += 1;
+  }
+
+  return { ok: true, notifications: summary };
+}
+
 /**
  * Report for a single date: list of { vehicle_id, driver_identifier } for that day.
  */
@@ -276,6 +427,7 @@ export default {
   getActiveDrivers,
   getPlanningData,
   savePlanningData,
+  savePlanningDataAndNotifyDrivers,
   getReport,
   addCarWithWindow,
 };

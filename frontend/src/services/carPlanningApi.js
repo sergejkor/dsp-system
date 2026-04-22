@@ -78,6 +78,23 @@ export async function savePlanningData(carStates, slots) {
   return data;
 }
 
+export async function savePlanningDataAndSend(carStates, slots) {
+  const res = await fetchWithHint(`${API_BASE}/api/car-planning/data/save-and-send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ carStates: carStates || {}, slots: slots || [] }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    const { clearToken } = await import('./authStore.js');
+    clearToken();
+    window.dispatchEvent(new CustomEvent('auth:logout'));
+    throw new Error(data.error || 'Unauthorized');
+  }
+  if (!res.ok) throw new Error(data.error || res.statusText || 'Failed to save and send');
+  return data;
+}
+
 export async function getReport(date) {
   const res = await fetchWithHint(
     `${API_BASE}/api/car-planning/report?date=${encodeURIComponent(date || '')}`,
