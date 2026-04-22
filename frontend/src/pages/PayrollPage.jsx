@@ -340,6 +340,17 @@ export default function PayrollPage() {
     }
   };
 
+  const setDisplayedCalendarMonth = (year, monthNumber) => {
+    const nextYear = Number(year);
+    const nextMonth = Number(monthNumber);
+    if (!Number.isFinite(nextYear) || !Number.isFinite(nextMonth) || nextMonth < 1 || nextMonth > 12) {
+      return;
+    }
+    setCalendarYear(nextYear);
+    setCalendarMonth(nextMonth);
+    setMonth(`${nextYear}-${String(nextMonth).padStart(2, '0')}`);
+  };
+
   const monthOptions = useMemo(() => {
     const list = [];
     for (let i = 0; i < 12; i++) {
@@ -1169,10 +1180,9 @@ export default function PayrollPage() {
                 className="payroll-range-calendar-nav"
                 onClick={() => {
                   if (calendarMonth === 1) {
-                    setCalendarMonth(12);
-                    setCalendarYear((y) => y - 1);
+                    setDisplayedCalendarMonth(calendarYear - 1, 12);
                   } else {
-                    setCalendarMonth((m) => m - 1);
+                    setDisplayedCalendarMonth(calendarYear, calendarMonth - 1);
                   }
                 }}
                 disabled={loading}
@@ -1188,10 +1198,9 @@ export default function PayrollPage() {
                 className="payroll-range-calendar-nav"
                 onClick={() => {
                   if (calendarMonth === 12) {
-                    setCalendarMonth(1);
-                    setCalendarYear((y) => y + 1);
+                    setDisplayedCalendarMonth(calendarYear + 1, 1);
                   } else {
-                    setCalendarMonth((m) => m + 1);
+                    setDisplayedCalendarMonth(calendarYear, calendarMonth + 1);
                   }
                 }}
                 disabled={loading}
