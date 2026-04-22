@@ -18,6 +18,8 @@ import { replacePaveReportItems, upsertPaveReportSummary } from './services/pave
 import { effectiveInspectionDate, withInspectionDateEffective } from './paveReportDateUtils.js';
 
 let syncRunningGlobal = false;
+let activeSyncPromise = null;
+let activeSyncMode = null;
 
 /**
  * Drop PDF parser "missing" warnings when HTML+PDF merge already has that field (avoids noisy partials).
@@ -633,113 +635,126 @@ export async function syncGmailReports({
   const perEmailTimeoutMs = Number(process.env.PAVE_SYNC_PER_EMAIL_TIMEOUT_MS || 120000);
 
   if (syncRunningGlobal) {
-    console.log('[pave-sync] sync already running; skipping new run', { mode });
-    return {
+    if (mode !== 'manual') {
+      console.log('[pave-sync] sync already running; skipping new run', { mode, activeMode: activeSyncMode });
+      return {
+        mode,
+        total: 0,
+        scanned: 0,
+        matched: 0,
+        emailsProcessed: 0,
+        created: 0,
+        updated: 0,
+        duplicateSkipped: 0,
+        imported: 0,
+        skipped: 1,
+        filteredOut: 0,
+        failed: 0,
+        partial: 0,
+        note: 'sync already running',
+        timings: { totalMs: 0, skippedBecauseSyncRunning: true },
+      };
+    }
+
+    console.log('[pave-sync] manual sync waiting for active run', { activeMode: activeSyncMode });
+    const waitStarted = Date.now();
+    while (syncRunningGlobal && activeSyncPromise) {
+      try {
+        await activeSyncPromise;
+      } catch (_) {}
+    }
+    console.log('[pave-sync] manual sync wait finished', { waitedMs: Date.now() - waitStarted });
+  }
+
+  const executeSync = async () => {
+    syncRunningGlobal = true;
+    activeSyncMode = mode;
+    const syncStarted = Date.now();
+    const providerNorm = normalizeEmailProvider(provider);
+    const requestedLimit = clampSyncLimit(limit, 20);
+    const usingSourceEmails = Array.isArray(sourceEmails);
+    const searchPool = usingSourceEmails ? sourceEmails.length : computeAutoEmailSearchPool(requestedLimit);
+    const reportConc = Math.max(1, Math.min(8, Number(process.env.PAVE_REPORT_PROCESS_CONCURRENCY || 3)));
+    const processMax = Math.min(
+      5000,
+      Math.max(1, Number(process.env.PAVE_REPORT_PROCESS_MAX_PER_RUN || requestedLimit || 100))
+    );
+    const pendingDownloadCap = reprocessSparse
+      ? Math.min(2000, Math.max(processMax, Number(process.env.PAVE_REQUEUE_SPARSE_MAX || 200)))
+      : processMax;
+
+    const timings = {
+      emailSearchMs: 0,
+      emailParseMsTotal: 0,
+      stageAMs: 0,
+      stageBMs: 0,
+      stageBQueued: 0,
+      portalLoginMs: 0,
+      sessionReuseCount: 0,
+      loginPerformedCount: 0,
+      downloadMsTotal: 0,
+      pdfParseMsTotal: 0,
+      duplicateSkipped: 0,
+      matchingEmailsFound: 0,
+      totalMs: 0,
+    };
+
+    const tSearch = Date.now();
+    const rawList = usingSourceEmails
+      ? sourceEmails
+      : await providerImpl.fetchUnreadEmails({ maxResults: searchPool });
+    timings.emailSearchMs = Date.now() - tSearch;
+
+    const emails =
+      rawList && typeof rawList === 'object' && Array.isArray(rawList.emails)
+        ? rawList.emails
+        : Array.isArray(rawList)
+          ? rawList
+          : [];
+
+    const storageDir = await ensureDirs();
+
+    const results = {
       mode,
-      total: 0,
-      scanned: 0,
+      total: emails.length,
+      scanned: emails.length,
       matched: 0,
       emailsProcessed: 0,
       created: 0,
       updated: 0,
       duplicateSkipped: 0,
       imported: 0,
-      skipped: 1,
+      skipped: 0,
       filteredOut: 0,
       failed: 0,
       partial: 0,
-      note: 'sync already running',
-      timings: { totalMs: 0, skippedBecauseSyncRunning: true },
+      stageAQueued: 0,
+      stageBQueued: 0,
+      stageBCompleted: 0,
+      stageBHttpDownloads: 0,
+      stageBPlaywrightDownloads: 0,
+      stageBCacheHits: 0,
+      sparseRequeued: 0,
+      requestedLimit,
+      searchPool,
+      searchCapReached: false,
+      timings,
     };
-  }
+    console.log('[pave-sync] sync start', {
+      mode,
+      provider,
+      scanned: emails.length,
+      requestedLimit,
+      searchPool,
+      reprocessSparse,
+      perEmailTimeoutMs,
+      reportConcurrency: reportConc,
+      reportProcessMaxPerRun: processMax,
+      pendingDownloadCap,
+      emailSearchMs: timings.emailSearchMs,
+    });
 
-  syncRunningGlobal = true;
-  const syncStarted = Date.now();
-  const providerNorm = normalizeEmailProvider(provider);
-  const requestedLimit = clampSyncLimit(limit, 20);
-  const usingSourceEmails = Array.isArray(sourceEmails);
-  const searchPool = usingSourceEmails ? sourceEmails.length : computeAutoEmailSearchPool(requestedLimit);
-  const reportConc = Math.max(1, Math.min(8, Number(process.env.PAVE_REPORT_PROCESS_CONCURRENCY || 3)));
-  const processMax = Math.min(
-    5000,
-    Math.max(1, Number(process.env.PAVE_REPORT_PROCESS_MAX_PER_RUN || requestedLimit || 100))
-  );
-  const pendingDownloadCap = reprocessSparse
-    ? Math.min(2000, Math.max(processMax, Number(process.env.PAVE_REQUEUE_SPARSE_MAX || 200)))
-    : processMax;
-
-  const timings = {
-    emailSearchMs: 0,
-    emailParseMsTotal: 0,
-    stageAMs: 0,
-    stageBMs: 0,
-    stageBQueued: 0,
-    portalLoginMs: 0,
-    sessionReuseCount: 0,
-    loginPerformedCount: 0,
-    downloadMsTotal: 0,
-    pdfParseMsTotal: 0,
-    duplicateSkipped: 0,
-    matchingEmailsFound: 0,
-    totalMs: 0,
-  };
-
-  const tSearch = Date.now();
-  const rawList = usingSourceEmails
-    ? sourceEmails
-    : await providerImpl.fetchUnreadEmails({ maxResults: searchPool });
-  timings.emailSearchMs = Date.now() - tSearch;
-
-  const emails =
-    rawList && typeof rawList === 'object' && Array.isArray(rawList.emails)
-      ? rawList.emails
-      : Array.isArray(rawList)
-        ? rawList
-        : [];
-
-  const storageDir = await ensureDirs();
-
-  const results = {
-    mode,
-    total: emails.length,
-    scanned: emails.length,
-    matched: 0,
-    emailsProcessed: 0,
-    created: 0,
-    updated: 0,
-    duplicateSkipped: 0,
-    imported: 0,
-    skipped: 0,
-    filteredOut: 0,
-    failed: 0,
-    partial: 0,
-    stageAQueued: 0,
-    stageBQueued: 0,
-    stageBCompleted: 0,
-    stageBHttpDownloads: 0,
-    stageBPlaywrightDownloads: 0,
-    stageBCacheHits: 0,
-    sparseRequeued: 0,
-    requestedLimit,
-    searchPool,
-    searchCapReached: false,
-    timings,
-  };
-  console.log('[pave-sync] sync start', {
-    mode,
-    provider,
-    scanned: emails.length,
-    requestedLimit,
-    searchPool,
-    reprocessSparse,
-    perEmailTimeoutMs,
-    reportConcurrency: reportConc,
-    reportProcessMaxPerRun: processMax,
-    pendingDownloadCap,
-    emailSearchMs: timings.emailSearchMs,
-  });
-
-  try {
+    try {
     if (reprocessSparse) {
       const n = await requeueSparsePaveIncomingEmails(providerNorm, pendingDownloadCap);
       results.sparseRequeued = n;
@@ -951,29 +966,35 @@ export async function syncGmailReports({
     results.timings = timings;
 
     console.log('[pave-sync] timings summary', timings);
-  } finally {
-    syncRunningGlobal = false;
-    console.log('[pave-sync] sync end', {
-      mode,
-      scanned: results.scanned,
-      matched: results.matched,
-      imported: results.imported,
-      requestedLimit: results.requestedLimit,
-      searchPool: results.searchPool,
-      searchCapReached: results.searchCapReached,
-      filteredOut: results.filteredOut,
-      skipped: results.skipped,
-      partial: results.partial,
-      failed: results.failed,
-      sparseRequeued: results.sparseRequeued,
-      stageAQueued: results.stageAQueued,
-      stageBQueued: results.stageBQueued,
-      stageBCompleted: results.stageBCompleted,
-      timings: results.timings,
-    });
-  }
+    } finally {
+      syncRunningGlobal = false;
+      activeSyncPromise = null;
+      activeSyncMode = null;
+      console.log('[pave-sync] sync end', {
+        mode,
+        scanned: results.scanned,
+        matched: results.matched,
+        imported: results.imported,
+        requestedLimit: results.requestedLimit,
+        searchPool: results.searchPool,
+        searchCapReached: results.searchCapReached,
+        filteredOut: results.filteredOut,
+        skipped: results.skipped,
+        partial: results.partial,
+        failed: results.failed,
+        sparseRequeued: results.sparseRequeued,
+        stageAQueued: results.stageAQueued,
+        stageBQueued: results.stageBQueued,
+        stageBCompleted: results.stageBCompleted,
+        timings: results.timings,
+      });
+    }
 
-  return results;
+    return results;
+  };
+
+  activeSyncPromise = executeSync();
+  return await activeSyncPromise;
 }
 
 /** Scalar SQL: fleet car plate when full VIN (alnum) last 4 chars match `cars.vin` last 4. */
