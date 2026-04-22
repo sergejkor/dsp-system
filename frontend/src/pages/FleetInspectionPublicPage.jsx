@@ -55,6 +55,7 @@ const SHOT_VAN_ICON_ASSETS = {
 const FLEETCHECK_PUSH_EMPLOYEE_KEY = 'fleetcheck_push_employee';
 const FLEETCHECK_INSPECTION_DRAFT_KEY = 'fleetcheck_inspection_draft';
 const FLEETCHECK_OVERLAYS_ENABLED = false;
+const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-2';
 
 const FLEETCHECK_SHOT_COPY = {
   en: {
@@ -1467,17 +1468,19 @@ function getLocalizedShotCopy(locale, shotId) {
 }
 
 function parseFleetCheckAssignmentNotice(searchParams) {
-  if (!searchParams || searchParams.get('notice') !== 'assignment') return null;
+  if (!searchParams) return null;
   const normalize = (value, maxLen = 255) => {
     const normalized = String(value || '').trim();
     return normalized ? normalized.slice(0, maxLen) : null;
   };
-  return {
-    vin: normalize(normalizeVin(searchParams.get('vin')), 64),
-    licensePlate: normalize(searchParams.get('plate'), 64),
-    vehicleId: normalize(searchParams.get('vehicleId'), 255),
-    planDate: normalize(searchParams.get('planDate'), 32),
-  };
+  const notice = normalize(searchParams.get('notice'), 64);
+  const vin = normalize(normalizeVin(searchParams.get('vin')), 64);
+  const licensePlate = normalize(searchParams.get('plate'), 64);
+  const vehicleId = normalize(searchParams.get('vehicleId'), 255);
+  const planDate = normalize(searchParams.get('planDate'), 32);
+  const isAssignmentNotice = notice === 'assignment' || Boolean(licensePlate || vehicleId || planDate);
+  if (!isAssignmentNotice) return null;
+  return { vin, licensePlate, vehicleId, planDate };
 }
 
 function isFleetCheckRtl(locale) {
@@ -2887,7 +2890,9 @@ export default function FleetInspectionPublicPage() {
         );
       }
 
-      const registration = await navigator.serviceWorker.register('/fleetcheck-sw.js');
+      const registration = await navigator.serviceWorker.register(FLEETCHECK_SW_URL, {
+        updateViaCache: 'none',
+      });
       let subscription = await registration.pushManager.getSubscription();
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({

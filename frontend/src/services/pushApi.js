@@ -1,6 +1,8 @@
 import { API_BASE } from '../config/apiBase.js';
 import { apiBaseHeaders } from './apiClient.js';
 
+const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-2';
+
 async function parseJson(res) {
   const text = await res.text().catch(() => '');
   if (!text) return {};
@@ -72,6 +74,8 @@ export async function unregisterPublicPushDevice(payload = {}) {
 
 export async function getFleetPushSubscription() {
   if (!browserPushSupported()) return null;
-  const registration = await navigator.serviceWorker.register('/fleetcheck-sw.js');
+  const registration = await navigator.serviceWorker.register(FLEETCHECK_SW_URL, {
+    updateViaCache: 'none',
+  });
   return registration.pushManager.getSubscription();
 }
