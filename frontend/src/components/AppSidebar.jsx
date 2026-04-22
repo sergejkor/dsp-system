@@ -104,7 +104,19 @@ function AnalyticsIcon(props) {
   );
 }
 
+function DashboardIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+      <rect x="13.5" y="3.5" width="7" height="4.5" rx="1.6" />
+      <rect x="13.5" y="11.5" width="7" height="9" rx="1.6" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+    </svg>
+  );
+}
+
 const iconMap = {
+  dashboard: DashboardIcon,
   users: UsersIcon,
   fleet: FleetIcon,
   wallet: WalletIcon,

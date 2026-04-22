@@ -1,5 +1,14 @@
 export const sidebarMenuItems = [
   {
+    id: 'dashboard',
+    type: 'item',
+    path: '/dashboard',
+    labelKey: 'nav.dashboard',
+    icon: 'dashboard',
+    permissionCode: 'page_dashboard',
+    matchPatterns: ['/dashboard', '/'],
+  },
+  {
     id: 'employees',
     type: 'group',
     label: 'Employees',
