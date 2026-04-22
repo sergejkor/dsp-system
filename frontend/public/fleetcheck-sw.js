@@ -35,7 +35,33 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = event.notification?.data?.url || '/';
+  const rawData = event.notification?.data || {};
+  let targetUrl = rawData.url || '/';
+
+  try {
+    const url = new URL(targetUrl, self.location.origin);
+    const licensePlate = String(rawData.licensePlate || '').trim();
+    const vehicleId = String(rawData.vehicleId || '').trim();
+    const vin = String(rawData.vin || '').trim();
+    const planDate = String(rawData.planDate || '').trim();
+
+    if (licensePlate || vehicleId || vin || planDate) {
+      url.searchParams.set('notice', 'assignment');
+      if (licensePlate) {
+        url.searchParams.set('plate', licensePlate);
+      }
+      if (vehicleId) {
+        url.searchParams.set('vehicleId', vehicleId);
+      }
+      if (vin) {
+        url.searchParams.set('vin', vin);
+      }
+      if (planDate) {
+        url.searchParams.set('planDate', planDate);
+      }
+      targetUrl = url.toString();
+    }
+  } catch (_error) {}
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
