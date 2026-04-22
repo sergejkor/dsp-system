@@ -7,6 +7,12 @@ function requireEnv(name) {
   return String(v).trim();
 }
 
+function defaultImapMailbox() {
+  const host = String(process.env.IMAP_HOST || 'imap.gmail.com').trim().toLowerCase();
+  if (host.includes('gmail.com')) return '[Gmail]/All Mail';
+  return 'INBOX';
+}
+
 async function withImapClient(fn) {
   const user = requireEnv('GMAIL_USER');
   const pass = requireEnv('GMAIL_APP_PASSWORD');
@@ -27,7 +33,7 @@ async function withImapClient(fn) {
 }
 
 function imapMailboxName() {
-  return String(process.env.IMAP_MAILBOX || 'INBOX').trim() || 'INBOX';
+  return String(process.env.IMAP_MAILBOX || defaultImapMailbox()).trim() || defaultImapMailbox();
 }
 
 async function fetchBySearch(search, { maxResults = 20 } = {}) {
@@ -36,7 +42,31 @@ async function fetchBySearch(search, { maxResults = 20 } = {}) {
 
   return withImapClient(async (client) => {
     const t0 = Date.now();
-    await client.mailboxOpen(mailbox);
+    let openedMailbox = mailbox;
+    try {
+      await client.mailboxOpen(mailbox);
+    } catch (error) {
+      const host = String(process.env.IMAP_HOST || 'imap.gmail.com').trim().toLowerCase();
+      const gmailFallbacks =
+        host.includes('gmail.com') && mailbox !== 'INBOX'
+          ? ['[Google Mail]/All Mail', 'INBOX']
+          : [];
+      let opened = false;
+      for (const candidate of gmailFallbacks) {
+        try {
+          await client.mailboxOpen(candidate);
+          openedMailbox = candidate;
+          opened = true;
+          console.warn('[pave-email] imap mailbox fallback used', {
+            requestedMailbox: mailbox,
+            openedMailbox: candidate,
+            error: String(error?.message || error),
+          });
+          break;
+        } catch (_) {}
+      }
+      if (!opened) throw error;
+    }
     const uids = await client.search(search);
     const list = Array.isArray(uids) ? uids.filter(Boolean) : [];
     // Newest first (higher UID last in many servers — take last max items then reverse)
@@ -45,7 +75,7 @@ async function fetchBySearch(search, { maxResults = 20 } = {}) {
     const searchMs = Date.now() - t0;
 
     console.log('[pave-email] imap fetchBySearch', {
-      mailbox,
+      mailbox: openedMailbox,
       search,
       uidCandidates: list.length,
       selectedForFetch: targetUids.length,
