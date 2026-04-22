@@ -3,12 +3,18 @@ import { query } from '../../db.js';
 
 let tablesReady = false;
 let vapidConfigured = false;
+const SUPPORTED_PUSH_LOCALES = new Set(['en', 'de', 'ru', 'fr', 'it', 'es', 'pl', 'uk', 'nl', 'ro', 'hu', 'ar']);
 
 function stringOrNull(value, maxLen = 5000) {
   if (value == null) return null;
   const normalized = String(value).trim();
   if (!normalized) return null;
   return normalized.slice(0, maxLen);
+}
+
+export function normalizePushLocale(locale) {
+  const normalized = stringOrNull(locale, 16)?.toLowerCase();
+  return SUPPORTED_PUSH_LOCALES.has(normalized) ? normalized : 'en';
 }
 
 function normalizeSubscription(raw) {
@@ -134,6 +140,7 @@ export class PushService {
         subscription_json JSONB NOT NULL,
         user_agent TEXT,
         platform VARCHAR(64),
+        locale VARCHAR(16),
         app_kind VARCHAR(64) NOT NULL DEFAULT 'fleetcheck-pwa',
         permission_state VARCHAR(32),
         last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -149,6 +156,7 @@ export class PushService {
     await query(`ALTER TABLE employee_push_devices ADD COLUMN IF NOT EXISTS subscription_json JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => null);
     await query(`ALTER TABLE employee_push_devices ADD COLUMN IF NOT EXISTS user_agent TEXT`).catch(() => null);
     await query(`ALTER TABLE employee_push_devices ADD COLUMN IF NOT EXISTS platform VARCHAR(64)`).catch(() => null);
+    await query(`ALTER TABLE employee_push_devices ADD COLUMN IF NOT EXISTS locale VARCHAR(16)`).catch(() => null);
     await query(`ALTER TABLE employee_push_devices ADD COLUMN IF NOT EXISTS app_kind VARCHAR(64) NOT NULL DEFAULT 'fleetcheck-pwa'`).catch(() => null);
     await query(`ALTER TABLE employee_push_devices ADD COLUMN IF NOT EXISTS permission_state VARCHAR(32)`).catch(() => null);
     await query(`ALTER TABLE employee_push_devices ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()`).catch(() => null);
@@ -175,6 +183,7 @@ export class PushService {
     const subscription = normalizeSubscription(payload.subscription);
     const kenjoUserId = stringOrNull(payload.kenjoUserId, 128);
     const employeeRef = stringOrNull(payload.employeeRef, 128);
+    const locale = normalizePushLocale(payload.locale);
 
     if (!subscription) {
       throw new Error('Push subscription is required');
@@ -192,13 +201,14 @@ export class PushService {
          subscription_json,
          user_agent,
          platform,
+         locale,
          app_kind,
          permission_state,
          last_seen_at,
          disabled_at,
          updated_at
        )
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, NOW(), NULL, NOW())
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, NOW(), NULL, NOW())
        ON CONFLICT (endpoint) DO UPDATE SET
          kenjo_user_id = EXCLUDED.kenjo_user_id,
          employee_ref = EXCLUDED.employee_ref,
@@ -206,12 +216,13 @@ export class PushService {
          subscription_json = EXCLUDED.subscription_json,
          user_agent = EXCLUDED.user_agent,
          platform = EXCLUDED.platform,
+         locale = EXCLUDED.locale,
          app_kind = EXCLUDED.app_kind,
          permission_state = EXCLUDED.permission_state,
          last_seen_at = NOW(),
          disabled_at = NULL,
          updated_at = NOW()
-       RETURNING id, kenjo_user_id, employee_ref, display_name, endpoint, platform, app_kind, permission_state, last_seen_at, disabled_at, created_at, updated_at`,
+       RETURNING id, kenjo_user_id, employee_ref, display_name, endpoint, platform, locale, app_kind, permission_state, last_seen_at, disabled_at, created_at, updated_at`,
       [
         kenjoUserId,
         employeeRef,
@@ -220,6 +231,7 @@ export class PushService {
         JSON.stringify(subscription),
         stringOrNull(payload.userAgent, 2000),
         stringOrNull(payload.platform, 64),
+        locale,
         stringOrNull(payload.appKind, 64) || 'fleetcheck-pwa',
         stringOrNull(payload.permissionState, 32),
       ],
@@ -268,7 +280,7 @@ export class PushService {
     if (!aliases.kenjoUserIds.length && !aliases.employeeRefs.length) return [];
 
     const res = await query(
-      `SELECT id, kenjo_user_id, employee_ref, display_name, endpoint, subscription_json, platform, app_kind
+      `SELECT id, kenjo_user_id, employee_ref, display_name, endpoint, subscription_json, platform, locale, app_kind
        FROM employee_push_devices
        WHERE disabled_at IS NULL
          AND (
@@ -305,13 +317,20 @@ export class PushService {
       };
     }
 
-    const notification = normalizeNotificationPayload(payload);
+    const normalizedPayload = payload && typeof payload === 'object' ? payload : {};
+    const { buildForLocale, ...staticPayload } = normalizedPayload;
     let sentCount = 0;
     let failedCount = 0;
     let lastError = null;
 
     for (const device of devices) {
       try {
+        const locale = normalizePushLocale(device.locale);
+        const notification = normalizeNotificationPayload(
+          typeof buildForLocale === 'function'
+            ? (buildForLocale(locale, device) || staticPayload)
+            : staticPayload,
+        );
         await webpush.sendNotification(
           device.subscription_json,
           JSON.stringify(notification),

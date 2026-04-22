@@ -2179,6 +2179,7 @@ export default function FleetInspectionPublicPage() {
   const pushSuggestionRequestRef = useRef(0);
   const lastAnimatedShotRef = useRef('');
   const assignmentHydrationRef = useRef('');
+  const lastSyncedPushLocaleRef = useRef('');
 
   const cameraSupported =
     typeof window !== 'undefined' &&
@@ -2549,6 +2550,46 @@ export default function FleetInspectionPublicPage() {
   }, [inspectionStarted, submitting]);
 
   useEffect(() => {
+    if (!pushEnabled || !pushSupported) return undefined;
+
+    const selectedEmployee = normalizeEmployeeSelection(driverSelection || savedPushEmployee || pushEmployeeSelection);
+    if (!hasEmployeeIdentity(selectedEmployee)) return undefined;
+
+    const localeKey = [
+      selectedEmployee.employeeRef || '',
+      selectedEmployee.employeeId || '',
+      selectedEmployee.kenjoUserId || '',
+      normalizeFleetCheckLocale(locale),
+    ].join('|');
+
+    if (lastSyncedPushLocaleRef.current === localeKey) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    syncDeviceRegistration(selectedEmployee).then(() => {
+      if (!cancelled) {
+        lastSyncedPushLocaleRef.current = localeKey;
+      }
+    }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    driverSelection?.employeeRef,
+    driverSelection?.employeeId,
+    driverSelection?.kenjoUserId,
+    locale,
+    pushEmployeeSelection?.employeeRef,
+    pushEmployeeSelection?.employeeId,
+    pushEmployeeSelection?.kenjoUserId,
+    pushEnabled,
+    pushSupported,
+    savedPushEmployee,
+  ]);
+
+  useEffect(() => {
     if (!inspectionStarted || submitting) return undefined;
 
     let relockTimeoutId = null;
@@ -2858,6 +2899,7 @@ export default function FleetInspectionPublicPage() {
       subscription: subscription.toJSON(),
       userAgent: navigator.userAgent,
       platform: inferPushPlatform(),
+      locale: normalizeFleetCheckLocale(locale),
       appKind: 'fleetcheck-pwa',
       permissionState,
     });

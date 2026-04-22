@@ -6,6 +6,60 @@ import { normalizePhoneForWhatsApp, sendWhatsAppMessage } from './twilioWhatsApp
 let tablesReady = false;
 const INTERNAL_INSPECTION_TIME_ZONE = String(process.env.INTERNAL_INSPECTION_TIME_ZONE || 'Europe/Berlin').trim() || 'Europe/Berlin';
 const INTERNAL_INSPECTION_TIME_ZONE_SQL = INTERNAL_INSPECTION_TIME_ZONE.replace(/'/g, "''");
+const INSPECTION_REMINDER_PUSH_COPY = {
+  en: {
+    title: 'FleetCheck reminder',
+    body: (licensePlate, inspectionUrl) => `Please complete today's vehicle inspection for ${licensePlate}: ${inspectionUrl}`,
+  },
+  de: {
+    title: 'FleetCheck-Erinnerung',
+    body: (licensePlate, inspectionUrl) => `Bitte führe heute die Fahrzeuginspektion für ${licensePlate} durch: ${inspectionUrl}`,
+  },
+  ru: {
+    title: 'Напоминание FleetCheck',
+    body: (licensePlate, inspectionUrl) => `Пожалуйста, выполните сегодня осмотр автомобиля ${licensePlate}: ${inspectionUrl}`,
+  },
+  fr: {
+    title: 'Rappel FleetCheck',
+    body: (licensePlate, inspectionUrl) => `Veuillez effectuer aujourd’hui l’inspection du véhicule ${licensePlate} : ${inspectionUrl}`,
+  },
+  it: {
+    title: 'Promemoria FleetCheck',
+    body: (licensePlate, inspectionUrl) => `Completa oggi l’ispezione del veicolo ${licensePlate}: ${inspectionUrl}`,
+  },
+  es: {
+    title: 'Recordatorio de FleetCheck',
+    body: (licensePlate, inspectionUrl) => `Completa hoy la inspección del vehículo ${licensePlate}: ${inspectionUrl}`,
+  },
+  pl: {
+    title: 'Przypomnienie FleetCheck',
+    body: (licensePlate, inspectionUrl) => `Wykonaj dziś inspekcję pojazdu ${licensePlate}: ${inspectionUrl}`,
+  },
+  uk: {
+    title: 'Нагадування FleetCheck',
+    body: (licensePlate, inspectionUrl) => `Будь ласка, виконайте сьогодні огляд автомобіля ${licensePlate}: ${inspectionUrl}`,
+  },
+  nl: {
+    title: 'FleetCheck-herinnering',
+    body: (licensePlate, inspectionUrl) => `Voltooi vandaag de voertuiginspectie voor ${licensePlate}: ${inspectionUrl}`,
+  },
+  ro: {
+    title: 'Memento FleetCheck',
+    body: (licensePlate, inspectionUrl) => `Te rugăm să finalizezi astăzi inspecția vehiculului ${licensePlate}: ${inspectionUrl}`,
+  },
+  hu: {
+    title: 'FleetCheck emlékeztető',
+    body: (licensePlate, inspectionUrl) => `Kérjük, ma végezd el a ${licensePlate} jármű ellenőrzését: ${inspectionUrl}`,
+  },
+  ar: {
+    title: 'تذكير FleetCheck',
+    body: (licensePlate, inspectionUrl) => `يرجى إكمال فحص المركبة ${licensePlate} اليوم: ${inspectionUrl}`,
+  },
+};
+
+function getInspectionReminderPushCopy(locale) {
+  return INSPECTION_REMINDER_PUSH_COPY[String(locale || '').toLowerCase()] || INSPECTION_REMINDER_PUSH_COPY.en;
+}
 
 function stringOrNull(value, maxLen = 5000) {
   if (value == null) return null;
@@ -694,8 +748,6 @@ export class InspectionReminderService {
           employeeRef: currentTask.driver_employee_ref,
         },
         {
-          title: 'FleetCheck reminder',
-          body,
           url: inspectionUrl || config.publicBaseUrl || '/',
           tag: `fleetcheck-task-${currentTask.id}`,
           data: {
@@ -703,6 +755,22 @@ export class InspectionReminderService {
             taskId: currentTask.id,
             vin: currentTask.vin || null,
             licensePlate: currentTask.license_plate || null,
+          },
+          buildForLocale: (locale) => {
+            const localized = getInspectionReminderPushCopy(locale);
+            const licensePlate = currentTask.license_plate || currentTask.vehicle_id || currentTask.vin || 'vehicle';
+            return {
+              title: localized.title,
+              body: localized.body(licensePlate, inspectionUrl || config.publicBaseUrl || '/'),
+              url: inspectionUrl || config.publicBaseUrl || '/',
+              tag: `fleetcheck-task-${currentTask.id}`,
+              data: {
+                url: inspectionUrl || config.publicBaseUrl || '/',
+                taskId: currentTask.id,
+                vin: currentTask.vin || null,
+                licensePlate: currentTask.license_plate || null,
+              },
+            };
           },
         },
       );

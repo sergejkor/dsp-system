@@ -6,6 +6,72 @@ let carPlanningWorkshopColumnsReady = false;
 const DEFAULT_FLEETCHECK_PUBLIC_BASE_URL =
   String(process.env.FLEETCHECK_PUBLIC_BASE_URL || 'https://fleetcheck.alfamile.com').trim()
   || 'https://fleetcheck.alfamile.com';
+const ASSIGNMENT_PUSH_COPY = {
+  en: {
+    title: "Today's car assignment",
+    withInspection: (assignmentLabel) => `Today you will drive ${assignmentLabel}. Please complete the vehicle inspection before departure.`,
+    withoutInspection: (assignmentLabel) => `Today you will drive ${assignmentLabel}. No vehicle inspection is required today.`,
+  },
+  de: {
+    title: 'Heutige Fahrzeugzuteilung',
+    withInspection: (assignmentLabel) => `Heute fährst du ${assignmentLabel}. Bitte führe vor der Abfahrt die Fahrzeuginspektion durch.`,
+    withoutInspection: (assignmentLabel) => `Heute fährst du ${assignmentLabel}. Heute ist keine Fahrzeuginspektion erforderlich.`,
+  },
+  ru: {
+    title: 'Назначение автомобиля на сегодня',
+    withInspection: (assignmentLabel) => `Сегодня вы едете на автомобиле ${assignmentLabel}. Пожалуйста, выполните осмотр автомобиля перед выездом.`,
+    withoutInspection: (assignmentLabel) => `Сегодня вы едете на автомобиле ${assignmentLabel}. Сегодня осмотр автомобиля не требуется.`,
+  },
+  fr: {
+    title: "Attribution du véhicule aujourd'hui",
+    withInspection: (assignmentLabel) => `Aujourd’hui, vous conduirez ${assignmentLabel}. Veuillez effectuer l’inspection du véhicule avant le départ.`,
+    withoutInspection: (assignmentLabel) => `Aujourd’hui, vous conduirez ${assignmentLabel}. Aucune inspection du véhicule n’est requise aujourd’hui.`,
+  },
+  it: {
+    title: 'Assegnazione veicolo di oggi',
+    withInspection: (assignmentLabel) => `Oggi guiderai ${assignmentLabel}. Completa l’ispezione del veicolo prima della partenza.`,
+    withoutInspection: (assignmentLabel) => `Oggi guiderai ${assignmentLabel}. Oggi non è richiesta alcuna ispezione del veicolo.`,
+  },
+  es: {
+    title: 'Asignación de vehículo de hoy',
+    withInspection: (assignmentLabel) => `Hoy conducirás ${assignmentLabel}. Completa la inspección del vehículo antes de salir.`,
+    withoutInspection: (assignmentLabel) => `Hoy conducirás ${assignmentLabel}. Hoy no se requiere inspección del vehículo.`,
+  },
+  pl: {
+    title: 'Dzisiejszy przydział pojazdu',
+    withInspection: (assignmentLabel) => `Dziś pojedziesz pojazdem ${assignmentLabel}. Wykonaj inspekcję pojazdu przed wyjazdem.`,
+    withoutInspection: (assignmentLabel) => `Dziś pojedziesz pojazdem ${assignmentLabel}. Dziś inspekcja pojazdu nie jest wymagana.`,
+  },
+  uk: {
+    title: 'Сьогоднішнє призначення автомобіля',
+    withInspection: (assignmentLabel) => `Сьогодні ви їдете на автомобілі ${assignmentLabel}. Будь ласка, виконайте огляд автомобіля перед виїздом.`,
+    withoutInspection: (assignmentLabel) => `Сьогодні ви їдете на автомобілі ${assignmentLabel}. Сьогодні огляд автомобіля не потрібен.`,
+  },
+  nl: {
+    title: 'Voertuigtoewijzing van vandaag',
+    withInspection: (assignmentLabel) => `Vandaag rijd je met ${assignmentLabel}. Rond voor vertrek de voertuiginspectie af.`,
+    withoutInspection: (assignmentLabel) => `Vandaag rijd je met ${assignmentLabel}. Vandaag is geen voertuiginspectie nodig.`,
+  },
+  ro: {
+    title: 'Alocarea vehiculului pentru azi',
+    withInspection: (assignmentLabel) => `Astăzi vei conduce ${assignmentLabel}. Te rugăm să finalizezi inspecția vehiculului înainte de plecare.`,
+    withoutInspection: (assignmentLabel) => `Astăzi vei conduce ${assignmentLabel}. Astăzi nu este necesară inspecția vehiculului.`,
+  },
+  hu: {
+    title: 'Mai járműbeosztás',
+    withInspection: (assignmentLabel) => `Ma a(z) ${assignmentLabel} járművet vezeted. Indulás előtt végezd el a járműellenőrzést.`,
+    withoutInspection: (assignmentLabel) => `Ma a(z) ${assignmentLabel} járművet vezeted. Ma nincs szükség járműellenőrzésre.`,
+  },
+  ar: {
+    title: 'تخصيص السيارة لليوم',
+    withInspection: (assignmentLabel) => `اليوم ستقود ${assignmentLabel}. يرجى إكمال فحص المركبة قبل الانطلاق.`,
+    withoutInspection: (assignmentLabel) => `اليوم ستقود ${assignmentLabel}. لا يلزم فحص المركبة اليوم.`,
+  },
+};
+
+function getAssignmentPushCopy(locale) {
+  return ASSIGNMENT_PUSH_COPY[String(locale || '').toLowerCase()] || ASSIGNMENT_PUSH_COPY.en;
+}
 
 function stringOrNull(value, maxLen = 5000) {
   if (value == null) return null;
@@ -451,10 +517,6 @@ async function savePlanningDataAndNotifyDrivers(carStates = {}, slots = []) {
         employeeRef: driverContact.employeeRef,
       },
       {
-        title: 'Today\'s car assignment',
-        body: requiresInspection
-          ? `Today you will drive ${assignmentLabel}. Vehicle inspection is required before departure.`
-          : `Today you will drive ${assignmentLabel}. No vehicle inspection is required today.`,
         url: targetUrl,
         tag: `car-planning-${slot.planDate}-${slot.carId}`,
         data: {
@@ -465,6 +527,26 @@ async function savePlanningDataAndNotifyDrivers(carStates = {}, slots = []) {
           licensePlate,
           vin: stringOrNull(car.vin, 64),
           requiresInspection,
+        },
+        buildForLocale: (locale) => {
+          const localized = getAssignmentPushCopy(locale);
+          return {
+            title: localized.title,
+            body: requiresInspection
+              ? localized.withInspection(assignmentLabel)
+              : localized.withoutInspection(assignmentLabel),
+            url: targetUrl,
+            tag: `car-planning-${slot.planDate}-${slot.carId}`,
+            data: {
+              url: targetUrl,
+              planDate: slot.planDate,
+              carId: slot.carId,
+              vehicleId,
+              licensePlate,
+              vin: stringOrNull(car.vin, 64),
+              requiresInspection,
+            },
+          };
         },
       },
     );

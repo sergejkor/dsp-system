@@ -108,6 +108,7 @@ router.post('/register-device', async (req, res) => {
       subscription: req.body?.subscription,
       userAgent: req.body?.userAgent,
       platform: req.body?.platform,
+      locale: req.body?.locale,
       appKind: req.body?.appKind,
       permissionState: req.body?.permissionState,
     });
