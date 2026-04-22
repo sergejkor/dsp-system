@@ -26,6 +26,19 @@ function defaultPaveSubjectContains() {
   return String(process.env.PAVE_IMAP_SUBJECT || 'inspection').trim();
 }
 
+function defaultPaveLookbackDays() {
+  const raw = Number(process.env.PAVE_IMAP_LOOKBACK_DAYS || 60);
+  if (!Number.isFinite(raw)) return 60;
+  return Math.max(1, Math.min(365, Math.trunc(raw)));
+}
+
+function buildRecentSinceDate(days) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - Math.max(1, Number(days) || 60));
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
 function looksLikePaveEmail(email) {
   const parsed = parsePaveEmail(email || {});
   return (
@@ -149,9 +162,10 @@ export default {
     const max = clampMaxResults(maxResults, 20);
     const sender = defaultPaveSender();
     const subject = defaultPaveSubjectContains();
+    const since = buildRecentSinceDate(defaultPaveLookbackDays());
 
     if (sender && subject) {
-      const narrowed = await fetchBySearch({ from: sender, subject }, { maxResults: Math.max(max, 100) });
+      const narrowed = await fetchBySearch({ since, from: sender, subject }, { maxResults: Math.max(max, 100) });
       const narrowedMatches = pickLikelyPaveEmails(narrowed, max);
       if (narrowedMatches.length > 0) {
         console.log('[pave-email] imap narrow search matched PAVE emails', {
@@ -160,13 +174,14 @@ export default {
           matched: narrowedMatches.length,
           sender,
           subject,
+          since: since.toISOString(),
         });
         return narrowedMatches;
       }
     }
 
     if (sender) {
-      const bySender = await fetchBySearch({ from: sender }, { maxResults: Math.max(max, 250) });
+      const bySender = await fetchBySearch({ since, from: sender }, { maxResults: Math.max(max, 250) });
       const bySenderMatches = pickLikelyPaveEmails(bySender, max);
       if (bySenderMatches.length > 0) {
         console.log('[pave-email] imap sender search matched PAVE emails', {
@@ -174,19 +189,21 @@ export default {
           scanned: Array.isArray(bySender) ? bySender.length : 0,
           matched: bySenderMatches.length,
           sender,
+          since: since.toISOString(),
         });
         return bySenderMatches;
       }
     }
 
-    const broadPool = Math.min(5000, Math.max(500, max * 20));
-    const broad = await fetchBySearch({}, { maxResults: broadPool });
+    const broadPool = Math.min(1500, Math.max(300, max * 10));
+    const broad = await fetchBySearch({ since }, { maxResults: broadPool });
     const broadMatches = pickLikelyPaveEmails(broad, max);
     console.log('[pave-email] imap broad fallback filtered PAVE emails', {
       strategy: 'all-mail-local-filter',
       scanned: Array.isArray(broad) ? broad.length : 0,
       matched: broadMatches.length,
       broadPool,
+      since: since.toISOString(),
     });
     if (broadMatches.length > 0) return broadMatches;
     return Array.isArray(broad) ? broad.slice(0, max) : [];
