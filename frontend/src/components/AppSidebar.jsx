@@ -7,7 +7,6 @@ import { useAppSettings } from '../context/AppSettingsContext';
 import './AppSidebar.css';
 
 const COLLAPSE_STORAGE_KEY = 'app_sidebar_collapsed';
-const COLLAPSED_BRAND_MARK = '/favicon-leitcore-v2.png';
 
 function UsersIcon(props) {
   return (
@@ -237,7 +236,7 @@ export default function AppSidebar({ canAccess, onPresentationChange }) {
     return IconComponent ? <IconComponent className={className} aria-hidden="true" /> : null;
   }
 
-  const brandSrc = isExpanded ? sidebarLogo : COLLAPSED_BRAND_MARK;
+  const brandSrc = sidebarLogo;
   const brandAlt = t('appTitle');
   const collapseLabel = isCollapsed && !isHoverExpanded ? t('nav.expandMenu') : t('nav.hideMenu');
 
