@@ -412,11 +412,39 @@ export default function CarPlanningPage() {
     [getWorkshopBlockForDate]
   );
 
+  const resolveAutoAbfahrtskontrolleForNewDay = useCallback((prevSlots, car, todayDriverIdentifier) => {
+    if (!car || isCarUnavailableForPlanning(car, newDayDate) || !!carStates[car.id]) {
+      return false;
+    }
+
+    const todayName = (todayDriverIdentifier || '').toString().trim();
+    if (!todayName) {
+      return false;
+    }
+
+    const beforeToday = scrollDates.filter((d) => d < newDayDate).sort();
+    let lastName = '';
+    for (let i = beforeToday.length - 1; i >= 0; i -= 1) {
+      const d = beforeToday[i];
+      const key = `${car.id}_${d}`;
+      const val = (prevSlots[key]?.driver_identifier || '').toString().trim();
+      if (val) {
+        lastName = val;
+        break;
+      }
+    }
+
+    if (!lastName) {
+      return true;
+    }
+
+    return lastName.toLowerCase() !== todayName.toLowerCase();
+  }, [carStates, isCarUnavailableForPlanning, newDayDate, scrollDates]);
+
   // Auto-set Abfahrtskontrolle based on last driver vs today
   const handleAutoAbfahrtskontrolle = () => {
     setSlots((prev) => {
       const next = { ...prev };
-      const beforeToday = scrollDates.filter((d) => d < newDayDate).sort();
       cars.forEach((car) => {
         if (isCarUnavailableForPlanning(car, newDayDate) || !!carStates[car.id]) {
           return;
@@ -424,40 +452,15 @@ export default function CarPlanningPage() {
         const todayKey = `${car.id}_${newDayDate}`;
         const todayName = (prev[todayKey]?.driver_identifier || '').toString().trim();
         if (!todayName) {
-          // No driver today – clear flag
+          // No driver today - clear flag
           if (next[todayKey]) {
             next[todayKey] = { ...next[todayKey], abfahrtskontrolle: false };
           }
           return;
         }
-
-        // Most recent previous calendar day (before today) with a driver in the grid.
-        let lastName = '';
-        for (let i = beforeToday.length - 1; i >= 0; i -= 1) {
-          const d = beforeToday[i];
-          const key = `${car.id}_${d}`;
-          const val = (prev[key]?.driver_identifier || '').toString().trim();
-          if (val) {
-            lastName = val;
-            break;
-          }
-        }
-
-        // Если раньше никто не ездил — по требованию тоже отмечаем Abfahrtskontrolle.
-        if (!lastName) {
-          next[todayKey] = {
-            driver_identifier: prev[todayKey]?.driver_identifier || todayName,
-            abfahrtskontrolle: true,
-          };
-          return;
-        }
-
-        const same = lastName.toLowerCase() === todayName.toLowerCase();
-        // Отмечаем только если последний водитель существует и отличается от сегодняшнего.
-        const flag = !same;
         next[todayKey] = {
           driver_identifier: prev[todayKey]?.driver_identifier || todayName,
-          abfahrtskontrolle: flag,
+          abfahrtskontrolle: resolveAutoAbfahrtskontrolleForNewDay(prev, car, todayName),
         };
       });
       return next;
@@ -761,10 +764,23 @@ export default function CarPlanningPage() {
 
   const setSlot = (carId, date, driverIdentifier, abfahrtskontrolle) => {
     const key = `${carId}_${date}`;
-    setSlots((prev) => ({
-      ...prev,
-      [key]: { driver_identifier: driverIdentifier, abfahrtskontrolle: abfahrtskontrolle ?? prev[key]?.abfahrtskontrolle },
-    }));
+    setSlots((prev) => {
+      const nextDriverIdentifier = (driverIdentifier || '').toString();
+      const nextAbfahrtskontrolle = date === newDayDate
+        ? resolveAutoAbfahrtskontrolleForNewDay(
+            prev,
+            cars.find((car) => car.id === carId),
+            nextDriverIdentifier,
+          )
+        : (abfahrtskontrolle ?? prev[key]?.abfahrtskontrolle);
+      return {
+        ...prev,
+        [key]: {
+          driver_identifier: nextDriverIdentifier,
+          abfahrtskontrolle: nextAbfahrtskontrolle,
+        },
+      };
+    });
     if (date === newDayDate) {
       setNewDayDraftValue(carId, driverIdentifier);
     }
