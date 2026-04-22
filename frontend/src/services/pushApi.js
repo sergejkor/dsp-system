@@ -1,7 +1,7 @@
 import { API_BASE } from '../config/apiBase.js';
 import { apiBaseHeaders } from './apiClient.js';
 
-const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-4';
+const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-5';
 
 async function parseJson(res) {
   const text = await res.text().catch(() => '');

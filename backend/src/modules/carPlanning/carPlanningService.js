@@ -70,6 +70,9 @@ function buildFleetcheckAssignmentUrl(vin, options = {}) {
   if (stringOrNull(options.planDate, 32)) {
     params.set('planDate', stringOrNull(options.planDate, 32));
   }
+  if (typeof options.requiresInspection === 'boolean') {
+    params.set('requiresInspection', options.requiresInspection ? '1' : '0');
+  }
   const suffix = params.toString();
   return suffix ? `${safeBase}/fleet-check?${suffix}` : `${safeBase}/fleet-check`;
 }
@@ -208,6 +211,7 @@ function normalizeNotificationSlots(slots = []) {
       carId,
       planDate,
       driverIdentifier,
+      requiresInspection: Boolean(slot?.abfahrtskontrolle),
     });
   }
   return [...deduped.values()];
@@ -434,10 +438,12 @@ async function savePlanningDataAndNotifyDrivers(carStates = {}, slots = []) {
     const licensePlate = stringOrNull(car.license_plate, 64);
     const vehicleId = stringOrNull(car.vehicle_id, 255);
     const assignmentLabel = licensePlate || vehicleId || `car ${slot.carId}`;
+    const requiresInspection = Boolean(slot.requiresInspection);
     const targetUrl = buildFleetcheckAssignmentUrl(car.vin, {
       licensePlate,
       vehicleId,
       planDate: slot.planDate,
+      requiresInspection,
     });
     const pushResult = await pushService.sendNotificationToEmployee(
       {
@@ -446,7 +452,9 @@ async function savePlanningDataAndNotifyDrivers(carStates = {}, slots = []) {
       },
       {
         title: 'Today\'s car assignment',
-        body: `Today you will drive ${assignmentLabel}. Open FleetCheck for details.`,
+        body: requiresInspection
+          ? `Today you will drive ${assignmentLabel}. Vehicle inspection is required before departure.`
+          : `Today you will drive ${assignmentLabel}. No vehicle inspection is required today.`,
         url: targetUrl,
         tag: `car-planning-${slot.planDate}-${slot.carId}`,
         data: {
@@ -456,6 +464,7 @@ async function savePlanningDataAndNotifyDrivers(carStates = {}, slots = []) {
           vehicleId,
           licensePlate,
           vin: stringOrNull(car.vin, 64),
+          requiresInspection,
         },
       },
     );

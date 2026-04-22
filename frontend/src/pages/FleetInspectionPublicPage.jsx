@@ -56,7 +56,7 @@ const SHOT_VAN_ICON_ASSETS = {
 const FLEETCHECK_PUSH_EMPLOYEE_KEY = 'fleetcheck_push_employee';
 const FLEETCHECK_INSPECTION_DRAFT_KEY = 'fleetcheck_inspection_draft';
 const FLEETCHECK_OVERLAYS_ENABLED = false;
-const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-4';
+const FLEETCHECK_SW_URL = '/fleetcheck-sw.js?v=20260422-assignment-5';
 
 const FLEETCHECK_SHOT_COPY = {
   en: {
@@ -1347,6 +1347,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Safety tip',
     safetyTip: 'Drive carefully, keep distance, and complete a quick walk-around before departure.',
     open: 'Open FleetCheck',
+    titleNoInspection: 'Today you will use this vehicle',
+    bodyNoInspection: 'No inspection is required today. Review the assigned vehicle details below.',
+    openNoInspection: 'Show assigned vehicle',
+    noInspectionMessage: 'No vehicle inspection is required today.',
   },
   de: {
     eyebrow: 'Heutige Zuteilung',
@@ -1355,6 +1359,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Sicherheitstipp',
     safetyTip: 'Fahre vorsichtig, halte Abstand und mache vor der Abfahrt einen kurzen Rundgang ums Fahrzeug.',
     open: 'FleetCheck öffnen',
+    titleNoInspection: 'Heute nutzt du dieses Fahrzeug',
+    bodyNoInspection: 'Heute ist keine Fahrzeuginspektion erforderlich. Prüfe unten die zugewiesenen Fahrzeugdaten.',
+    openNoInspection: 'Zugewiesenes Fahrzeug anzeigen',
+    noInspectionMessage: 'Heute ist keine Fahrzeuginspektion erforderlich.',
   },
   ru: {
     eyebrow: 'Назначение на сегодня',
@@ -1363,6 +1371,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Совет по безопасности',
     safetyTip: 'Езжайте аккуратно, держите дистанцию и сделайте быстрый обход автомобиля перед выездом.',
     open: 'Открыть FleetCheck',
+    titleNoInspection: 'Сегодня вы используете этот автомобиль',
+    bodyNoInspection: 'Сегодня осмотр не требуется. Ниже показан назначенный вам автомобиль.',
+    openNoInspection: 'Показать назначенный автомобиль',
+    noInspectionMessage: 'Сегодня осмотр автомобиля не требуется.',
   },
   fr: {
     eyebrow: "Affectation du jour",
@@ -1371,6 +1383,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Conseil sécurité',
     safetyTip: 'Conduisez prudemment, gardez vos distances et faites un rapide tour du véhicule avant le départ.',
     open: 'Ouvrir FleetCheck',
+    titleNoInspection: "Aujourd'hui, vous utiliserez ce véhicule",
+    bodyNoInspection: 'Aucune inspection n’est requise aujourd’hui. Consultez ci-dessous le véhicule qui vous est attribué.',
+    openNoInspection: 'Afficher le véhicule attribué',
+    noInspectionMessage: 'Aucune inspection du véhicule n’est requise aujourd’hui.',
   },
   it: {
     eyebrow: 'Assegnazione di oggi',
@@ -1379,6 +1395,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Suggerimento di sicurezza',
     safetyTip: 'Guida con prudenza, mantieni la distanza e fai un rapido controllo esterno prima della partenza.',
     open: 'Apri FleetCheck',
+    titleNoInspection: 'Oggi userai questo veicolo',
+    bodyNoInspection: 'Oggi non è richiesta alcuna ispezione. Controlla qui sotto i dettagli del veicolo assegnato.',
+    openNoInspection: 'Mostra veicolo assegnato',
+    noInspectionMessage: 'Oggi non è richiesta alcuna ispezione del veicolo.',
   },
   es: {
     eyebrow: 'Asignación de hoy',
@@ -1387,6 +1407,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Consejo de seguridad',
     safetyTip: 'Conduce con cuidado, mantén la distancia y haz una revisión rápida del vehículo antes de salir.',
     open: 'Abrir FleetCheck',
+    titleNoInspection: 'Hoy usarás este vehículo',
+    bodyNoInspection: 'Hoy no se requiere inspección. Revisa abajo los datos del vehículo asignado.',
+    openNoInspection: 'Mostrar vehículo asignado',
+    noInspectionMessage: 'Hoy no se requiere inspección del vehículo.',
   },
   pl: {
     eyebrow: 'Dzisiejszy przydział',
@@ -1395,6 +1419,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Wskazówka bezpieczeństwa',
     safetyTip: 'Jedź ostrożnie, zachowaj odstęp i zrób krótki obchód pojazdu przed wyjazdem.',
     open: 'Otwórz FleetCheck',
+    titleNoInspection: 'Dziś korzystasz z tego pojazdu',
+    bodyNoInspection: 'Dziś kontrola nie jest wymagana. Poniżej znajdziesz dane przydzielonego pojazdu.',
+    openNoInspection: 'Pokaż przydzielony pojazd',
+    noInspectionMessage: 'Dziś kontrola pojazdu nie jest wymagana.',
   },
   uk: {
     eyebrow: 'Призначення на сьогодні',
@@ -1403,6 +1431,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Порада з безпеки',
     safetyTip: 'Керуйте обережно, тримайте дистанцію та зробіть швидкий огляд автомобіля перед виїздом.',
     open: 'Відкрити FleetCheck',
+    titleNoInspection: 'Сьогодні ви використовуєте цей автомобіль',
+    bodyNoInspection: 'Сьогодні огляд не потрібен. Нижче показано призначений вам автомобіль.',
+    openNoInspection: 'Показати призначений автомобіль',
+    noInspectionMessage: 'Сьогодні огляд автомобіля не потрібен.',
   },
   nl: {
     eyebrow: 'Toewijzing van vandaag',
@@ -1411,6 +1443,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Veiligheidstip',
     safetyTip: 'Rijd voorzichtig, houd afstand en loop voor vertrek snel om het voertuig heen.',
     open: 'Open FleetCheck',
+    titleNoInspection: 'Vandaag gebruik je dit voertuig',
+    bodyNoInspection: 'Vandaag is geen inspectie nodig. Bekijk hieronder de gegevens van het toegewezen voertuig.',
+    openNoInspection: 'Toegewezen voertuig tonen',
+    noInspectionMessage: 'Vandaag is geen voertuiginspectie nodig.',
   },
   ro: {
     eyebrow: 'Alocarea de azi',
@@ -1419,6 +1455,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Sfat de siguranță',
     safetyTip: 'Condu cu grijă, păstrează distanța și fă o verificare rapidă a vehiculului înainte de plecare.',
     open: 'Deschide FleetCheck',
+    titleNoInspection: 'Astăzi vei folosi acest vehicul',
+    bodyNoInspection: 'Astăzi nu este necesară inspecția. Vezi mai jos detaliile vehiculului alocat.',
+    openNoInspection: 'Arată vehiculul alocat',
+    noInspectionMessage: 'Astăzi nu este necesară inspecția vehiculului.',
   },
   hu: {
     eyebrow: 'Mai beosztás',
@@ -1427,6 +1467,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'Biztonsági tipp',
     safetyTip: 'Vezess óvatosan, tarts követési távolságot, és indulás előtt gyorsan járd körbe a járművet.',
     open: 'FleetCheck megnyitása',
+    titleNoInspection: 'Ma ezt a járművet használod',
+    bodyNoInspection: 'Ma nincs szükség ellenőrzésre. Lent láthatod a kijelölt jármű adatait.',
+    openNoInspection: 'Kijelölt jármű megjelenítése',
+    noInspectionMessage: 'Ma nincs szükség járműellenőrzésre.',
   },
   ar: {
     eyebrow: 'مهمة اليوم',
@@ -1435,6 +1479,10 @@ const FLEETCHECK_ASSIGNMENT_COPY = {
     safetyTitle: 'نصيحة سلامة',
     safetyTip: 'قد بحذر، حافظ على مسافة آمنة، وقم بجولة سريعة حول المركبة قبل الانطلاق.',
     open: 'افتح FleetCheck',
+    titleNoInspection: 'اليوم ستستخدم هذه المركبة',
+    bodyNoInspection: 'لا يلزم إجراء فحص اليوم. راجع تفاصيل المركبة المخصصة لك أدناه.',
+    openNoInspection: 'عرض المركبة المخصصة',
+    noInspectionMessage: 'لا يلزم إجراء فحص للمركبة اليوم.',
   },
 };
 
@@ -1480,6 +1528,10 @@ function parseFleetCheckAssignmentNotice(searchParams) {
   const licensePlate = normalize(searchParams.get('plate'), 64);
   const vehicleId = normalize(searchParams.get('vehicleId'), 255);
   const planDate = normalize(searchParams.get('planDate'), 32);
+  const requiresInspectionRaw = normalize(searchParams.get('requiresInspection'), 16);
+  const requiresInspection = requiresInspectionRaw == null
+    ? null
+    : ['1', 'true', 'yes'].includes(requiresInspectionRaw.toLowerCase());
   const isAssignmentNotice =
     notice === 'assignment'
     || fromPush === '1'
@@ -1491,6 +1543,7 @@ function parseFleetCheckAssignmentNotice(searchParams) {
     vehicleId,
     planDate,
     fromPush: fromPush === '1',
+    requiresInspection,
   };
 }
 
@@ -2176,11 +2229,26 @@ export default function FleetInspectionPublicPage() {
     assignmentVehicle?.vehicle_id || assignmentVehicle?.vehicleId || vehicle?.vehicleId || null,
     assignmentVehicle?.vin || vehicle?.vin ? `VIN ${assignmentVehicle?.vin || vehicle?.vin}` : null,
   ].filter(Boolean).join(' • ');
+  const assignmentRequiresInspection = assignmentVehicle
+    ? (typeof assignmentVehicle?.abfahrtskontrolle === 'boolean'
+        ? assignmentVehicle.abfahrtskontrolle
+        : assignmentVehicle?.requiresInspection !== false)
+    : true;
+  const assignedVehicleVin = normalizeVin(currentAssignment?.vin || assignmentNotice?.vin);
+  const currentVehicleMatchesAssignment = Boolean(
+    vehicle?.vin
+    && assignedVehicleVin
+    && normalizeVin(vehicle.vin) === assignedVehicleVin,
+  );
+  const canStartInspectionForCurrentVehicle = !currentVehicleMatchesAssignment || assignmentRequiresInspection;
+  const assignmentCardTitle = assignmentRequiresInspection ? assignmentCopy.title : assignmentCopy.titleNoInspection;
+  const assignmentCardBody = assignmentRequiresInspection ? assignmentCopy.body : assignmentCopy.bodyNoInspection;
+  const assignmentOpenLabel = assignmentRequiresInspection ? assignmentCopy.open : assignmentCopy.openNoInspection;
   const driverDisplayName = driverName || pushEmployeeSelection?.label || copy.waitingDriver;
   const headerSignalLabel = hasTodayAssignment ? assignmentCopy.eyebrow : copy.vehicleLabel;
   const headerSignalTitle = hasTodayAssignment ? assignmentVehicleTitle : vehicleDisplayTitle;
   const headerSignalMeta = hasTodayAssignment
-    ? [assignmentVehicleMeta, driverDisplayName].filter(Boolean).join(' â€¢ ') || assignmentCopy.body
+    ? [assignmentVehicleMeta, driverDisplayName].filter(Boolean).join(' • ') || assignmentCardBody
     : driverDisplayName;
   const deviceStatusLabel = pushEnabled
     ? copy.notificationsEnabledOnDevice
@@ -3055,8 +3123,8 @@ export default function FleetInspectionPublicPage() {
           <div className="fleet-inspection-assignment-overlay" role="dialog" aria-modal="true" aria-labelledby="fleetcheck-assignment-title">
             <div className="fleet-inspection-assignment-card">
               <span className="fleet-inspection-assignment-card__eyebrow">{assignmentCopy.eyebrow}</span>
-              <h2 id="fleetcheck-assignment-title">{assignmentCopy.title}</h2>
-              <p>{assignmentCopy.body}</p>
+              <h2 id="fleetcheck-assignment-title">{assignmentCardTitle}</h2>
+              <p>{assignmentCardBody}</p>
 
               <div className="fleet-inspection-assignment-card__vehicle">
                 <span className="fleet-inspection-label">{copy.vehicleLabel}</span>
@@ -3076,7 +3144,7 @@ export default function FleetInspectionPublicPage() {
                 className="fleet-inspection-button fleet-inspection-button--large"
                 onClick={dismissAssignmentNotice}
               >
-                {assignmentCopy.open}
+                {assignmentOpenLabel}
               </button>
             </div>
           </div>
@@ -3124,7 +3192,7 @@ export default function FleetInspectionPublicPage() {
                 <div className="fleet-inspection-assignment-banner__copy">
                   <span className="fleet-inspection-assignment-card__eyebrow">{assignmentCopy.eyebrow}</span>
                   <div className="fleet-inspection-assignment-banner__vehicle">
-                    <span className="fleet-inspection-label">{assignmentCopy.title}</span>
+                    <span className="fleet-inspection-label">{assignmentCardTitle}</span>
                     <strong>{assignmentVehicleTitle}</strong>
                     {assignmentVehicleMeta ? (
                       <small className="fleet-inspection-muted">{assignmentVehicleMeta}</small>
@@ -3261,25 +3329,33 @@ export default function FleetInspectionPublicPage() {
                   </div>
 
                   <div className="fleet-inspection-preflight__summary">
-                    <button
-                      type="button"
-                      className="fleet-inspection-button fleet-inspection-button--large fleet-inspection-button--scan"
-                      onClick={handleStartInspection}
-                      disabled={!driverConfirmed}
-                    >
-                      {copy.startInspection}
-                    </button>
+                    {canStartInspectionForCurrentVehicle ? (
+                      <button
+                        type="button"
+                        className="fleet-inspection-button fleet-inspection-button--large fleet-inspection-button--scan"
+                        onClick={handleStartInspection}
+                        disabled={!driverConfirmed}
+                      >
+                        {copy.startInspection}
+                      </button>
+                    ) : (
+                      <div className="fleet-inspection-alert fleet-inspection-alert--success">
+                        {assignmentCopy.noInspectionMessage}
+                      </div>
+                    )}
                   </div>
 
-                  <button
-                    type="button"
-                    className="fleet-inspection-note-toggle"
-                    onClick={() => setNotesOpen((current) => !current)}
-                  >
-                    {notesOpen ? copy.hideOptionalNote : copy.addOptionalNote}
-                  </button>
+                  {canStartInspectionForCurrentVehicle ? (
+                    <button
+                      type="button"
+                      className="fleet-inspection-note-toggle"
+                      onClick={() => setNotesOpen((current) => !current)}
+                    >
+                      {notesOpen ? copy.hideOptionalNote : copy.addOptionalNote}
+                    </button>
+                  ) : null}
 
-                  {notesOpen ? (
+                  {canStartInspectionForCurrentVehicle && notesOpen ? (
                     <div className="fleet-inspection-field">
                       <label htmlFor="inspection-notes">{copy.optionalNote}</label>
                       <textarea

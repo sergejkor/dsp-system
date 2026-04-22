@@ -44,6 +44,7 @@ self.addEventListener('notificationclick', (event) => {
     const vehicleId = String(rawData.vehicleId || '').trim();
     const vin = String(rawData.vin || '').trim();
     const planDate = String(rawData.planDate || '').trim();
+    const requiresInspection = rawData.requiresInspection === true || rawData.requiresInspection === 'true' || rawData.requiresInspection === 1 || rawData.requiresInspection === '1';
 
     url.searchParams.set('fromPush', '1');
     if (licensePlate || vehicleId || vin || planDate) {
@@ -60,6 +61,7 @@ self.addEventListener('notificationclick', (event) => {
       if (planDate) {
         url.searchParams.set('planDate', planDate);
       }
+      url.searchParams.set('requiresInspection', requiresInspection ? '1' : '0');
       targetUrl = url.toString();
     }
   } catch (_error) {}
