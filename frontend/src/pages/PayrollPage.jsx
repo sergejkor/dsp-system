@@ -121,15 +121,81 @@ function formatKpiValue(num) {
   return n.toFixed(2);
 }
 
+function getRowNumericValue(row, fields = []) {
+  let sawNumericZero = false;
+  for (const field of fields) {
+    const candidate = row?.[field];
+    if (candidate == null || candidate === '') continue;
+    const parsed = Number(candidate);
+    if (!Number.isFinite(parsed)) continue;
+    if (parsed === 0) {
+      sawNumericZero = true;
+      continue;
+    }
+    return parsed;
+  }
+  return sawNumericZero ? 0 : 0;
+}
+
+function rowHasNumericField(row, fields = []) {
+  return fields.some((field) => Object.prototype.hasOwnProperty.call(row || {}, field));
+}
+
+function getPayrollOvertimeHoursValue(row) {
+  const explicit = getRowNumericValue(row, ['overtime_hours', 'overtime', 'overtimeHours']);
+  if (explicit > 0 || rowHasNumericField(row, ['overtime_hours', 'overtime', 'overtimeHours'])) {
+    return explicit;
+  }
+
+  const workedHours = getRowNumericValue(row, ['total_worked_hours', 'worked_hours']);
+  const regularHours = getRowNumericValue(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours']);
+  if (workedHours > 0 && regularHours > 0) return Math.max(workedHours - regularHours, 0);
+
+  const contractHours = getRowNumericValue(row, ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours']);
+  if (workedHours > 0 && contractHours > 0) return Math.max(workedHours - contractHours, 0);
+  return 0;
+}
+
+function getPayrollWorkedHoursValue(row) {
+  const totalWorked = getRowNumericValue(row, ['total_worked_hours', 'worked_hours']);
+  if (totalWorked > 0) return totalWorked;
+
+  const payrollHours = getRowNumericValue(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours']);
+  const overtimeHours = getRowNumericValue(row, ['overtime_hours', 'overtime', 'overtimeHours']);
+  if (payrollHours > 0 || overtimeHours > 0) return payrollHours + overtimeHours;
+  return 0;
+}
+
+function getPayrollRegularHoursValue(row) {
+  const payrollHours = getRowNumericValue(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours']);
+  if (payrollHours > 0 || rowHasNumericField(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours'])) {
+    return payrollHours;
+  }
+
+  const workedHours = getPayrollWorkedHoursValue(row);
+  const contractHours = getPayrollContractHoursValue(row);
+  if (workedHours > 0 && contractHours > 0) return Math.min(workedHours, contractHours);
+  return workedHours;
+}
+
+function getPayrollContractHoursValue(row) {
+  const explicit = getRowNumericValue(row, ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours']);
+  if (explicit > 0 || rowHasNumericField(row, ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours'])) {
+    return explicit;
+  }
+
+  return getRowNumericValue(row, ['expected_hours', 'payroll_hours']);
+}
+
 function buildPayrollSummaryCards(rows, selectedMonth, t) {
   const list = Array.isArray(rows) ? rows : [];
   const month = String(selectedMonth || '').slice(0, 7);
   const sums = list.reduce(
     (acc, row) => {
       const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
-      acc.workedHours += Number(row.worked_hours ?? row.expected_hours) || 0;
-      acc.payrollHours += Number(row.expected_hours) || 0;
-      acc.overtimeHours += Number(row.overtime_hours ?? row.overtime) || 0;
+      acc.workedHours += getPayrollWorkedHoursValue(row);
+      acc.payrollHours += getPayrollRegularHoursValue(row);
+      acc.overtimeHours += getPayrollOvertimeHoursValue(row);
       acc.totalBonus += Number(row.total_bonus) || 0;
       acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
       acc.verpflMehr += Math.max(0, Number(row.verpfl_mehr) || 0);
@@ -1797,14 +1863,16 @@ export default function PayrollPage() {
                       );
                     }
                     const val = col.key === 'worked_hours'
-                      ? (row.worked_hours ?? row.expected_hours ?? 0)
-                      : col.key === 'contract_expected_hours'
-                        ? (row.contract_expected_hours ?? row.expected_hours ?? 0)
-                        : col.key === 'overtime_hours'
-                          ? (row.overtime_hours ?? row.overtime ?? 0)
-                          : (col.key === 'krank_days' || col.key === 'urlaub_days')
-                            ? (row[col.key] ?? 0)
-                            : row[col.key];
+                      ? getPayrollWorkedHoursValue(row)
+                      : col.key === 'expected_hours'
+                        ? getPayrollRegularHoursValue(row)
+                        : col.key === 'contract_expected_hours'
+                          ? getPayrollContractHoursValue(row)
+                          : col.key === 'overtime_hours'
+                            ? getPayrollOvertimeHoursValue(row)
+                            : (col.key === 'krank_days' || col.key === 'urlaub_days')
+                              ? (row[col.key] ?? 0)
+                              : row[col.key];
                     const isHoursCol = ['worked_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours'].includes(col.key);
                     const isCurrency = ['total_bonus', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
                     const isNumericCol = ['pn', 'working_days', 'worked_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
@@ -2361,10 +2429,10 @@ export default function PayrollPage() {
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.name || '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.pn || '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.working_days ?? '—'}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.worked_hours ?? row.expected_hours)}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.expected_hours)}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.contract_expected_hours)}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(row.overtime_hours ?? row.overtime)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollWorkedHoursValue(row))}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollRegularHoursValue(row))}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollContractHoursValue(row))}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollOvertimeHoursValue(row))}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.krank_days ?? 0}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.urlaub_days ?? 0}</td>
                       <td style={{ padding: '0.35rem 0.28rem', whiteSpace: 'nowrap' }}>{formatWholeDays(row.carryover_days)}</td>
