@@ -1249,6 +1249,7 @@ export async function listPaveGmailReports(filters = {}) {
   const params = [];
   const where = ['1=1'];
   let idx = 1;
+  const effectiveDateSql = `COALESCE(pr.inspection_date, pr.report_date, pr.incident_date, inc.received_at::date)`;
 
   if (filters.plate_number) {
     where.push(`pr.plate_number ILIKE $${idx}`);
@@ -1271,13 +1272,18 @@ export async function listPaveGmailReports(filters = {}) {
     idx++;
   }
   if (filters.date_from) {
-    where.push(`COALESCE(pr.inspection_date, pr.report_date) >= $${idx}`);
+    where.push(`${effectiveDateSql} >= $${idx}`);
     params.push(filters.date_from);
     idx++;
   }
   if (filters.date_to) {
-    where.push(`COALESCE(pr.inspection_date, pr.report_date) <= $${idx}`);
+    where.push(`${effectiveDateSql} <= $${idx}`);
     params.push(filters.date_to);
+    idx++;
+  }
+  if (filters.month) {
+    where.push(`TO_CHAR(${effectiveDateSql}, 'YYYY-MM') = $${idx}`);
+    params.push(String(filters.month).trim());
     idx++;
   }
 
@@ -1331,6 +1337,19 @@ export async function listPaveGmailReports(filters = {}) {
   `;
   const res = await query(q, params);
   return (res.rows || []).map(withInspectionDateEffective);
+}
+
+export async function listPaveGmailReportMonths() {
+  const res = await query(`
+    SELECT DISTINCT TO_CHAR(COALESCE(pr.inspection_date, pr.report_date, pr.incident_date, inc.received_at::date), 'YYYY-MM') AS month
+    FROM pave_reports pr
+    JOIN incoming_emails inc ON inc.id = pr.incoming_email_id
+    WHERE COALESCE(pr.inspection_date, pr.report_date, pr.incident_date, inc.received_at::date) IS NOT NULL
+    ORDER BY month DESC
+  `);
+  return (res.rows || [])
+    .map((row) => String(row.month || '').trim())
+    .filter(Boolean);
 }
 
 export async function getPaveGmailReportDetail(reportId) {

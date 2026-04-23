@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   getPaveGmailReports,
+  getPaveGmailReportMonths,
   getPaveGmailInspectionStats,
   getCarsWithoutPaveInspection,
   syncPaveGmailReports,
@@ -10,6 +11,23 @@ import {
   backfillPaveGmailReports,
 } from '../services/paveGmailApi';
 import { formatPaveInspectionDate, paveInspectionDateHint } from '../utils/paveInspectionDateDisplay.js';
+
+function currentMonthValue() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function formatMonthLabel(value) {
+  const s = String(value || '').trim();
+  const match = s.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return s || 'Unknown month';
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const d = new Date(year, month, 1);
+  return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(d);
+}
 
 function formatDate(d) {
   if (!d) return '—';
@@ -110,6 +128,8 @@ export default function PavePage() {
   const [gmailDriver, setGmailDriver] = useState('');
   const [gmailReportType, setGmailReportType] = useState('');
   const [gmailStatus, setGmailStatus] = useState('');
+  const [gmailMonth, setGmailMonth] = useState(currentMonthValue());
+  const [gmailMonthOptions, setGmailMonthOptions] = useState([]);
   const [gmailDateFrom, setGmailDateFrom] = useState('');
   const [gmailDateTo, setGmailDateTo] = useState('');
   const [adminBusy, setAdminBusy] = useState(false);
@@ -157,10 +177,28 @@ export default function PavePage() {
       });
   }
 
+  function loadMonthOptions() {
+    getPaveGmailReportMonths()
+      .then((months) => {
+        const list = Array.isArray(months) ? months : [];
+        setGmailMonthOptions(list);
+        if (!list.length) return;
+        setGmailMonth((prev) => {
+          if (prev && list.includes(prev)) return prev;
+          if (list.includes(currentMonthValue())) return currentMonthValue();
+          return list[0];
+        });
+      })
+      .catch(() => {
+        setGmailMonthOptions([]);
+      });
+  }
+
   function loadGmail() {
     setGmailLoading(true);
     setGmailError('');
     const filters = {
+      month: gmailMonth || undefined,
       plate_number: gmailPlate || undefined,
       driver_name: gmailDriver || undefined,
       report_type: gmailReportType || undefined,
@@ -176,11 +214,12 @@ export default function PavePage() {
 
   useEffect(() => {
     loadStats();
+    loadMonthOptions();
   }, []);
 
   useEffect(() => {
     loadGmail();
-  }, [gmailPlate, gmailDriver, gmailReportType, gmailStatus, gmailDateFrom, gmailDateTo]);
+  }, [gmailMonth, gmailPlate, gmailDriver, gmailReportType, gmailStatus, gmailDateFrom, gmailDateTo]);
 
   useEffect(() => {
     if (!showPendingCars) return undefined;
@@ -292,6 +331,19 @@ export default function PavePage() {
         <button type="button" className="pave-btn" onClick={() => setShowAdminToolsModal(true)}>
           Admin Tools
         </button>
+        <label className="pave-toolbar" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, margin: 0 }}>
+          <span className="muted">Month</span>
+          <select value={gmailMonth} onChange={(e) => setGmailMonth(e.target.value)} className="pave-search" style={{ minWidth: 180 }}>
+            {!gmailMonthOptions.includes(gmailMonth) && gmailMonth ? (
+              <option value={gmailMonth}>{formatMonthLabel(gmailMonth)}</option>
+            ) : null}
+            {gmailMonthOptions.map((month) => (
+              <option key={month} value={month}>
+                {formatMonthLabel(month)}
+              </option>
+            ))}
+          </select>
+        </label>
       </p>
 
       {returnKey && (

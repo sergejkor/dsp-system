@@ -108,6 +108,18 @@ export async function getPaveGmailInspectionStats() {
   return data;
 }
 
+export async function getPaveGmailReportMonths() {
+  let res;
+  try {
+    res = await fetchWithRetry(`${API_BASE}/api/pave/gmail/report-months`, authOpts());
+  } catch (err) {
+    throw new Error(`Network error while calling report months: ${String(err?.message || err)}`);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || `Failed to load report months (${res.status})`);
+  return Array.isArray(data) ? data : [];
+}
+
 /** Imported PAVE reports linked to a `cars.id` (VIN last 4 or same license plate). */
 export async function getPaveGmailReportsByCar(carId) {
   const id = Number(carId);

@@ -7,6 +7,7 @@ import paveService from './paveService.js';
 import {
   syncGmailReports,
   listPaveGmailReports,
+  listPaveGmailReportMonths,
   listPaveGmailReportsForCar,
   getPaveGmailReportDetail,
   getPaveGmailInspectionStats,
@@ -171,12 +172,23 @@ router.get('/gmail/reports', requireRole('admin', 'manager', 'dispatcher', 'view
       status: req.query.status,
       date_from: req.query.date_from,
       date_to: req.query.date_to,
+      month: req.query.month,
     };
     const list = await listPaveGmailReports(filters);
     res.json(list);
   } catch (err) {
     console.error('GET /api/pave/gmail/reports failed:', err);
     res.status(500).json({ error: err.message || 'Failed to load reports' });
+  }
+});
+
+router.get('/gmail/report-months', requireRole('admin', 'manager', 'dispatcher', 'viewer'), async (_req, res) => {
+  try {
+    const months = await listPaveGmailReportMonths();
+    res.json(months);
+  } catch (err) {
+    console.error('GET /api/pave/gmail/report-months failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to load report months' });
   }
 });
 

@@ -56,7 +56,10 @@ export async function findExistingPaveReportForDedupe({
     if (exact) return { existing: exact, reason: 'exact_external_id_and_date' };
   }
 
-  if (externalReportId) {
+  // When inspectionDate is known, keep separate rows for different months/dates even if
+  // PAVE reuses or re-sends the same external id later. Only fall back to external id
+  // alone while the parsed report still has no date.
+  if (externalReportId && !inspectionDate) {
     const byExternal = (await query(
       `SELECT pr.*, (
          SELECT COUNT(*)::int FROM pave_report_items pri WHERE pri.pave_report_id = pr.id
