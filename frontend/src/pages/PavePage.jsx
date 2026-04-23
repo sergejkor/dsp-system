@@ -10,7 +10,11 @@ import {
   downloadPaveGmailReportFile,
   backfillPaveGmailReports,
 } from '../services/paveGmailApi';
+import { useAppSettings } from '../context/AppSettingsContext';
+import { translations } from '../translations';
 import { formatPaveInspectionDate, paveInspectionDateHint } from '../utils/paveInspectionDateDisplay.js';
+
+const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 function currentMonthValue() {
   const now = new Date();
@@ -19,14 +23,18 @@ function currentMonthValue() {
   return `${y}-${m}`;
 }
 
-function formatMonthLabel(value) {
+function isMonthValue(value) {
+  return /^\d{4}-\d{2}$/.test(String(value || '').trim());
+}
+
+function formatMonthLabel(value, monthNames = EN_MONTHS) {
   const s = String(value || '').trim();
   const match = s.match(/^(\d{4})-(\d{2})$/);
-  if (!match) return s || 'Unknown month';
+  if (!match) return s || '';
   const year = Number(match[1]);
   const month = Number(match[2]) - 1;
-  const d = new Date(year, month, 1);
-  return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(d);
+  const localizedMonth = monthNames[month] || EN_MONTHS[month] || s;
+  return `${localizedMonth} ${year}`;
 }
 
 function reportMonthValue(report) {
@@ -124,6 +132,7 @@ function SortableTh({ label, colKey, activeKey, dir, onSort }) {
 }
 
 export default function PavePage() {
+  const { t, language } = useAppSettings();
   const [searchParams] = useSearchParams();
   const returnKey = searchParams.get('return');
   const [message, setMessage] = useState('');
@@ -160,6 +169,33 @@ export default function PavePage() {
   const [pendingCarsPayload, setPendingCarsPayload] = useState(null);
   const [pendingCarsLoading, setPendingCarsLoading] = useState(false);
   const [pendingCarsError, setPendingCarsError] = useState('');
+
+  const monthNames = useMemo(
+    () => (translations[language]?.timeOffCalendar?.months || translations.en?.timeOffCalendar?.months || EN_MONTHS).slice(0, 12),
+    [language]
+  );
+
+  const visibleMonthOptions = useMemo(() => {
+    const optionSet = new Set();
+    const addMonth = (value) => {
+      if (isMonthValue(value)) optionSet.add(String(value).trim());
+    };
+
+    (Array.isArray(gmailMonthOptions) ? gmailMonthOptions : []).forEach(addMonth);
+
+    [currentMonthValue(), gmailMonth].forEach((anchor) => {
+      const match = String(anchor || '').trim().match(/^(\d{4})-(\d{2})$/);
+      if (!match) return;
+      const baseYear = Number(match[1]);
+      const baseMonth = Number(match[2]) - 1;
+      for (let offset = -11; offset <= 0; offset += 1) {
+        const d = new Date(baseYear, baseMonth + offset, 1);
+        addMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+      }
+    });
+
+    return Array.from(optionSet).sort((a, b) => b.localeCompare(a));
+  }, [gmailMonth, gmailMonthOptions]);
 
   const sortedGmailReports = useMemo(() => {
     let list = Array.isArray(gmailReports) ? [...gmailReports] : [];
@@ -198,11 +234,10 @@ export default function PavePage() {
       .then((months) => {
         const list = Array.isArray(months) ? months : [];
         setGmailMonthOptions(list);
-        if (!list.length) return;
         setGmailMonth((prev) => {
-          if (prev && list.includes(prev)) return prev;
-          if (list.includes(currentMonthValue())) return currentMonthValue();
-          return list[0];
+          if (isMonthValue(prev)) return prev;
+          if (isMonthValue(currentMonthValue())) return currentMonthValue();
+          return list[0] || '';
         });
       })
       .catch(() => {
@@ -348,14 +383,14 @@ export default function PavePage() {
           Admin Tools
         </button>
         <label className="pave-toolbar" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, margin: 0 }}>
-          <span className="muted">Month</span>
+          <span className="muted">{t('timeOffCalendar.month')}</span>
           <select value={gmailMonth} onChange={(e) => setGmailMonth(e.target.value)} className="pave-search" style={{ minWidth: 180 }}>
-            {!gmailMonthOptions.includes(gmailMonth) && gmailMonth ? (
-              <option value={gmailMonth}>{formatMonthLabel(gmailMonth)}</option>
+            {!visibleMonthOptions.includes(gmailMonth) && gmailMonth ? (
+              <option value={gmailMonth}>{formatMonthLabel(gmailMonth, monthNames)}</option>
             ) : null}
-            {gmailMonthOptions.map((month) => (
+            {visibleMonthOptions.map((month) => (
               <option key={month} value={month}>
-                {formatMonthLabel(month)}
+                {formatMonthLabel(month, monthNames)}
               </option>
             ))}
           </select>
