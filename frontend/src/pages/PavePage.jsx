@@ -29,6 +29,19 @@ function formatMonthLabel(value) {
   return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(d);
 }
 
+function reportMonthValue(report) {
+  const raw =
+    report?.inspection_date_effective ??
+    report?.inspection_date ??
+    report?.report_date ??
+    report?.incident_date ??
+    report?.source_email_received_at ??
+    '';
+  const s = String(raw || '').trim();
+  const match = s.match(/^(\d{4}-\d{2})/);
+  return match ? match[1] : '';
+}
+
 function formatDate(d) {
   if (!d) return '—';
   const s = typeof d === 'string' ? d.slice(0, 19) : d;
@@ -149,14 +162,17 @@ export default function PavePage() {
   const [pendingCarsError, setPendingCarsError] = useState('');
 
   const sortedGmailReports = useMemo(() => {
-    const list = Array.isArray(gmailReports) ? [...gmailReports] : [];
+    let list = Array.isArray(gmailReports) ? [...gmailReports] : [];
+    if (gmailMonth) {
+      list = list.filter((report) => reportMonthValue(report) === gmailMonth);
+    }
     list.sort((ra, rb) => {
       const va = rowSortValue(ra, sortKey);
       const vb = rowSortValue(rb, sortKey);
       return sortCompare(va, vb, sortDir);
     });
     return list;
-  }, [gmailReports, sortKey, sortDir]);
+  }, [gmailMonth, gmailReports, sortKey, sortDir]);
 
   function handleSortClick(colKey) {
     if (sortKey === colKey) {
@@ -634,7 +650,7 @@ export default function PavePage() {
               </tr>
             </thead>
             <tbody>
-              {gmailReports.length === 0 ? (
+              {sortedGmailReports.length === 0 ? (
                 <tr><td colSpan={15} className="pave-empty">No imported inspections.</td></tr>
               ) : (
                 sortedGmailReports.map((r) => {

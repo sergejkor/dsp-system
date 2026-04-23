@@ -558,6 +558,7 @@ async function processReportJob({
   };
 
   const dedupe = await findExistingPaveReportForDedupe({
+    incomingEmailId,
     externalReportId: incomingSummary.external_report_id,
     inspectionDate: incomingSummary.inspection_date,
     fileSha256: downloaded.fileSha256 || null,

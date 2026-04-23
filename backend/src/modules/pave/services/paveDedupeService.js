@@ -37,59 +37,26 @@ export function isIncomingParseRicher(existing, incoming, incomingItems = []) {
 }
 
 export async function findExistingPaveReportForDedupe({
+  incomingEmailId,
   externalReportId,
   inspectionDate,
   fileSha256,
 }) {
-  if (externalReportId && inspectionDate) {
-    const exact = (await query(
+  // Reprocessing the same incoming email should update its own row instead of inserting
+  // a second copy. Across different emails we now keep separate rows, because the PAVE
+  // page groups data by month and repeated monthly inspections must stay visible.
+  if (incomingEmailId) {
+    const byIncoming = (await query(
       `SELECT pr.*, (
          SELECT COUNT(*)::int FROM pave_report_items pri WHERE pri.pave_report_id = pr.id
        ) AS item_count
        FROM pave_reports pr
-       LEFT JOIN downloaded_reports dr ON dr.id = pr.downloaded_report_id
-       WHERE pr.external_report_id = $1 AND pr.inspection_date = $2
+       WHERE pr.incoming_email_id = $1
        ORDER BY pr.updated_at DESC
        LIMIT 1`,
-      [externalReportId, inspectionDate]
+      [incomingEmailId]
     )).rows[0];
-    if (exact) return { existing: exact, reason: 'exact_external_id_and_date' };
-  }
-
-  // When inspectionDate is known, keep separate rows for different months/dates even if
-  // PAVE reuses or re-sends the same external id later. Only fall back to external id
-  // alone while the parsed report still has no date.
-  if (externalReportId && !inspectionDate) {
-    const byExternal = (await query(
-      `SELECT pr.*, (
-         SELECT COUNT(*)::int FROM pave_report_items pri WHERE pri.pave_report_id = pr.id
-       ) AS item_count
-       FROM pave_reports pr
-       WHERE pr.external_report_id = $1
-       ORDER BY pr.inspection_date DESC NULLS LAST, pr.updated_at DESC
-       LIMIT 1`,
-      [externalReportId]
-    )).rows[0];
-    if (byExternal) return { existing: byExternal, reason: 'external_id_only' };
-  }
-
-  // IMPORTANT:
-  // Some portal downloads can return identical placeholder bytes for different AMDE sessions.
-  // To avoid collapsing multiple session keys into one record, we only use file_sha256
-  // when external_report_id (AMDE session-key) is missing.
-  if (!externalReportId && fileSha256) {
-    const bySha = (await query(
-      `SELECT pr.*, (
-         SELECT COUNT(*)::int FROM pave_report_items pri WHERE pri.pave_report_id = pr.id
-       ) AS item_count
-       FROM pave_reports pr
-       JOIN downloaded_reports dr ON dr.id = pr.downloaded_report_id
-       WHERE dr.file_sha256 = $1
-       ORDER BY pr.updated_at DESC
-       LIMIT 1`,
-      [fileSha256]
-    )).rows[0];
-    if (bySha) return { existing: bySha, reason: 'file_sha' };
+    if (byIncoming) return { existing: byIncoming, reason: 'incoming_email' };
   }
 
   return { existing: null, reason: null };
