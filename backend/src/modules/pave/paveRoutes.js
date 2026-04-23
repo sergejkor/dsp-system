@@ -23,6 +23,21 @@ function requireRole(...roles) {
   return (req, res, next) => next();
 }
 
+router.use((req, res, next) => {
+  if (
+    req.path.startsWith('/gmail/') ||
+    req.path === '/sync' ||
+    req.path === '/backfill' ||
+    req.path === '/portal/credentials'
+  ) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+  }
+  next();
+});
+
 router.get('/health', (_req, res) => res.json({ ok: true, module: 'pave' }));
 
 router.get('/sessions', requireRole('admin', 'manager', 'dispatcher', 'viewer'), async (req, res) => {

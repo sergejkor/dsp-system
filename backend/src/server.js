@@ -43,6 +43,10 @@ const app = express();
 const port = Number(process.env.PORT || 3001);
 
 const defaultAllowedOrigins = [
+  'https://alfamile.com',
+  'https://www.alfamile.com',
+  'https://alphamile.com',
+  'https://www.alphamile.com',
   'https://dsp-system.alfamile.com',
   'https://schadensmeldung.alfamile.com',
   'https://fleetcheck.alfamile.com',
@@ -58,15 +62,37 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .filter(Boolean);
 const finalAllowedOrigins = allowedOrigins.length ? allowedOrigins : defaultAllowedOrigins;
 
+function isTrustedCompanyHost(hostname) {
+  const host = String(hostname || '').trim().toLowerCase();
+  if (!host) return false;
+  return (
+    host === 'alfamile.com' ||
+    host.endsWith('.alfamile.com') ||
+    host === 'alphamile.com' ||
+    host.endsWith('.alphamile.com')
+  );
+}
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (finalAllowedOrigins.includes(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    return isTrustedCompanyHost(parsed.hostname);
+  } catch (_error) {
+    return false;
+  }
+}
+
 const corsOptions = {
   origin(origin, callback) {
     // Allow non-browser tools (no Origin header) and explicit allowed origins.
-    if (!origin || finalAllowedOrigins.includes(origin)) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'Cache-Control', 'Pragma'],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));

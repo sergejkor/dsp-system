@@ -3,7 +3,14 @@ import { getAuthHeaders } from './authStore.js';
 const API_BASE = import.meta.env.VITE_BACKEND_URL || 'https://api.alfamile.com';
 
 function authOpts(opts = {}) {
-  return { ...opts, headers: { ...getAuthHeaders(), ...(opts.headers || {}) } };
+  return {
+    cache: 'no-store',
+    ...opts,
+    headers: {
+      ...getAuthHeaders(),
+      ...(opts.headers || {}),
+    },
+  };
 }
 
 function qs(params) {
