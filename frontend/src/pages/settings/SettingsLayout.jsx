@@ -17,6 +17,7 @@ const SECTION_KEYS = [
   { path: 'lookups', key: 'lookups' },
   { path: 'integrations', key: 'integrations' },
   { path: 'features', key: 'features' },
+  { path: 'push-devices', key: 'pushDevices' },
   { path: 'notifications', key: 'notifications' },
   { path: 'security', key: 'security' },
   { path: 'audit', key: 'audit' },

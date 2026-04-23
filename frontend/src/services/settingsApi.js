@@ -322,6 +322,11 @@ export async function getFeatureFlags() {
   return handle(res);
 }
 
+export async function getPushDevicesOverview() {
+  const res = await fetchWithHint(`${API_BASE}/api/settings/push-devices`, { headers: getHeaders() });
+  return handle(res);
+}
+
 export async function setFeatureFlag(key, enabled) {
   const res = await fetchWithHint(`${API_BASE}/api/settings/features/${encodeURIComponent(key)}`, {
     method: 'PATCH',

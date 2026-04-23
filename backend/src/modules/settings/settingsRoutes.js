@@ -19,6 +19,7 @@ import securitySettingsService from './securitySettingsService.js';
 import authMiddleware from '../auth/authMiddleware.js';
 import authService from '../auth/authService.js';
 import chatService from '../chat/chatService.js';
+import pushService from '../push/pushService.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -252,6 +253,16 @@ router.get('/permissions/effective', async (req, res) => {
     res.json({ user_id: userId, permissions });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/push-devices', requirePermission('view_settings'), async (_req, res) => {
+  try {
+    const list = await pushService.getDriverDeviceOverview();
+    res.json(Array.isArray(list) ? list : []);
+  } catch (e) {
+    console.error('GET /api/settings/push-devices', e);
+    res.status(500).json({ error: e.message || 'Failed to load push devices overview' });
   }
 });
 

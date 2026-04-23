@@ -60,6 +60,7 @@ import SettingsRoutesPage from './pages/settings/SettingsRoutesPage';
 import SettingsLookupsPage from './pages/settings/SettingsLookupsPage';
 import SettingsIntegrationsPage from './pages/settings/SettingsIntegrationsPage';
 import SettingsFeaturesPage from './pages/settings/SettingsFeaturesPage';
+import SettingsPushDevicesPage from './pages/settings/SettingsPushDevicesPage';
 import SettingsNotificationsPage from './pages/settings/SettingsNotificationsPage';
 import SettingsSecurityPage from './pages/settings/SettingsSecurityPage';
 import SettingsAuditPage from './pages/settings/SettingsAuditPage';
@@ -585,6 +586,7 @@ function AppLayout() {
               <Route path="lookups" element={<SettingsLookupsPage />} />
               <Route path="integrations" element={<SettingsIntegrationsPage />} />
               <Route path="features" element={<SettingsFeaturesPage />} />
+              <Route path="push-devices" element={<SettingsPushDevicesPage />} />
               <Route path="notifications" element={<SettingsNotificationsPage />} />
               <Route path="security" element={<SettingsSecurityPage />} />
               <Route path="audit" element={<SettingsAuditPage />} />

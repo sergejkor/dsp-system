@@ -294,6 +294,70 @@ export class PushService {
     return res.rows || [];
   }
 
+  async getDriverDeviceOverview() {
+    await this.ensureTables();
+
+    const res = await query(
+      `WITH active_drivers AS (
+         SELECT
+           ke.kenjo_user_id::text AS kenjo_user_id,
+           ke.employee_number::text AS employee_ref,
+           ke.transporter_id::text AS transporter_id,
+           COALESCE(
+             NULLIF(TRIM(ke.display_name), ''),
+             NULLIF(TRIM(COALESCE(ke.first_name, '') || ' ' || COALESCE(ke.last_name, '')), ''),
+             NULLIF(TRIM(ke.employee_number::text), ''),
+             NULLIF(TRIM(ke.transporter_id::text), ''),
+             ke.kenjo_user_id::text
+           ) AS display_name,
+           ke.first_name,
+           ke.last_name
+         FROM kenjo_employees ke
+         WHERE ke.is_active = true
+       )
+       SELECT
+         d.display_name,
+         d.first_name,
+         d.last_name,
+         d.kenjo_user_id,
+         d.employee_ref,
+         d.transporter_id,
+         COALESCE(dev.device_count, 0) AS device_count,
+         COALESCE(dev.notifications_granted_count, 0) AS notifications_granted_count,
+         COALESCE(dev.app_installed, false) AS app_installed,
+         COALESCE(dev.notifications_enabled, false) AS notifications_enabled,
+         dev.platforms,
+         dev.locales,
+         dev.last_seen_at,
+         dev.updated_at
+       FROM active_drivers d
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*)::int AS device_count,
+           COUNT(*) FILTER (WHERE epd.permission_state = 'granted')::int AS notifications_granted_count,
+           COUNT(*) > 0 AS app_installed,
+           BOOL_OR(epd.permission_state = 'granted') AS notifications_enabled,
+           STRING_AGG(DISTINCT NULLIF(TRIM(epd.platform), ''), ', ' ORDER BY NULLIF(TRIM(epd.platform), '')) AS platforms,
+           STRING_AGG(DISTINCT NULLIF(TRIM(epd.locale), ''), ', ' ORDER BY NULLIF(TRIM(epd.locale), '')) AS locales,
+           MAX(epd.last_seen_at) AS last_seen_at,
+           MAX(epd.updated_at) AS updated_at
+         FROM employee_push_devices epd
+         WHERE epd.disabled_at IS NULL
+           AND (
+             (d.kenjo_user_id IS NOT NULL AND epd.kenjo_user_id = d.kenjo_user_id)
+             OR (d.employee_ref IS NOT NULL AND epd.employee_ref = d.employee_ref)
+             OR (d.transporter_id IS NOT NULL AND epd.employee_ref = d.transporter_id)
+           )
+       ) dev ON TRUE
+       ORDER BY
+         COALESCE(dev.app_installed, false) DESC,
+         COALESCE(dev.notifications_enabled, false) DESC,
+         LOWER(d.display_name) ASC`,
+    ).catch(() => ({ rows: [] }));
+
+    return res.rows || [];
+  }
+
   async sendNotificationToEmployee(identity = {}, payload = {}) {
     const config = ensureVapidConfiguration();
     if (!config) {
