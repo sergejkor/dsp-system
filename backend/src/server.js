@@ -48,6 +48,8 @@ const defaultAllowedOrigins = [
   'https://alphamile.com',
   'https://www.alphamile.com',
   'https://dsp-system.alfamile.com',
+  'https://personalfragebogen.alfamile.com',
+  'https://personal-fragebogen.alfamile.com',
   'https://schadensmeldung.alfamile.com',
   'https://fleetcheck.alfamile.com',
   'http://fleetcheck.alfamile.com',
@@ -86,13 +88,14 @@ function isAllowedOrigin(origin) {
 
 const corsOptions = {
   origin(origin, callback) {
-    // Allow non-browser tools (no Origin header) and explicit allowed origins.
     if (isAllowedOrigin(origin)) return callback(null, true);
-    return callback(new Error(`CORS blocked for origin: ${origin}`));
+    console.warn(`CORS blocked for origin: ${origin}`);
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'Cache-Control', 'Pragma'],
+  optionsSuccessStatus: 204,
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
