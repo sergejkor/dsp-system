@@ -1,4 +1,22 @@
-import { API_BASE } from './apiClient.js';
+import { API_BASE, apiBaseHeaders } from './apiClient.js';
+
+async function fetchWithRetry(url, options, { retries = 2, backoffMs = 700 } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || error).toLowerCase();
+      const isNetworkError = message.includes('failed to fetch') || message.includes('network error');
+      if (!isNetworkError || attempt >= retries) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+  throw lastError;
+}
 
 async function submitMultipart(urlPath, payload, files) {
   const form = new FormData();
@@ -7,10 +25,18 @@ async function submitMultipart(urlPath, payload, files) {
     form.append('files', file);
   }
 
-  const res = await fetch(`${API_BASE}${urlPath}`, {
-    method: 'POST',
-    body: form,
-  });
+  let res;
+  try {
+    res = await fetchWithRetry(`${API_BASE}${urlPath}`, {
+      method: 'POST',
+      body: form,
+      headers: {
+        ...apiBaseHeaders(),
+      },
+    });
+  } catch (error) {
+    throw new Error(`Cannot reach the backend at ${API_BASE}. ${String(error?.message || error)}`);
+  }
   const out = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(out.error || 'Submission failed');
@@ -27,7 +53,17 @@ export function submitDamageReport(payload, files) {
 }
 
 export async function getDamageReportOptions() {
-  const res = await fetch(`${API_BASE}/api/public/schadenmeldung/options`);
+  let res;
+  try {
+    res = await fetchWithRetry(`${API_BASE}/api/public/schadenmeldung/options`, {
+      cache: 'no-store',
+      headers: {
+        ...apiBaseHeaders(),
+      },
+    });
+  } catch (error) {
+    throw new Error(`Cannot reach the backend at ${API_BASE}. ${String(error?.message || error)}`);
+  }
   const out = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(out.error || 'Failed to load options');
@@ -40,7 +76,17 @@ export async function getDamageReportOptions() {
 
 export async function searchAddressSuggestions(query) {
   const qs = new URLSearchParams({ q: String(query || '') });
-  const res = await fetch(`${API_BASE}/api/public/address-search?${qs.toString()}`);
+  let res;
+  try {
+    res = await fetchWithRetry(`${API_BASE}/api/public/address-search?${qs.toString()}`, {
+      cache: 'no-store',
+      headers: {
+        ...apiBaseHeaders(),
+      },
+    });
+  } catch (error) {
+    throw new Error(`Cannot reach the backend at ${API_BASE}. ${String(error?.message || error)}`);
+  }
   const out = await res.json().catch(() => []);
   if (!res.ok) {
     throw new Error(out.error || 'Address search failed');
