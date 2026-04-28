@@ -18,6 +18,15 @@ async function fetchWithRetry(url, options, { retries = 2, backoffMs = 700 } = {
   throw lastError;
 }
 
+async function parseApiResponse(res) {
+  const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    return res.json().catch(() => ({}));
+  }
+  const text = await res.text().catch(() => '');
+  return { error: text || 'Request failed' };
+}
+
 async function submitMultipart(urlPath, payload, files) {
   const form = new FormData();
   form.append('payload', JSON.stringify(payload || {}));
@@ -37,15 +46,36 @@ async function submitMultipart(urlPath, payload, files) {
   } catch (error) {
     throw new Error(`Cannot reach the backend at ${API_BASE}. ${String(error?.message || error)}`);
   }
-  const out = await res.json().catch(() => ({}));
+  const out = await parseApiResponse(res);
   if (!res.ok) {
     throw new Error(out.error || 'Submission failed');
   }
   return out;
 }
 
-export function submitPersonalQuestionnaire(payload, files) {
-  return submitMultipart('/api/public/personal-fragebogen', payload, files);
+async function submitJson(urlPath, payload) {
+  let res;
+  try {
+    res = await fetchWithRetry(`${API_BASE}${urlPath}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...apiBaseHeaders(),
+      },
+      body: JSON.stringify(payload || {}),
+    });
+  } catch (error) {
+    throw new Error(`Cannot reach the backend at ${API_BASE}. ${String(error?.message || error)}`);
+  }
+  const out = await parseApiResponse(res);
+  if (!res.ok) {
+    throw new Error(out.error || 'Submission failed');
+  }
+  return out;
+}
+
+export function submitPersonalQuestionnaire(payload) {
+  return submitJson('/api/public/personal-fragebogen', payload);
 }
 
 export function submitDamageReport(payload, files) {

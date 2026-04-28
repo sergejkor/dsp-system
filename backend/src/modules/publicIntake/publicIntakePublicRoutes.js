@@ -24,6 +24,11 @@ function parseJsonPayload(rawValue) {
   return JSON.parse(normalized);
 }
 
+function isMultipartRequest(req) {
+  const contentType = String(req.headers?.['content-type'] || '').toLowerCase();
+  return contentType.startsWith('multipart/form-data');
+}
+
 function sendMulterError(res, error) {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
@@ -125,8 +130,10 @@ router.get('/schadenmeldung/options', async (_req, res) => {
 
 router.post('/personal-fragebogen', async (req, res) => {
   try {
-    await runMultiUpload(req, res, 'files');
-    const payload = parseJsonPayload(req.body?.payload);
+    if (isMultipartRequest(req)) {
+      await runMultiUpload(req, res, 'files');
+    }
+    const payload = parseJsonPayload(isMultipartRequest(req) ? req.body?.payload : req.body);
     const row = await publicIntakeService.submitPersonalQuestionnaire(payload, req.files || []);
     res.status(201).json({ ok: true, submission: row });
   } catch (error) {

@@ -52,7 +52,7 @@ export default function PersonalQuestionnairePublicPage() {
     setError('');
     setSuccess(null);
     try {
-      const result = await submitPersonalQuestionnaire(form, []);
+      const result = await submitPersonalQuestionnaire(form);
       setSuccess(result?.submission || { id: null });
       setForm({
         ...createEmptyPersonalQuestionnaire(),
