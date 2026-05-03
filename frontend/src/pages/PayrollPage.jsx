@@ -406,20 +406,21 @@ export default function PayrollPage() {
     }
   };
 
-  const setDisplayedCalendarMonth = (year, monthNumber) => {
+  const setCalendarDisplayMonth = (year, monthNumber) => {
     const nextYear = Number(year);
     const nextMonth = Number(monthNumber);
     if (!Number.isFinite(nextYear) || !Number.isFinite(nextMonth) || nextMonth < 1 || nextMonth > 12) {
       return;
     }
-    const periodId = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
-    const lastDay = new Date(nextYear, nextMonth, 0).getDate();
     setCalendarYear(nextYear);
     setCalendarMonth(nextMonth);
-    setMonth(periodId);
-    setFromDate(`${periodId}-01`);
-    setToDate(`${periodId}-${String(lastDay).padStart(2, '0')}`);
   };
+
+  const displayedCalendarLabel = useMemo(() => {
+    if (!Number.isFinite(calendarYear) || !Number.isFinite(calendarMonth)) return '';
+    const date = new Date(calendarYear, calendarMonth - 1, 1);
+    return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+  }, [calendarYear, calendarMonth]);
 
   const monthOptions = useMemo(() => {
     const list = [];
@@ -1250,9 +1251,9 @@ export default function PayrollPage() {
                 className="payroll-range-calendar-nav"
                 onClick={() => {
                   if (calendarMonth === 1) {
-                    setDisplayedCalendarMonth(calendarYear - 1, 12);
+                    setCalendarDisplayMonth(calendarYear - 1, 12);
                   } else {
-                    setDisplayedCalendarMonth(calendarYear, calendarMonth - 1);
+                    setCalendarDisplayMonth(calendarYear, calendarMonth - 1);
                   }
                 }}
                 disabled={loading}
@@ -1260,17 +1261,15 @@ export default function PayrollPage() {
               >
                 ‹
               </button>
-              <span className="payroll-range-calendar-title">
-                {MONTH_NAMES[calendarMonth - 1]} {calendarYear}
-              </span>
+              <span className="payroll-range-calendar-title">{displayedCalendarLabel}</span>
               <button
                 type="button"
                 className="payroll-range-calendar-nav"
                 onClick={() => {
                   if (calendarMonth === 12) {
-                    setDisplayedCalendarMonth(calendarYear + 1, 1);
+                    setCalendarDisplayMonth(calendarYear + 1, 1);
                   } else {
-                    setDisplayedCalendarMonth(calendarYear, calendarMonth + 1);
+                    setCalendarDisplayMonth(calendarYear, calendarMonth + 1);
                   }
                 }}
                 disabled={loading}
