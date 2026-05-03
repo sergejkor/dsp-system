@@ -347,10 +347,6 @@ export default function PayrollPage() {
   }, [result?.month, result?.from, result?.to, result?.rows]);
 
   useEffect(() => {
-    if (/^\d{4}-\d{2}$/.test(String(month || ''))) setCalendarCursor(String(month));
-  }, [month]);
-
-  useEffect(() => {
     if (!addRecordOpen) return;
     setAddRecordLoading(true);
     getKenjoUsers()
@@ -415,6 +411,14 @@ export default function PayrollPage() {
   const shiftCalendarDisplayMonth = (delta) => {
     const nextDate = new Date(displayedCalendarYear, displayedCalendarMonth - 1 + delta, 1);
     setCalendarCursor(`${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  const handleCalculationMonthChange = (value) => {
+    const nextMonth = String(value || '').slice(0, 7);
+    setMonth(nextMonth);
+    if (/^\d{4}-\d{2}$/.test(nextMonth)) {
+      setCalendarCursor(nextMonth);
+    }
   };
 
   const monthOptions = useMemo(() => {
@@ -573,7 +577,11 @@ export default function PayrollPage() {
   const handleEditPayrollHistory = () => {
     const payload = payrollHistoryModal?.payload;
     if (!payload) return;
-    setMonth(String(payload.month || payrollHistoryModal?.period_id || month).slice(0, 7));
+    const nextMonth = String(payload.month || payrollHistoryModal?.period_id || month).slice(0, 7);
+    setMonth(nextMonth);
+    if (/^\d{4}-\d{2}$/.test(nextMonth)) {
+      setCalendarCursor(nextMonth);
+    }
     setFromDate(String(payload.from || payrollHistoryModal?.period_from || '').slice(0, 10));
     setToDate(String(payload.to || payrollHistoryModal?.period_to || '').slice(0, 10));
     setResult(payload);
@@ -1206,7 +1214,7 @@ export default function PayrollPage() {
           <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 600 }}>{t('payroll.calculationMonth')}</label>
           <select
             value={month}
-            onChange={(e) => setMonth(e.target.value)}
+            onChange={(e) => handleCalculationMonthChange(e.target.value)}
             style={{ padding: '0.5rem', minWidth: 180, display: 'block', marginBottom: '0.5rem' }}
           >
             {monthOptions.map((opt) => (
