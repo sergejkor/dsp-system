@@ -262,11 +262,11 @@ export default function PayrollPage() {
   const navigate = useNavigate();
   const { t } = useAppSettings();
   const now = new Date();
-  const [month, setMonth] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  const initialMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [month, setMonth] = useState(initialMonth);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [calendarYear, setCalendarYear] = useState(now.getFullYear());
-  const [calendarMonth, setCalendarMonth] = useState(now.getMonth() + 1);
+  const [calendarCursor, setCalendarCursor] = useState(initialMonth);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -347,11 +347,7 @@ export default function PayrollPage() {
   }, [result?.month, result?.from, result?.to, result?.rows]);
 
   useEffect(() => {
-    const [y, m] = month.split('-').map(Number);
-    if (y && m) {
-      setCalendarYear(y);
-      setCalendarMonth(m);
-    }
+    if (/^\d{4}-\d{2}$/.test(String(month || ''))) setCalendarCursor(String(month));
   }, [month]);
 
   useEffect(() => {
@@ -406,21 +402,20 @@ export default function PayrollPage() {
     }
   };
 
-  const setCalendarDisplayMonth = (year, monthNumber) => {
-    const nextYear = Number(year);
-    const nextMonth = Number(monthNumber);
-    if (!Number.isFinite(nextYear) || !Number.isFinite(nextMonth) || nextMonth < 1 || nextMonth > 12) {
-      return;
-    }
-    setCalendarYear(nextYear);
-    setCalendarMonth(nextMonth);
-  };
+  const displayedCalendarDate = useMemo(() => {
+    const match = String(calendarCursor || '').match(/^(\d{4})-(\d{2})$/);
+    if (!match) return new Date(now.getFullYear(), now.getMonth(), 1);
+    return new Date(Number(match[1]), Number(match[2]) - 1, 1);
+  }, [calendarCursor]);
 
-  const displayedCalendarLabel = useMemo(() => {
-    if (!Number.isFinite(calendarYear) || !Number.isFinite(calendarMonth)) return '';
-    const date = new Date(calendarYear, calendarMonth - 1, 1);
-    return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
-  }, [calendarYear, calendarMonth]);
+  const displayedCalendarYear = displayedCalendarDate.getFullYear();
+  const displayedCalendarMonth = displayedCalendarDate.getMonth() + 1;
+  const displayedCalendarLabel = `${MONTH_NAMES[displayedCalendarDate.getMonth()]} ${displayedCalendarDate.getFullYear()}`;
+
+  const shiftCalendarDisplayMonth = (delta) => {
+    const nextDate = new Date(displayedCalendarYear, displayedCalendarMonth - 1 + delta, 1);
+    setCalendarCursor(`${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`);
+  };
 
   const monthOptions = useMemo(() => {
     const list = [];
@@ -1249,13 +1244,7 @@ export default function PayrollPage() {
               <button
                 type="button"
                 className="payroll-range-calendar-nav"
-                onClick={() => {
-                  if (calendarMonth === 1) {
-                    setCalendarDisplayMonth(calendarYear - 1, 12);
-                  } else {
-                    setCalendarDisplayMonth(calendarYear, calendarMonth - 1);
-                  }
-                }}
+                onClick={() => shiftCalendarDisplayMonth(-1)}
                 disabled={loading}
                 aria-label="Previous month"
               >
@@ -1265,13 +1254,7 @@ export default function PayrollPage() {
               <button
                 type="button"
                 className="payroll-range-calendar-nav"
-                onClick={() => {
-                  if (calendarMonth === 12) {
-                    setCalendarDisplayMonth(calendarYear + 1, 1);
-                  } else {
-                    setCalendarDisplayMonth(calendarYear, calendarMonth + 1);
-                  }
-                }}
+                onClick={() => shiftCalendarDisplayMonth(1)}
                 disabled={loading}
                 aria-label="Next month"
               >
@@ -1285,15 +1268,15 @@ export default function PayrollPage() {
             </div>
             <div className="payroll-range-calendar-grid">
               {(() => {
-                const firstDay = new Date(calendarYear, calendarMonth - 1, 1);
-                const lastDate = new Date(calendarYear, calendarMonth, 0).getDate();
+                const firstDay = new Date(displayedCalendarYear, displayedCalendarMonth - 1, 1);
+                const lastDate = new Date(displayedCalendarYear, displayedCalendarMonth, 0).getDate();
                 const startWeekday = (firstDay.getDay() + 6) % 7;
                 const cells = [];
                 for (let i = 0; i < startWeekday; i++) {
                   cells.push(<span key={`e-${i}`} className="payroll-range-calendar-day payroll-range-calendar-day--empty" />);
                 }
                 for (let d = 1; d <= lastDate; d++) {
-                  const dayKey = `${calendarYear}-${String(calendarMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                  const dayKey = `${displayedCalendarYear}-${String(displayedCalendarMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                   const inRange = fromDate && toDate && dayKey >= fromDate && dayKey <= toDate;
                   const isStart = dayKey === fromDate;
                   const isEnd = dayKey === toDate;
