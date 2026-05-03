@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -23,6 +23,10 @@ const WEEKDAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 /** Hourly rate for payroll summary: (payroll h + overtime h) × rate + Verpfl. mehr + Fahrt. Geld */
 const PAYROLL_SUMMARY_HOUR_RATE_EUR = 16.7;
 const PAYROLL_FROZEN_CACHE_KEY = 'dsp.payroll.frozen.lastResult.v1';
+const PAYROLL_RAW_WORKED_HOURS_FIELDS = ['total_worked_hours', 'worked_hours', 'totalWorkedHours', 'workedHours'];
+const PAYROLL_REGULAR_HOURS_FIELDS = ['worked_hours_capped', 'expected_hours', 'payroll_hours', 'workedHoursCapped', 'expectedHours', 'payrollHours', 'regular_hours', 'regularHours'];
+const PAYROLL_CONTRACT_HOURS_FIELDS = ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours', 'contract_hours', 'full_time_hours', 'fulltime_hours', 'expectedHours'];
+const PAYROLL_OVERTIME_HOURS_FIELDS = ['overtime_hours', 'overtime', 'overtimeHours'];
 
 function formatDateDDMMYYYY(iso) {
   if (!iso) return '—';
@@ -48,6 +52,20 @@ function formatHours(num) {
   const n = Number(num);
   if (!Number.isFinite(n)) return '0.00 h';
   return `${n.toFixed(2)} h`;
+}
+
+function parsePayrollMonthCursor(value, fallbackDate = new Date()) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})$/);
+  if (!match) return new Date(fallbackDate.getFullYear(), fallbackDate.getMonth(), 1);
+  return new Date(Number(match[1]), Number(match[2]) - 1, 1);
+}
+
+function formatPayrollMonthLabel(date) {
+  return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+function formatPayrollMonthCursor(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function PayrollModalPortal({ children, backdrop = 'rgba(0,0,0,0.4)' }) {
@@ -142,33 +160,33 @@ function rowHasNumericField(row, fields = []) {
 }
 
 function getPayrollOvertimeHoursValue(row) {
-  const explicit = getRowNumericValue(row, ['overtime_hours', 'overtime', 'overtimeHours']);
-  if (explicit > 0 || rowHasNumericField(row, ['overtime_hours', 'overtime', 'overtimeHours'])) {
+  const explicit = getRowNumericValue(row, PAYROLL_OVERTIME_HOURS_FIELDS);
+  if (explicit > 0 || rowHasNumericField(row, PAYROLL_OVERTIME_HOURS_FIELDS)) {
     return explicit;
   }
 
-  const workedHours = getRowNumericValue(row, ['total_worked_hours', 'worked_hours']);
-  const regularHours = getRowNumericValue(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours']);
+  const workedHours = getRowNumericValue(row, PAYROLL_RAW_WORKED_HOURS_FIELDS);
+  const regularHours = getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
   if (workedHours > 0 && regularHours > 0) return Math.max(workedHours - regularHours, 0);
 
-  const contractHours = getRowNumericValue(row, ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours']);
+  const contractHours = getRowNumericValue(row, PAYROLL_CONTRACT_HOURS_FIELDS);
   if (workedHours > 0 && contractHours > 0) return Math.max(workedHours - contractHours, 0);
   return 0;
 }
 
 function getPayrollWorkedHoursValue(row) {
-  const totalWorked = getRowNumericValue(row, ['total_worked_hours', 'worked_hours']);
+  const totalWorked = getRowNumericValue(row, PAYROLL_RAW_WORKED_HOURS_FIELDS);
   if (totalWorked > 0) return totalWorked;
 
-  const payrollHours = getRowNumericValue(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours']);
-  const overtimeHours = getRowNumericValue(row, ['overtime_hours', 'overtime', 'overtimeHours']);
+  const payrollHours = getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
+  const overtimeHours = getRowNumericValue(row, PAYROLL_OVERTIME_HOURS_FIELDS);
   if (payrollHours > 0 || overtimeHours > 0) return payrollHours + overtimeHours;
   return 0;
 }
 
 function getPayrollRegularHoursValue(row) {
-  const payrollHours = getRowNumericValue(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours']);
-  if (payrollHours > 0 || rowHasNumericField(row, ['worked_hours_capped', 'expected_hours', 'payroll_hours'])) {
+  const payrollHours = getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
+  if (payrollHours > 0 || rowHasNumericField(row, PAYROLL_REGULAR_HOURS_FIELDS)) {
     return payrollHours;
   }
 
@@ -179,12 +197,12 @@ function getPayrollRegularHoursValue(row) {
 }
 
 function getPayrollContractHoursValue(row) {
-  const explicit = getRowNumericValue(row, ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours']);
-  if (explicit > 0 || rowHasNumericField(row, ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours'])) {
+  const explicit = getRowNumericValue(row, PAYROLL_CONTRACT_HOURS_FIELDS);
+  if (explicit > 0 || rowHasNumericField(row, PAYROLL_CONTRACT_HOURS_FIELDS)) {
     return explicit;
   }
 
-  return getRowNumericValue(row, ['expected_hours', 'payroll_hours']);
+  return getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
 }
 
 function buildPayrollSummaryCards(rows, selectedMonth, t) {
@@ -329,6 +347,7 @@ export default function PayrollPage() {
   const [showBonusBreakdown, setShowBonusBreakdown] = useState(false);
   const [bonusBreakdownRow, setBonusBreakdownRow] = useState(null);
   const [selectedPayrollRowKey, setSelectedPayrollRowKey] = useState('');
+  const calendarTitleRef = useRef(null);
 
   useEffect(() => {
     if (!result?.month || !Array.isArray(result?.rows) || !result.rows.length) return;
@@ -398,19 +417,18 @@ export default function PayrollPage() {
     }
   };
 
-  const displayedCalendarDate = useMemo(() => {
-    const match = String(calendarCursor || '').match(/^(\d{4})-(\d{2})$/);
-    if (!match) return new Date(now.getFullYear(), now.getMonth(), 1);
-    return new Date(Number(match[1]), Number(match[2]) - 1, 1);
-  }, [calendarCursor]);
+  const displayedCalendarDate = useMemo(() => parsePayrollMonthCursor(calendarCursor, now), [calendarCursor]);
 
   const displayedCalendarYear = displayedCalendarDate.getFullYear();
   const displayedCalendarMonth = displayedCalendarDate.getMonth() + 1;
-  const displayedCalendarLabel = `${MONTH_NAMES[displayedCalendarDate.getMonth()]} ${displayedCalendarDate.getFullYear()}`;
+  const displayedCalendarLabel = formatPayrollMonthLabel(displayedCalendarDate);
 
   const shiftCalendarDisplayMonth = (delta) => {
-    const nextDate = new Date(displayedCalendarYear, displayedCalendarMonth - 1 + delta, 1);
-    setCalendarCursor(`${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`);
+    setCalendarCursor((current) => {
+      const baseDate = parsePayrollMonthCursor(current, now);
+      const nextDate = new Date(baseDate.getFullYear(), baseDate.getMonth() + delta, 1);
+      return formatPayrollMonthCursor(nextDate);
+    });
   };
 
   const handleCalculationMonthChange = (value) => {
@@ -420,6 +438,12 @@ export default function PayrollPage() {
       setCalendarCursor(nextMonth);
     }
   };
+
+  useLayoutEffect(() => {
+    if (calendarTitleRef.current) {
+      calendarTitleRef.current.textContent = displayedCalendarLabel;
+    }
+  }, [displayedCalendarLabel]);
 
   const monthOptions = useMemo(() => {
     const list = [];
@@ -1247,7 +1271,7 @@ export default function PayrollPage() {
           <div
             className={`payroll-period-side${result?.rows?.length > 0 ? ' payroll-period-side--with-summary' : ''}`}
           >
-            <div className="payroll-range-calendar">
+            <div className="payroll-range-calendar" key={calendarCursor}>
             <div className="payroll-range-calendar-header">
               <button
                 type="button"
@@ -1258,7 +1282,7 @@ export default function PayrollPage() {
               >
                 ‹
               </button>
-              <span className="payroll-range-calendar-title">{displayedCalendarLabel}</span>
+              <span ref={calendarTitleRef} className="payroll-range-calendar-title">{displayedCalendarLabel}</span>
               <button
                 type="button"
                 className="payroll-range-calendar-nav"
