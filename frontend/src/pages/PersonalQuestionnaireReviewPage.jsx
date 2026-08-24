@@ -157,41 +157,25 @@ function formatPdfValue(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? formatPdfDate(normalized) : normalized;
 }
 
+function hasPdfValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
 function createPdfSourceSections(form, detail, copy) {
   return [
-    {
-      id: 'submission',
-      title: 'Submission',
-      rows: [
-        { id: 'submissionId', label: 'Submission ID', value: detail?.id },
-        { id: 'status', label: 'Status', value: detail?.status },
-        { id: 'employeeRef', label: 'Employee ref', value: detail?.employee_ref },
-      ],
-    },
-    {
-      id: 'employerFields',
-      title: 'Employer fields',
-      rows: [
-        { id: 'jobTitle', label: 'Job title', value: form.work?.jobTitle },
-        { id: 'workEmail', label: 'Work e-mail', value: form.account?.email },
-        { id: 'startDate', label: 'Start date', value: form.work?.startDate },
-        { id: 'employeeNumber', label: 'Personal Nr.', value: form.work?.employeeNumber },
-        { id: 'workMobile', label: 'Work Mobile', value: form.work?.workMobile },
-        { id: 'weeklyHours', label: 'Weekly hours', value: form.work?.weeklyHours },
-        { id: 'probationUntil', label: 'Probation until', value: form.work?.probationUntil },
-        { id: 'contractEnd', label: 'Contract end', value: form.work?.contractEnd },
-        { id: 'managerName', label: 'Manager', value: form.work?.managerName },
-      ],
-    },
     {
       id: 'identity',
       title: copy.identity,
       rows: [
-        { id: 'firstName', label: copy.firstName, value: form.firstName || form.personal?.firstName },
-        { id: 'middleName', label: copy.middleName, value: form.personal?.middleName },
-        { id: 'lastName', label: copy.lastName, value: form.lastName || form.personal?.lastName },
-        { id: 'language', label: copy.language, value: form.account?.language },
         { id: 'taxClass', label: copy.taxClass, value: form.taxClass },
+        { id: 'taxId', label: copy.taxId, value: form.financial?.taxId },
+        { id: 'nationalInsuranceNumber', label: copy.svNumber, value: form.financial?.nationalInsuranceNumber },
+        { id: 'insuranceCompany', label: copy.insuranceCompany, value: form.financial?.insuranceCompany },
+        { id: 'childrenCount', label: copy.children, value: form.home?.childrenCount },
+        { id: 'childrenNames', label: copy.childNamesBirthDate, value: form.home?.childrenNames },
+        { id: 'maritalStatus', label: copy.maritalStatus, value: form.home?.maritalStatus },
+        { id: 'churchTax', label: copy.churchTax, value: form.financial?.churchTax },
+        { id: 'churchTaxType', label: copy.churchTaxType, value: form.financial?.churchTaxType },
       ],
     },
     {
@@ -203,7 +187,7 @@ function createPdfSourceSections(form, detail, copy) {
         { id: 'birthName', label: copy.birthName, value: form.personal?.birthName },
         { id: 'gender', label: copy.gender, value: form.personal?.gender },
         { id: 'nationality', label: copy.nationality, value: form.personal?.nationality },
-        { id: 'maritalStatus', label: copy.maritalStatus, value: form.home?.maritalStatus },
+        { id: 'weeklyHours', label: 'Weekly hours', value: form.work?.weeklyHours },
       ],
     },
     {
@@ -221,11 +205,10 @@ function createPdfSourceSections(form, detail, copy) {
     {
       id: 'privateContactFamily',
       title: copy.privateContactFamily,
+      pageBreakBefore: true,
       rows: [
         { id: 'privateEmail', label: copy.privateEmail, value: form.home?.privateEmail },
         { id: 'personalMobile', label: copy.personalMobile, value: form.home?.personalMobile },
-        { id: 'childrenCount', label: copy.children, value: form.home?.childrenCount },
-        { id: 'childrenNames', label: copy.childNamesBirthDate, value: form.home?.childrenNames },
       ],
     },
     {
@@ -236,11 +219,6 @@ function createPdfSourceSections(form, detail, copy) {
         { id: 'accountHolderName', label: copy.accountHolder, value: form.financial?.accountHolderName },
         { id: 'iban', label: copy.iban, value: form.financial?.iban },
         { id: 'bic', label: copy.bic, value: form.financial?.bic },
-        { id: 'taxId', label: copy.taxId, value: form.financial?.taxId },
-        { id: 'nationalInsuranceNumber', label: copy.svNumber, value: form.financial?.nationalInsuranceNumber },
-        { id: 'insuranceCompany', label: copy.insuranceCompany, value: form.financial?.insuranceCompany },
-        { id: 'churchTax', label: copy.churchTax, value: form.financial?.churchTax },
-        { id: 'churchTaxType', label: copy.churchTaxType, value: form.financial?.churchTaxType },
       ],
     },
     {
@@ -295,12 +273,15 @@ function applyPdfTemplate(value, tokens) {
 
 function createPdfSourceSummaryCards(form) {
   return [
-    { id: 'language', label: 'Language', value: form.account?.language },
-    { id: 'taxClass', label: 'Tax class', value: form.taxClass },
-    { id: 'managerName', label: 'Manager', value: form.work?.managerName },
     { id: 'startDate', label: 'Start date', value: form.work?.startDate },
+    { id: 'probationUntil', label: 'Probation until', value: form.work?.probationUntil },
+    { id: 'contractEnd', label: 'Contract end', value: form.work?.contractEnd },
+    { id: 'workEmail', label: 'Work e-mail', value: form.account?.email },
+    { id: 'firstName', label: 'First name', value: form.firstName || form.personal?.firstName },
+    { id: 'middleName', label: 'Middle name', value: form.personal?.middleName },
+    { id: 'lastName', label: 'Last name', value: form.lastName || form.personal?.lastName },
+    { id: 'language', label: 'Language', value: form.account?.language },
     { id: 'employeeNumber', label: 'Personal Nr.', value: form.work?.employeeNumber },
-    { id: 'workMobile', label: 'Work mobile', value: form.work?.workMobile },
   ];
 }
 
@@ -328,7 +309,7 @@ function buildPdfSummaryCards(form, detail, pdfSettings) {
         value: sourceCard.value,
       };
     })
-    .filter(Boolean);
+    .filter((card) => card && hasPdfValue(card.value));
 }
 
 function buildPdfSections(form, detail, copy, pdfSettings) {
@@ -346,7 +327,7 @@ function buildPdfSections(form, detail, copy, pdfSettings) {
       }));
 
   return layoutSections
-    .filter((section) => section?.visible !== false)
+    .filter((section) => section?.visible !== false && !['submission', 'employerFields'].includes(section?.sourceSectionId))
     .map((section) => {
       const sourceSection = sourceSectionsById.get(section.sourceSectionId);
       const sourceRowsById = new Map((sourceSection?.rows || []).map((row) => [row.id, row]));
@@ -367,10 +348,11 @@ function buildPdfSections(form, detail, copy, pdfSettings) {
                 value: sourceRow.value,
               };
             })
-            .filter(Boolean)
+            .filter((row) => row && hasPdfValue(row.value))
         : [];
       return {
         title: section?.title || sourceSection?.title || 'Section',
+        pageBreakBefore: !!sourceSection?.pageBreakBefore,
         rows,
       };
     })
@@ -462,12 +444,10 @@ function createPdfCanvasPage(pageNumber, pdfConfig) {
   canvas.width = CANVAS_DOC_WIDTH;
   canvas.height = CANVAS_PAGE_HEIGHT;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#eef4fb';
+  ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#d7e5f5';
-  ctx.fillRect(0, 0, canvas.width, 18);
-  ctx.fillStyle = '#b8cbe3';
-  ctx.fillRect(0, canvas.height - 18, canvas.width, 18);
+  ctx.fillStyle = '#e5e7eb';
+  ctx.fillRect(0, canvas.height - 14, canvas.width, 14);
   ctx.fillStyle = '#64748b';
   ctx.font = pdfFont(500, 15, pdfConfig.fontFamily);
   ctx.fillText(`Page ${pageNumber}`, canvas.width - 140, canvas.height - 36);
@@ -478,9 +458,9 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
   const measureCtx = createCanvasContext();
   const summaryItems = Array.isArray(pdfSummaryCards) ? pdfSummaryCards : [];
   const contentWidth = CANVAS_DOC_WIDTH - CANVAS_PADDING * 2;
-  const summaryGap = 14;
-  const summaryCardWidth = Math.floor((contentWidth - summaryGap * 2) / 3);
-  const colGap = 14;
+  const summaryGap = 12;
+  const summaryCardWidth = Math.floor((contentWidth - summaryGap * 3) / 4);
+  const colGap = 34;
   const columnWidth = Math.floor((contentWidth - colGap) / 2);
   const topY = 34;
   const bottomSafeY = CANVAS_PAGE_HEIGHT - 66;
@@ -505,7 +485,7 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
   }
 
   function drawHeader() {
-    const headerHeight = 178;
+    const headerHeight = 166;
     const headerX = CANVAS_PADDING;
     const headerY = currentY;
     const headerWidth = contentWidth;
@@ -513,36 +493,30 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
     gradient.addColorStop(0, pdfConfig.headerColorStart);
     gradient.addColorStop(0.58, pdfConfig.headerColorEnd);
     gradient.addColorStop(1, pdfConfig.headerColorEnd);
-    drawRoundedRect(ctx, headerX, headerY, headerWidth, headerHeight, 30, gradient);
+    drawRoundedRect(ctx, headerX, headerY, headerWidth, headerHeight, 28, gradient);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = pdfFont(600, 16, pdfConfig.fontFamily);
     ctx.fillText(pdfConfig.companyName, headerX + 30, headerY + 36);
     ctx.font = pdfFont(700, pdfConfig.headerTitleSize, pdfConfig.fontFamily);
-    ctx.fillText(pdfConfig.title, headerX + 30, headerY + 86);
-    ctx.font = pdfFont(600, 24, pdfConfig.fontFamily);
+    ctx.fillText(pdfConfig.title, headerX + 30, headerY + 84);
+    ctx.font = pdfFont(600, 23, pdfConfig.fontFamily);
     const nameLines = wrapCanvasText(ctx, displayName(selectedRow), 560);
     nameLines.slice(0, 2).forEach((line, index) => {
-      ctx.fillText(line, headerX + 30, headerY + 122 + index * 28);
+      ctx.fillText(line, headerX + 30, headerY + 118 + index * 27);
     });
 
     const statusCardWidth = 270;
-    const statusCardHeight = 110;
+    const statusCardHeight = 94;
     const statusCardX = headerX + headerWidth - statusCardWidth - 28;
     const statusCardY = headerY + 28;
     drawRoundedRect(ctx, statusCardX, statusCardY, statusCardWidth, statusCardHeight, 22, 'rgba(255,255,255,0.16)', 'rgba(255,255,255,0.24)', 2);
     ctx.fillStyle = 'rgba(255,255,255,0.82)';
     ctx.font = pdfFont(600, 13, pdfConfig.fontFamily);
-    ctx.fillText('STATUS', statusCardX + 18, statusCardY + 24);
+    ctx.fillText('PERSONAL NR.', statusCardX + 18, statusCardY + 26);
     ctx.fillStyle = '#ffffff';
     ctx.font = pdfFont(700, 24, pdfConfig.fontFamily);
-    const statusLines = wrapCanvasText(ctx, detail?.status || selectedRow.status, statusCardWidth - 36);
-    statusLines.slice(0, 2).forEach((line, index) => {
-      ctx.fillText(line, statusCardX + 18, statusCardY + 54 + index * 24);
-    });
-    ctx.font = pdfFont(400, 14, pdfConfig.fontFamily);
-    ctx.fillText(`Submission ID: ${formatPdfValue(detail?.id)}`, statusCardX + 18, statusCardY + 88);
-    ctx.fillText(`Employee ref: ${formatPdfValue(detail?.employee_ref)}`, statusCardX + 18, statusCardY + 106);
+    ctx.fillText(formatPdfValue(form.work?.employeeNumber), statusCardX + 18, statusCardY + 62);
 
     currentY += headerHeight + 18;
   }
@@ -550,22 +524,21 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
   function drawSummary() {
     if (!summaryItems.length) return;
     summaryItems.forEach((item, index) => {
-      const row = Math.floor(index / 3);
-      const col = index % 3;
+      const row = Math.floor(index / 4);
+      const col = index % 4;
       const x = CANVAS_PADDING + col * (summaryCardWidth + summaryGap);
-      const y = currentY + row * (92 + summaryGap);
-      drawRoundedRect(ctx, x, y, summaryCardWidth, 92, 18, '#ffffff', '#dbe4f0', 2);
+      const y = currentY + row * (62 + summaryGap);
       ctx.fillStyle = '#64748b';
       ctx.font = pdfFont(600, 12, pdfConfig.fontFamily);
-      ctx.fillText(item.label.toUpperCase(), x + 18, y + 24);
+      ctx.fillText(item.label.toUpperCase(), x, y + 16);
       ctx.fillStyle = '#0f172a';
-      ctx.font = pdfFont(700, 19, pdfConfig.fontFamily);
-      const lines = wrapCanvasText(ctx, item.value, summaryCardWidth - 36);
+      ctx.font = pdfFont(700, 17, pdfConfig.fontFamily);
+      const lines = wrapCanvasText(ctx, item.value, summaryCardWidth);
       lines.slice(0, 2).forEach((line, lineIndex) => {
-        ctx.fillText(line, x + 18, y + 56 + lineIndex * 20);
+        ctx.fillText(line, x, y + 42 + lineIndex * 18);
       });
     });
-    currentY += Math.ceil(summaryItems.length / 3) * (92 + summaryGap);
+    currentY += Math.ceil(summaryItems.length / 4) * (62 + summaryGap) + 6;
   }
 
   let currentY = topY;
@@ -573,6 +546,10 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
   drawSummary();
 
   pdfSections.forEach((section) => {
+    if (section.pageBreakBefore && currentY > topY) {
+      newPage();
+      currentY = topY;
+    }
     const groups = chunkPdfSectionRows(section.rows, 4);
     const pairDescriptors = [];
 
@@ -590,38 +567,36 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
     let sectionStarted = false;
 
     pairDescriptors.forEach((pair, pairIndex) => {
-      const titleHeight = sectionStarted ? 0 : 60;
+      const titleHeight = sectionStarted ? 0 : 42;
       const neededHeight = titleHeight + pair.height + (pairIndex < pairDescriptors.length - 1 ? 14 : 8);
       const forcedNewPage = ensureSpace(neededHeight, topY);
 
       if (!sectionStarted || forcedNewPage) {
-        drawRoundedRect(ctx, CANVAS_PADDING, currentY, contentWidth, 60, 22, '#ffffff', '#dbe4f0', 2);
         ctx.fillStyle = pdfConfig.accentColor;
         ctx.beginPath();
-        ctx.arc(CANVAS_PADDING + 22, currentY + 22, 7, 0, Math.PI * 2);
+        ctx.arc(CANVAS_PADDING + 10, currentY + 17, 7, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = pdfConfig.headerColorStart;
-        ctx.font = pdfFont(700, 24, pdfConfig.fontFamily);
-        ctx.fillText(section.title, CANVAS_PADDING + 40, currentY + 30);
-        currentY += 60 + 10;
+        ctx.fillStyle = '#1f2937';
+        ctx.font = pdfFont(700, 23, pdfConfig.fontFamily);
+        ctx.fillText(section.title, CANVAS_PADDING + 30, currentY + 24);
+        currentY += 42;
         sectionStarted = true;
       }
 
       [pair.left, pair.right].forEach((group, groupIndex) => {
         if (!group) return;
         const x = CANVAS_PADDING + groupIndex * (columnWidth + colGap);
-        drawRoundedRect(ctx, x, currentY, columnWidth, pair.height, 18, '#ffffff', '#dfe8f4', 2);
-        let innerY = currentY + 16;
+        let innerY = currentY + 6;
         group.forEach((row) => {
           ctx.fillStyle = '#64748b';
           ctx.font = pdfFont(600, 12, pdfConfig.fontFamily);
-          ctx.fillText(String(row.label).toUpperCase(), x + 14, innerY);
+          ctx.fillText(String(row.label).toUpperCase(), x, innerY);
           innerY += 16;
           ctx.fillStyle = '#111827';
           ctx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
-          const lines = wrapCanvasText(ctx, row.value, columnWidth - 28);
+          const lines = wrapCanvasText(ctx, row.value, columnWidth);
           lines.forEach((line) => {
-            ctx.fillText(line, x + 14, innerY);
+            ctx.fillText(line, x, innerY);
             innerY += 16;
           });
           innerY += 10;
