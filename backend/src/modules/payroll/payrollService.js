@@ -479,7 +479,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     weeklyFactsRows = weeklyFactsRes;
   }
 
-  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, kenjoEmployeesRows] = await Promise.all([
+  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, verpflegungOverrideRows, kenjoEmployeesRows] = await Promise.all([
     getKenjoUsersList(),
     getKenjoAttendancesForPayrollRange(monthStart, monthEnd),
     getKenjoAttendancesForPayrollRange(from, to),
@@ -493,6 +493,10 @@ export async function calculatePayroll(month, fromDate, toDate) {
     ).catch(() => ({ rows: [] })),
     query(
       `SELECT employee_id, SUM(amount) AS total FROM payroll_bonus_items WHERE period_id = $1 GROUP BY employee_id`,
+      [monthStr]
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT employee_id FROM payroll_verpflegung_overrides WHERE period_id = $1 AND removed = TRUE`,
       [monthStr]
     ).catch(() => ({ rows: [] })),
     query(
@@ -566,6 +570,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
   }
   const vorschussByEmployee = new Map((vorschussRows?.rows || []).map((r) => [String(r.kenjo_employee_id).trim(), Number(r.total) || 0]));
   const bonusByEmployeeCorrect = new Map((bonusRows?.rows || []).map((r) => [String(r.employee_id).trim(), Number(r.total) || 0]));
+  const verpflegungRemovedByEmployee = new Set(
+    (verpflegungOverrideRows?.rows || []).map((r) => String(r.employee_id ?? '').trim()).filter(Boolean)
+  );
 
   // Kenjo user ID -> Amazon transporter ID (from local kenjo_employees; kpi_data uses transporter ID)
   const transporterIdByKenjoId = new Map();
@@ -723,7 +730,8 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
     const afterAbzug = totalBonus - abzug;
     const maxVerpfl = workingDays * 14;
-    const verpflMehr = afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl;
+    const calculatedVerpflMehr = afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl;
+    const verpflMehr = verpflegungRemovedByEmployee.has(uid) ? 0 : calculatedVerpflMehr;
     const fahrtGeld = afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0;
 
     const abzugLines = abzugLinesByEmployee.get(uid) || [
@@ -753,6 +761,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
         abzug_lines: abzugLines.map((l) => ({ amount: Math.round((Number(l.amount) || 0) * 100) / 100, comment: l.comment || '' })),
         after_abzug: Math.round(afterAbzug * 100) / 100,
         verpfl_mehr: Math.round(verpflMehr * 100) / 100,
+        verpfl_mehr_removed: verpflegungRemovedByEmployee.has(uid),
         fahrt_geld: Math.round(fahrtGeld * 100) / 100,
         bonus: Math.round(bonus * 100) / 100,
         eintrittsdatum: u.startDate || null,
@@ -795,7 +804,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
       manualByEmployee.delete(eid);
       const afterAbzug = Math.round((manual.total_bonus - manual.abzug) * 100) / 100;
       const maxVerpfl = manual.working_days * 14;
-      const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+      const verpflMehr = verpflegungRemovedByEmployee.has(eid)
+        ? 0
+        : Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
       const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
       rowsWithManual.push({
         ...row,
@@ -809,6 +820,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
         ],
         after_abzug: afterAbzug,
         verpfl_mehr: verpflMehr,
+        verpfl_mehr_removed: verpflegungRemovedByEmployee.has(eid),
         fahrt_geld: fahrtGeld,
         bonus: Math.round(manual.bonus * 100) / 100,
         vorschuss: Math.round(manual.vorschuss * 100) / 100,
@@ -832,7 +844,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
     };
     const afterAbzug = Math.round((manual.total_bonus - manual.abzug) * 100) / 100;
     const maxVerpfl = manual.working_days * 14;
-    const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+    const verpflMehr = verpflegungRemovedByEmployee.has(eid)
+      ? 0
+      : Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
     const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
     const timeOff = timeOffDaysByEmployee.get(eid) || { krank_days: 0, urlaub_days: 0 };
     rowsWithManual.push({
@@ -857,6 +871,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
       ],
       after_abzug: afterAbzug,
       verpfl_mehr: verpflMehr,
+      verpfl_mehr_removed: verpflegungRemovedByEmployee.has(eid),
       fahrt_geld: fahrtGeld,
       bonus: Math.round(manual.bonus * 100) / 100,
       eintrittsdatum: u?.startDate || null,
@@ -941,6 +956,27 @@ export async function saveBonus(periodId, employeeId, amount, comment) {
      VALUES ($1, $2, 0, $3, $4, NOW())
      ON CONFLICT (period_id, employee_id, line_no) DO UPDATE SET amount = EXCLUDED.amount, comment = EXCLUDED.comment, updated_at = NOW()`,
     [period, empId, amt, cmt]
+  );
+  return { ok: true };
+}
+
+/** Remove or restore the calculated Verpflegung amount for one employee and payroll month. */
+export async function saveVerpflegungOverride(periodId, employeeId, removed) {
+  const period = String(periodId || '').trim().slice(0, 7);
+  const empId = String(employeeId || '').trim();
+  if (!period || !/^\d{4}-\d{2}$/.test(period) || !empId) throw new Error('period_id (YYYY-MM) and employee_id are required');
+  if (!removed) {
+    await query(
+      `DELETE FROM payroll_verpflegung_overrides WHERE period_id = $1 AND employee_id = $2`,
+      [period, empId]
+    );
+    return { ok: true };
+  }
+  await query(
+    `INSERT INTO payroll_verpflegung_overrides (period_id, employee_id, removed, updated_at)
+     VALUES ($1, $2, TRUE, NOW())
+     ON CONFLICT (period_id, employee_id) DO UPDATE SET removed = TRUE, updated_at = NOW()`,
+    [period, empId]
   );
   return { ok: true };
 }

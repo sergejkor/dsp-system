@@ -111,6 +111,23 @@ export async function savePayrollBonus(periodId, employeeId, amount, comment) {
   return response.json();
 }
 
+export async function savePayrollVerpflegungOverride(periodId, employeeId, removed) {
+  const response = await fetch(`${API_BASE}/api/payroll/verpflegung`, authOpts({
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      period_id: periodId,
+      employee_id: employeeId,
+      removed: Boolean(removed),
+    }),
+  }));
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Save Verpflegung override failed');
+  }
+  return response.json();
+}
+
 export async function getPayrollHistory() {
   const response = await fetch(`${API_BASE}/api/payroll/history`, authOpts({ cache: 'no-store' }));
   const data = await response.json().catch(() => ([]));

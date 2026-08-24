@@ -285,6 +285,18 @@ async function run() {
     console.log('Migration OK: payroll_bonus_items table (or already exists).');
 
     await query(`
+      CREATE TABLE IF NOT EXISTS payroll_verpflegung_overrides (
+        period_id VARCHAR(7) NOT NULL,
+        employee_id VARCHAR(255) NOT NULL,
+        removed BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        PRIMARY KEY (period_id, employee_id)
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_payroll_verpflegung_period_employee ON payroll_verpflegung_overrides (period_id, employee_id)`);
+    console.log('Migration OK: payroll_verpflegung_overrides table (or already exists).');
+
+    await query(`
       CREATE TABLE IF NOT EXISTS payroll_history_snapshots (
         id SERIAL PRIMARY KEY,
         period_id VARCHAR(7) NOT NULL UNIQUE,

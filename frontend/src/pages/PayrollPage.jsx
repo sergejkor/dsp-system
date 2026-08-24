@@ -10,6 +10,7 @@ import {
   getPayrollHistorySnapshot,
   savePayrollAbzug,
   savePayrollBonus,
+  savePayrollVerpflegungOverride,
   savePayrollManualEntry,
   previewPayslipImport,
   importPayslipBatch,
@@ -347,6 +348,7 @@ export default function PayrollPage() {
   const [showBonusBreakdown, setShowBonusBreakdown] = useState(false);
   const [bonusBreakdownRow, setBonusBreakdownRow] = useState(null);
   const [selectedPayrollRowKey, setSelectedPayrollRowKey] = useState('');
+  const [verpflegungSavingKey, setVerpflegungSavingKey] = useState('');
   const calendarTitleRef = useRef(null);
 
   useEffect(() => {
@@ -1037,7 +1039,7 @@ export default function PayrollPage() {
                 abzug: Math.round(totalAbzug * 100) / 100,
                 abzug_lines: lines.map((l) => ({ amount: Math.round((Number(l.amount) || 0) * 100) / 100, comment: l.comment })),
                 after_abzug: Math.round((r.total_bonus - totalAbzug) * 100) / 100,
-                verpfl_mehr: (() => {
+                verpfl_mehr: r.verpfl_mehr_removed ? 0 : (() => {
                   const after = r.total_bonus - totalAbzug;
                   const maxV = r.working_days * 14;
                   return Math.round((after <= maxV ? after : maxV) * 100) / 100;
@@ -1096,6 +1098,35 @@ export default function PayrollPage() {
       setError(String(e?.message || e));
     } finally {
       setBonusSaving(false);
+    }
+  };
+
+  const toggleVerpflegung = async (row, rowKey) => {
+    if (isFrozenPayroll || !result?.month || !row?.kenjo_employee_id) return;
+    const isRemoved = Boolean(row.verpfl_mehr_removed);
+    if (!isRemoved && !window.confirm(`Remove Verpflegung for ${row.name || 'this employee'}?`)) return;
+    setVerpflegungSavingKey(rowKey);
+    setError('');
+    try {
+      await savePayrollVerpflegungOverride(result.month, row.kenjo_employee_id, !isRemoved);
+      setResult((prev) => ({
+        ...prev,
+        rows: prev.rows.map((currentRow) => {
+          if (currentRow.kenjo_employee_id !== row.kenjo_employee_id) return currentRow;
+          const afterAbzug = Number(currentRow.after_abzug) || 0;
+          const maxVerpflegung = (Number(currentRow.working_days) || 0) * 14;
+          const calculatedVerpflegung = Math.round((afterAbzug <= maxVerpflegung ? afterAbzug : maxVerpflegung) * 100) / 100;
+          return {
+            ...currentRow,
+            verpfl_mehr: isRemoved ? calculatedVerpflegung : 0,
+            verpfl_mehr_removed: !isRemoved,
+          };
+        }),
+      }));
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setVerpflegungSavingKey('');
     }
   };
 
@@ -1779,6 +1810,31 @@ export default function PayrollPage() {
                           >
                             ✎
                           </button>
+                        </td>
+                      );
+                    }
+                    if (col.key === 'verpfl_mehr') {
+                      const rowKey = getPayrollRowKey(row, idx);
+                      const isRemoved = Boolean(row.verpfl_mehr_removed);
+                      const isSaving = verpflegungSavingKey === rowKey;
+                      return (
+                        <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {formatCurrency(row.verpfl_mehr)}
+                          {!isFrozenPayroll && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleVerpflegung(row, rowKey);
+                              }}
+                              disabled={isSaving}
+                              title={isRemoved ? 'Restore calculated Verpflegung' : 'Remove Verpflegung'}
+                              aria-label={isRemoved ? 'Restore Verpflegung' : 'Remove Verpflegung'}
+                              style={{ marginLeft: '0.25rem', background: 'none', border: 'none', cursor: isSaving ? 'wait' : 'pointer', fontSize: '1rem', color: isRemoved ? '#047857' : '#b91c1c' }}
+                            >
+                              {isSaving ? '…' : isRemoved ? '↺' : '×'}
+                            </button>
+                          )}
                         </td>
                       );
                     }
