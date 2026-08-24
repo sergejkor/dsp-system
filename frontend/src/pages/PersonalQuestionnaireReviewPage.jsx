@@ -131,7 +131,7 @@ function normalizePdfConfig(settings = {}) {
     title: readString('pdf_title', 'Personalfragebogen'),
     fontFamily: readString('pdf_font_family', 'Segoe UI'),
     headerTitleSize: readNumber('pdf_header_title_size', 40),
-    bodyFontSize: readNumber('pdf_body_font_size', 15),
+    bodyFontSize: readNumber('pdf_body_font_size', 19),
     headerColorStart: readString('pdf_header_color_start', '#173d7a'),
     headerColorEnd: readString('pdf_header_color_end', '#2f7ec9'),
     accentColor: readString('pdf_accent_color', '#2f7ec9'),
@@ -421,14 +421,17 @@ function drawRoundedRect(ctx, x, y, width, height, radius, fillStyle, strokeStyl
   }
 }
 
-function estimateSectionGroupHeight(ctx, group, width) {
-  const innerWidth = width - 28;
-  let total = 22;
-  group.forEach((row) => {
-    const lines = wrapCanvasText(ctx, row.value, innerWidth);
-    total += 16 + lines.length * 16 + 10;
-  });
-  return total;
+function estimateSectionGridRowHeight(ctx, rows, width, pdfConfig) {
+  const labelLineHeight = 15;
+  const valueLineHeight = 22;
+
+  return Math.max(...rows.map((row) => {
+    ctx.font = pdfFont(600, 13, pdfConfig.fontFamily);
+    const labelHeight = wrapCanvasText(ctx, String(row.label).toUpperCase(), width).length * labelLineHeight;
+    ctx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
+    const valueHeight = wrapCanvasText(ctx, row.value, width).length * valueLineHeight;
+    return labelHeight + valueHeight + 12;
+  }));
 }
 
 function finalizeCanvasPage(canvas) {
@@ -460,8 +463,8 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
   const contentWidth = CANVAS_DOC_WIDTH - CANVAS_PADDING * 2;
   const summaryGap = 12;
   const summaryCardWidth = Math.floor((contentWidth - summaryGap * 3) / 4);
-  const colGap = 34;
-  const columnWidth = Math.floor((contentWidth - colGap) / 2);
+  const gridGap = 26;
+  const gridColumnWidth = Math.floor((contentWidth - gridGap * 2) / 3);
   const topY = 34;
   const bottomSafeY = CANVAS_PAGE_HEIGHT - 66;
 
@@ -529,13 +532,13 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
       const x = CANVAS_PADDING + col * (summaryCardWidth + summaryGap);
       const y = currentY + row * (62 + summaryGap);
       ctx.fillStyle = '#64748b';
-      ctx.font = pdfFont(600, 12, pdfConfig.fontFamily);
+      ctx.font = pdfFont(600, 13, pdfConfig.fontFamily);
       ctx.fillText(item.label.toUpperCase(), x, y + 16);
       ctx.fillStyle = '#0f172a';
-      ctx.font = pdfFont(700, 17, pdfConfig.fontFamily);
+      ctx.font = pdfFont(700, 19, pdfConfig.fontFamily);
       const lines = wrapCanvasText(ctx, item.value, summaryCardWidth);
       lines.slice(0, 2).forEach((line, lineIndex) => {
-        ctx.fillText(line, x, y + 42 + lineIndex * 18);
+        ctx.fillText(line, x, y + 44 + lineIndex * 21);
       });
     });
     currentY += Math.ceil(summaryItems.length / 4) * (62 + summaryGap) + 6;
@@ -546,64 +549,45 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
   drawSummary();
 
   pdfSections.forEach((section) => {
-    if (section.pageBreakBefore && currentY > topY) {
-      newPage();
-      currentY = topY;
-    }
-    const groups = chunkPdfSectionRows(section.rows, 4);
-    const pairDescriptors = [];
-
-    for (let index = 0; index < groups.length; index += 2) {
-      measureCtx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
-      const leftHeight = estimateSectionGroupHeight(measureCtx, groups[index], columnWidth);
-      const rightHeight = groups[index + 1] ? estimateSectionGroupHeight(measureCtx, groups[index + 1], columnWidth) : 0;
-      pairDescriptors.push({
-        left: groups[index],
-        right: groups[index + 1] || null,
-        height: Math.max(leftHeight, rightHeight),
-      });
-    }
-
+    const gridRows = chunkPdfSectionRows(section.rows, 3);
     let sectionStarted = false;
 
-    pairDescriptors.forEach((pair, pairIndex) => {
+    gridRows.forEach((gridRow, rowIndex) => {
+      const rowHeight = estimateSectionGridRowHeight(measureCtx, gridRow, gridColumnWidth, pdfConfig);
       const titleHeight = sectionStarted ? 0 : 42;
-      const neededHeight = titleHeight + pair.height + (pairIndex < pairDescriptors.length - 1 ? 14 : 8);
-      const forcedNewPage = ensureSpace(neededHeight, topY);
+      const neededHeight = titleHeight + rowHeight + (rowIndex < gridRows.length - 1 ? 12 : 16);
+      const startedOnNewPage = ensureSpace(neededHeight, topY);
 
-      if (!sectionStarted || forcedNewPage) {
+      if (!sectionStarted || startedOnNewPage) {
         ctx.fillStyle = pdfConfig.accentColor;
         ctx.beginPath();
         ctx.arc(CANVAS_PADDING + 10, currentY + 17, 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#1f2937';
-        ctx.font = pdfFont(700, 23, pdfConfig.fontFamily);
-        ctx.fillText(section.title, CANVAS_PADDING + 30, currentY + 24);
+        ctx.font = pdfFont(700, 25, pdfConfig.fontFamily);
+        ctx.fillText(section.title, CANVAS_PADDING + 30, currentY + 25);
         currentY += 42;
         sectionStarted = true;
       }
 
-      [pair.left, pair.right].forEach((group, groupIndex) => {
-        if (!group) return;
-        const x = CANVAS_PADDING + groupIndex * (columnWidth + colGap);
-        let innerY = currentY + 6;
-        group.forEach((row) => {
-          ctx.fillStyle = '#64748b';
-          ctx.font = pdfFont(600, 12, pdfConfig.fontFamily);
-          ctx.fillText(String(row.label).toUpperCase(), x, innerY);
-          innerY += 16;
-          ctx.fillStyle = '#111827';
-          ctx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
-          const lines = wrapCanvasText(ctx, row.value, columnWidth);
-          lines.forEach((line) => {
-            ctx.fillText(line, x, innerY);
-            innerY += 16;
-          });
-          innerY += 10;
+      gridRow.forEach((row, columnIndex) => {
+        const x = CANVAS_PADDING + columnIndex * (gridColumnWidth + gridGap);
+        let innerY = currentY;
+        ctx.fillStyle = '#64748b';
+        ctx.font = pdfFont(600, 13, pdfConfig.fontFamily);
+        wrapCanvasText(ctx, String(row.label).toUpperCase(), gridColumnWidth).forEach((line) => {
+          ctx.fillText(line, x, innerY);
+          innerY += 15;
+        });
+        ctx.fillStyle = '#111827';
+        ctx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
+        wrapCanvasText(ctx, row.value, gridColumnWidth).forEach((line) => {
+          ctx.fillText(line, x, innerY);
+          innerY += 22;
         });
       });
 
-      currentY += pair.height + 14;
+      currentY += rowHeight + 12;
     });
   });
 
