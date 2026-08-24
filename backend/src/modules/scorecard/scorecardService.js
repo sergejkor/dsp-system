@@ -44,7 +44,7 @@ async function getEmployeesForWeek(year, week) {
 }
 
 /**
- * Parse PDF (pages 2 & 3) and save to company_scorecard and scorecard_employees.
+ * Parse the scorecard sections from the uploaded PDF and save to company_scorecard and scorecard_employees.
  */
 async function parseAndSaveScorecardData(buffer, year, week) {
   const y = Number(year);
@@ -163,7 +163,7 @@ async function parseAndSaveScorecardData(buffer, year, week) {
 
 /**
  * Save or replace PDF upload for a given year and week.
- * Saves the PDF, then parses pages 2 (Company Scorecard) and 3 (Employees Scorecard),
+ * Saves the PDF, then parses the Company Scorecard and DSP Weekly Summary sections,
  * computes CDF and Total Score, and saves to company_scorecard and scorecard_employees.
  * If parse or save fails, throws so the client is informed; the PDF is already stored.
  */
@@ -187,7 +187,7 @@ async function saveUpload(year, week, fileName, buffer) {
   } catch (parseErr) {
     console.error('Scorecard PDF parse/save failed:', parseErr.message);
     throw new Error(
-      `Scorecard file saved but KPI data could not be extracted. ${parseErr.message || 'Check PDF has pages 2 (Company) and 3 (Employees) with expected table layout.'}`
+      `Scorecard file saved but KPI data could not be extracted. ${parseErr.message || 'Check the PDF contains the Company Scorecard and DSP Weekly Summary sections in a supported layout.'}`
     );
   }
   return { year: y, week: w, employeeRows: parseResult.employeeRows, companyRows: parseResult.companyRows };
