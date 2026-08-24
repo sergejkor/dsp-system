@@ -131,7 +131,7 @@ function normalizePdfConfig(settings = {}) {
     title: readString('pdf_title', 'Personalfragebogen'),
     fontFamily: readString('pdf_font_family', 'Segoe UI'),
     headerTitleSize: readNumber('pdf_header_title_size', 40),
-    bodyFontSize: readNumber('pdf_body_font_size', 19),
+    bodyFontSize: readNumber('pdf_body_font_size', 24),
     headerColorStart: readString('pdf_header_color_start', '#173d7a'),
     headerColorEnd: readString('pdf_header_color_end', '#2f7ec9'),
     accentColor: readString('pdf_accent_color', '#2f7ec9'),
@@ -422,11 +422,11 @@ function drawRoundedRect(ctx, x, y, width, height, radius, fillStyle, strokeStyl
 }
 
 function estimateSectionGridRowHeight(ctx, rows, width, pdfConfig) {
-  const labelLineHeight = 15;
-  const valueLineHeight = 22;
+  const labelLineHeight = 18;
+  const valueLineHeight = 28;
 
   return Math.max(...rows.map((row) => {
-    ctx.font = pdfFont(600, 13, pdfConfig.fontFamily);
+    ctx.font = pdfFont(600, 15, pdfConfig.fontFamily);
     const labelHeight = wrapCanvasText(ctx, String(row.label).toUpperCase(), width).length * labelLineHeight;
     ctx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
     const valueHeight = wrapCanvasText(ctx, row.value, width).length * valueLineHeight;
@@ -532,10 +532,10 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
       const x = CANVAS_PADDING + col * (summaryCardWidth + summaryGap);
       const y = currentY + row * (62 + summaryGap);
       ctx.fillStyle = '#64748b';
-      ctx.font = pdfFont(600, 13, pdfConfig.fontFamily);
+      ctx.font = pdfFont(600, 15, pdfConfig.fontFamily);
       ctx.fillText(item.label.toUpperCase(), x, y + 16);
       ctx.fillStyle = '#0f172a';
-      ctx.font = pdfFont(700, 19, pdfConfig.fontFamily);
+      ctx.font = pdfFont(700, 22, pdfConfig.fontFamily);
       const lines = wrapCanvasText(ctx, item.value, summaryCardWidth);
       lines.slice(0, 2).forEach((line, lineIndex) => {
         ctx.fillText(line, x, y + 44 + lineIndex * 21);
@@ -574,16 +574,16 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
         const x = CANVAS_PADDING + columnIndex * (gridColumnWidth + gridGap);
         let innerY = currentY;
         ctx.fillStyle = '#64748b';
-        ctx.font = pdfFont(600, 13, pdfConfig.fontFamily);
+        ctx.font = pdfFont(600, 15, pdfConfig.fontFamily);
         wrapCanvasText(ctx, String(row.label).toUpperCase(), gridColumnWidth).forEach((line) => {
           ctx.fillText(line, x, innerY);
-          innerY += 15;
+          innerY += 18;
         });
         ctx.fillStyle = '#111827';
         ctx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
         wrapCanvasText(ctx, row.value, gridColumnWidth).forEach((line) => {
           ctx.fillText(line, x, innerY);
-          innerY += 22;
+          innerY += 28;
         });
       });
 
