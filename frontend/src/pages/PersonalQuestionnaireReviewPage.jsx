@@ -316,6 +316,13 @@ function buildPdfSections(form, detail, copy, pdfSettings) {
   const sourceSections = createPdfSourceSections(form, detail, copy);
   const sourceSectionsById = new Map(sourceSections.map((section) => [section.id, section]));
   const templateValues = buildPdfTemplateValues(form, detail);
+  const requiredIdentityRows = new Set([
+    'taxId',
+    'nationalInsuranceNumber',
+    'insuranceCompany',
+    'maritalStatus',
+    'churchTax',
+  ]);
   const layoutSections = Array.isArray(pdfSettings?.pdf_layout_schema?.value?.sections)
     ? pdfSettings.pdf_layout_schema.value.sections
     : sourceSections.map((section) => ({
@@ -331,7 +338,7 @@ function buildPdfSections(form, detail, copy, pdfSettings) {
     .map((section) => {
       const sourceSection = sourceSectionsById.get(section.sourceSectionId);
       const sourceRowsById = new Map((sourceSection?.rows || []).map((row) => [row.id, row]));
-      const rows = Array.isArray(section?.rows)
+      const configuredRows = Array.isArray(section?.rows)
         ? section.rows
             .filter((row) => row?.visible !== false)
             .map((row) => {
@@ -350,6 +357,18 @@ function buildPdfSections(form, detail, copy, pdfSettings) {
             })
             .filter((row) => row && hasPdfValue(row.value))
         : [];
+      const configuredSourceRowIds = new Set(
+        (section?.rows || [])
+          .filter((row) => row?.visible !== false && !row?.isCustom)
+          .map((row) => row?.sourceRowId)
+      );
+      const missingRequiredIdentityRows = section?.sourceSectionId === 'identity'
+        ? (sourceSection?.rows || [])
+            .filter((row) => requiredIdentityRows.has(row.id) && !configuredSourceRowIds.has(row.id))
+            .map((row) => ({ label: row.label, value: row.value }))
+            .filter((row) => hasPdfValue(row.value))
+        : [];
+      const rows = [...configuredRows, ...missingRequiredIdentityRows];
       return {
         title: section?.title || sourceSection?.title || 'Section',
         pageBreakBefore: !!sourceSection?.pageBreakBefore,
