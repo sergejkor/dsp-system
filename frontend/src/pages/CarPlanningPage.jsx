@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
 import { useAppSettings } from '../context/AppSettingsContext';
-import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, addCar } from '../services/carPlanningApi';
+import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, getHistoricalAssignment, addCar } from '../services/carPlanningApi';
 import { syncKenjoEmployees } from '../services/kenjoApi';
 
 /** Day window around today included in planning columns (saved to DB). */
-const CAR_PLANNING_PAST_DAYS = 60;
+const CAR_PLANNING_PAST_DAYS = 14;
 const CAR_PLANNING_FUTURE_DAYS = 6;
 
 const FULL_WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -375,6 +375,12 @@ export default function CarPlanningPage() {
   const newDayAutoSaveLastSignatureRef = useRef('');
   const newDayAutoSaveRequestIdRef = useRef(0);
   const [screenshotStatus, setScreenshotStatus] = useState('');
+  const [historyCarId, setHistoryCarId] = useState('');
+  const [historyDate, setHistoryDate] = useState('');
+  const [historyResult, setHistoryResult] = useState(null);
+  const [historySearched, setHistorySearched] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
 
   const runSyncCarPlanningHeights = useCallback(() => {
     syncCarPlanningTables(carPlanningFixedTableRef.current, carPlanningDaysTableRef.current);
@@ -596,6 +602,25 @@ export default function CarPlanningPage() {
     } catch {
       setScreenshotStatus('Screenshot failed');
       setTimeout(() => setScreenshotStatus(''), 2000);
+    }
+  };
+
+  const handleHistorySearch = async () => {
+    if (!historyCarId || !historyDate) {
+      setHistoryError(t('carPlanning.historyRequired'));
+      return;
+    }
+    setHistoryLoading(true);
+    setHistoryError('');
+    setHistorySearched(false);
+    try {
+      const assignment = await getHistoricalAssignment(historyCarId, historyDate);
+      setHistoryResult(assignment);
+      setHistorySearched(true);
+    } catch (e) {
+      setHistoryError(e?.message || t('carPlanning.historyFailed'));
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -975,6 +1000,28 @@ export default function CarPlanningPage() {
       </div>
 
       {error && <p className="car-planning-error">{error}</p>}
+
+      <div className="car-planning-toolbar" style={{ marginTop: '0.8rem', padding: '0.7rem', border: '1px solid var(--border)', borderRadius: 8 }}>
+        <strong>{t('carPlanning.historyTitle')}</strong>
+        <select value={historyCarId} onChange={(e) => setHistoryCarId(e.target.value)} aria-label={t('carPlanning.vehicle')}>
+          <option value="">{t('carPlanning.historyVehiclePlaceholder')}</option>
+          {cars.map((car) => (
+            <option key={car.id} value={car.id}>{car.license_plate || car.vehicle_id || `#${car.id}`}</option>
+          ))}
+        </select>
+        <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} aria-label={t('carPlanning.historyDate')} />
+        <button type="button" className="btn-secondary car-planning-btn-sm" onClick={handleHistorySearch} disabled={historyLoading}>
+          {historyLoading ? t('carPlanning.loading') : t('carPlanning.historySearch')}
+        </button>
+        {historyError && <span className="car-planning-error">{historyError}</span>}
+        {historySearched && !historyLoading && (
+          <span className="muted">
+            {historyResult?.driver_identifier
+              ? `${t('carPlanning.driver')}: ${historyResult.driver_identifier}${historyResult.abfahrtskontrolle ? ` (${t('carPlanning.abfahrtskontrolle')})` : ''}`
+              : t('carPlanning.historyEmpty')}
+          </span>
+        )}
+      </div>
 
       <div className="car-planning-split" role="region" aria-label={t('carPlanning.title')}>
         <div className="car-planning-fixed-wrap">
