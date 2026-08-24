@@ -14,10 +14,12 @@ const COL = {
   ABRECHNUNGSZEITRAUM: 1,
   PERSONALNUMMER: 2,
   ARBEITNEHMER: 3,
+  AMAZON_SCHULUNG: 5,
   FAHRGELD: 6,
   VERPFLEGUNG: 7,
   ABZUG_SONSTIGE: 8,
   VORSCHUSS: 9,
+  ABZUG_BUSSGELD: 10,
   DA_BONUS: 11,
 };
 const DATA_START_ROW = 9;
@@ -73,29 +75,21 @@ function buildDataRows(periodValue, rows, numberStyleIndex, textStyleIndex) {
     cells.push(buildCellString(colLetter(COL.PERSONALNUMMER) + excelRow, 's', row.pn ?? '', null, textStyleIndex));
     cells.push(buildCellString(colLetter(COL.ARBEITNEHMER) + excelRow, 's', row.name ?? '', null, textStyleIndex));
 
-    const fahrtGeld = round2(row.fahrt_geld);
-    if (fahrtGeld !== 0) {
-      cells.push(buildCellString(colLetter(COL.FAHRGELD) + excelRow, 'n', fahrtGeld, numberStyleIndex));
-    }
-
     const verpflMehr = round2(row.verpfl_mehr);
-    if (verpflMehr !== 0) {
-      if (verpflMehr > 0) {
-        cells.push(buildCellString(colLetter(COL.VERPFLEGUNG) + excelRow, 'n', verpflMehr, numberStyleIndex));
-      } else {
-        cells.push(buildCellString(colLetter(COL.ABZUG_SONSTIGE) + excelRow, 'n', Math.abs(verpflMehr), numberStyleIndex));
-      }
-    }
+    const lohnartValues = {
+      [COL.AMAZON_SCHULUNG]: 0,
+      [COL.FAHRGELD]: round2(row.fahrt_geld),
+      [COL.VERPFLEGUNG]: verpflMehr > 0 ? verpflMehr : 0,
+      [COL.ABZUG_SONSTIGE]: verpflMehr < 0 ? Math.abs(verpflMehr) : 0,
+      [COL.VORSCHUSS]: round2(row.vorschuss),
+      [COL.ABZUG_BUSSGELD]: 0,
+      [COL.DA_BONUS]: round2(row.bonus),
+    };
 
-    const vorschuss = round2(row.vorschuss);
-    if (vorschuss !== 0) {
-      cells.push(buildCellString(colLetter(COL.VORSCHUSS) + excelRow, 'n', vorschuss, numberStyleIndex));
-    }
-
-    const bonus = round2(row.bonus);
-    if (bonus !== 0) {
-      cells.push(buildCellString(colLetter(COL.DA_BONUS) + excelRow, 'n', bonus, numberStyleIndex));
-    }
+    // ADP expects each of the first seven Lohnart columns (F:L) to contain a numeric value.
+    Object.entries(lohnartValues).forEach(([column, value]) => {
+      cells.push(buildCellString(colLetter(Number(column)) + excelRow, 'n', value, numberStyleIndex));
+    });
 
     out.push(`<row r="${excelRow}">${cells.join('')}</row>`);
   }
