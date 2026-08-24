@@ -131,7 +131,7 @@ function normalizePdfConfig(settings = {}) {
     title: readString('pdf_title', 'Personalfragebogen'),
     fontFamily: readString('pdf_font_family', 'Segoe UI'),
     headerTitleSize: readNumber('pdf_header_title_size', 40),
-    bodyFontSize: readNumber('pdf_body_font_size', 24),
+    bodyFontSize: readNumber('pdf_body_font_size', 30),
     headerColorStart: readString('pdf_header_color_start', '#173d7a'),
     headerColorEnd: readString('pdf_header_color_end', '#2f7ec9'),
     accentColor: readString('pdf_accent_color', '#2f7ec9'),
@@ -442,7 +442,7 @@ function drawRoundedRect(ctx, x, y, width, height, radius, fillStyle, strokeStyl
 
 function estimateSectionGridRowHeight(ctx, rows, width, pdfConfig) {
   const labelLineHeight = 18;
-  const valueLineHeight = 28;
+  const valueLineHeight = 35;
 
   return Math.max(...rows.map((row) => {
     ctx.font = pdfFont(600, 15, pdfConfig.fontFamily);
@@ -481,6 +481,7 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
   const summaryItems = Array.isArray(pdfSummaryCards) ? pdfSummaryCards : [];
   const contentWidth = CANVAS_DOC_WIDTH - CANVAS_PADDING * 2;
   const summaryGap = 12;
+  const summaryRowHeight = 88;
   const summaryCardWidth = Math.floor((contentWidth - summaryGap * 3) / 4);
   const gridGap = 26;
   const gridColumnWidth = Math.floor((contentWidth - gridGap * 2) / 3);
@@ -549,18 +550,18 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
       const row = Math.floor(index / 4);
       const col = index % 4;
       const x = CANVAS_PADDING + col * (summaryCardWidth + summaryGap);
-      const y = currentY + row * (62 + summaryGap);
+      const y = currentY + row * (summaryRowHeight + summaryGap);
       ctx.fillStyle = '#64748b';
       ctx.font = pdfFont(600, 15, pdfConfig.fontFamily);
       ctx.fillText(item.label.toUpperCase(), x, y + 16);
       ctx.fillStyle = '#0f172a';
-      ctx.font = pdfFont(700, 22, pdfConfig.fontFamily);
+      ctx.font = pdfFont(700, 28, pdfConfig.fontFamily);
       const lines = wrapCanvasText(ctx, item.value, summaryCardWidth);
       lines.slice(0, 2).forEach((line, lineIndex) => {
-        ctx.fillText(line, x, y + 44 + lineIndex * 21);
+        ctx.fillText(line, x, y + 46 + lineIndex * 32);
       });
     });
-    currentY += Math.ceil(summaryItems.length / 4) * (62 + summaryGap) + 6;
+    currentY += Math.ceil(summaryItems.length / 4) * (summaryRowHeight + summaryGap) + 6;
   }
 
   let currentY = topY;
@@ -602,7 +603,7 @@ function renderPersonalQuestionnairePdfPages({ selectedRow, detail, form, pdfSec
         ctx.font = pdfFont(600, pdfConfig.bodyFontSize, pdfConfig.fontFamily);
         wrapCanvasText(ctx, row.value, gridColumnWidth).forEach((line) => {
           ctx.fillText(line, x, innerY);
-          innerY += 28;
+          innerY += 35;
         });
       });
 
