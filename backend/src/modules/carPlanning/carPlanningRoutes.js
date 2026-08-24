@@ -76,21 +76,6 @@ router.get('/report', async (req, res) => {
   }
 });
 
-router.get('/history', async (req, res) => {
-  try {
-    const carId = req.query.car_id ?? req.query.carId;
-    const date = req.query.date;
-    if (!carId || !date) {
-      return res.status(400).json({ error: 'Query params car_id and date (YYYY-MM-DD) are required' });
-    }
-    const assignment = await carPlanningService.getHistoricalAssignment(carId, date);
-    res.json(assignment);
-  } catch (err) {
-    console.error('GET /api/car-planning/history', err);
-    res.status(500).json({ error: err.message || 'Failed to load assignment history' });
-  }
-});
-
 router.post('/add-car', async (req, res) => {
   try {
     const { number_plate, vin, source_type, service_type, active_from, active_to } = req.body || {};

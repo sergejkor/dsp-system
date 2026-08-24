@@ -111,20 +111,6 @@ export async function getReport(date) {
   return Array.isArray(data) ? data : [];
 }
 
-export async function getHistoricalAssignment(carId, date) {
-  const params = new URLSearchParams({ car_id: String(carId || ''), date: String(date || '') });
-  const res = await fetchWithHint(`${API_BASE}/api/car-planning/history?${params}`, authOpts());
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    const { clearToken } = await import('./authStore.js');
-    clearToken();
-    window.dispatchEvent(new CustomEvent('auth:logout'));
-    throw new Error(data.error || 'Unauthorized');
-  }
-  if (!res.ok) throw new Error(data.error || res.statusText || 'Failed to load assignment history');
-  return data || null;
-}
-
 export async function addCar(numberPlate, vin, sourceType, serviceType, activeFrom, activeTo) {
   const res = await fetchWithHint(`${API_BASE}/api/car-planning/add-car`, {
     method: 'POST',

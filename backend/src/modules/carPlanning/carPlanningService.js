@@ -591,33 +591,6 @@ async function getReport(date) {
   }));
 }
 
-/** Return one archived assignment without loading the full planning grid. */
-async function getHistoricalAssignment(carId, date) {
-  const id = Number.parseInt(carId, 10);
-  const planDate = String(date || '').slice(0, 10);
-  if (!Number.isFinite(id) || !/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {
-    throw new Error('car_id and date (YYYY-MM-DD) are required');
-  }
-  const result = await query(
-    `SELECT c.id AS car_id, c.vehicle_id, c.license_plate, p.plan_date::text AS plan_date,
-            p.driver_identifier, p.abfahrtskontrolle
-       FROM cars c
-       LEFT JOIN car_planning p ON p.car_id = c.id AND p.plan_date = $2::date
-      WHERE c.id = $1`,
-    [id, planDate]
-  );
-  const row = result.rows?.[0];
-  if (!row || !String(row.driver_identifier || '').trim()) return null;
-  return {
-    car_id: row.car_id,
-    vehicle_id: row.vehicle_id,
-    license_plate: row.license_plate,
-    plan_date: toDateOnly(row.plan_date),
-    driver_identifier: row.driver_identifier,
-    abfahrtskontrolle: !!row.abfahrtskontrolle,
-  };
-}
-
 async function addCarWithWindow(numberPlate, vin, sourceType, serviceType, activeFrom, activeTo) {
   await ensureCarPlanningWorkshopColumns();
   const plate = (numberPlate || '').toString().trim();
@@ -650,6 +623,5 @@ export default {
   savePlanningDataAndNotifyDrivers,
   getTodayAssignmentForDriver,
   getReport,
-  getHistoricalAssignment,
   addCarWithWindow,
 };
