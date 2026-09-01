@@ -76,6 +76,22 @@ router.put('/bonus', async (req, res) => {
   }
 });
 
+router.put('/verpflegung', async (req, res) => {
+  try {
+    const { period_id, periodId, employee_id, employeeId, removed } = req.body || {};
+    const period = period_id || periodId;
+    const employee = employee_id || employeeId;
+    if (!period || !employee) {
+      return res.status(400).json({ error: 'Body must include period_id (YYYY-MM) and employee_id' });
+    }
+    await payrollService.saveVerpflegungOverride(period, employee, Boolean(removed));
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('PUT /payroll/verpflegung error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
 router.post('/manual-entry', async (req, res) => {
   try {
     const { period_id, periodId, employee_id, employeeId, working_days, total_bonus, abzug, bonus, vorschuss } = req.body || {};
@@ -94,6 +110,22 @@ router.post('/manual-entry', async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     console.error('POST /payroll/manual-entry error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
+router.put('/row-override', async (req, res) => {
+  try {
+    const { period_id, periodId, employee_id, employeeId, payload } = req.body || {};
+    const period = period_id || periodId;
+    const employee = employee_id || employeeId;
+    if (!period || !employee) {
+      return res.status(400).json({ error: 'Body must include period_id (YYYY-MM) and employee_id' });
+    }
+    const result = await payrollService.saveRowOverride(period, employee, payload || {});
+    res.json(result);
+  } catch (error) {
+    console.error('PUT /payroll/row-override error', error);
     res.status(500).json({ error: String(error?.message || error) });
   }
 });
