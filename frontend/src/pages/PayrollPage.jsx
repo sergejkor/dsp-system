@@ -389,6 +389,36 @@ function getPayrollRenderKey(row, idx) {
   return `idx:${Number(idx) || 0}`;
 }
 
+function buildPayrollRowPreview(row, patch) {
+  const next = { ...row, ...patch };
+
+  if (Object.hasOwn(patch, 'worked_hours')) {
+    next.total_worked_hours = patch.worked_hours;
+    next.payroll_worked_hours_override = patch.worked_hours;
+  }
+  if (Object.hasOwn(patch, 'expected_hours')) {
+    next.worked_hours_capped = patch.expected_hours;
+    next.payroll_regular_hours_override = patch.expected_hours;
+  }
+  if (Object.hasOwn(patch, 'overtime_hours')) {
+    next.payroll_overtime_hours_override = patch.overtime_hours;
+  }
+  if (Object.hasOwn(patch, 'abzug')) {
+    next.abzug_lines = [
+      { amount: patch.abzug, comment: row?.abzug_lines?.[0]?.comment || '' },
+      ...(Array.isArray(row?.abzug_lines) ? row.abzug_lines.slice(1) : []),
+    ];
+  }
+  if (Object.hasOwn(patch, 'total_bonus') || Object.hasOwn(patch, 'abzug')) {
+    next.after_abzug = Math.round(((Number(next.total_bonus) || 0) - (Number(next.abzug) || 0)) * 100) / 100;
+  }
+  if (row?.manual_entry) {
+    next.manual_entry = { ...row.manual_entry, ...patch };
+  }
+
+  return next;
+}
+
 function normalizePayrollPn(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
@@ -1432,12 +1462,31 @@ export default function PayrollPage() {
     const isRemoved = Boolean(row.verpfl_mehr_removed);
     if (!isRemoved && !window.confirm(`Remove Verpflegung for ${row.name || 'this employee'}?`)) return;
     const targetKey = rowRenderKey || getPayrollRowStableKey(row);
+    const previousRow = getPayrollRowSnapshot(row);
+    const afterAbzug = Number(previousRow?.after_abzug) || 0;
+    const maxVerpflegung = (Number(previousRow?.working_days) || 0) * 14;
+    const restoredVerpflegung = Math.round((afterAbzug <= maxVerpflegung ? afterAbzug : maxVerpflegung) * 100) / 100;
+    const patch = {
+      verpfl_mehr: isRemoved ? restoredVerpflegung : 0,
+      verpfl_mehr_removed: !isRemoved,
+    };
     setVerpflegungSavingKey(targetKey);
     setError('');
+    if (targetKey) {
+      setRowOverrides((prev) => ({ ...prev, [targetKey]: patch }));
+    }
+    updatePayrollRow(row, (currentRow) => buildPayrollRowPreview(currentRow, patch));
     try {
       await savePayrollVerpflegungOverride(result.month, row.kenjo_employee_id, !isRemoved);
-      await reloadCurrentPayrollResult();
     } catch (e) {
+      if (targetKey) {
+        setRowOverrides((prev) => {
+          const next = { ...prev };
+          delete next[targetKey];
+          return next;
+        });
+      }
+      restorePayrollRow(row, previousRow);
       setError(String(e?.message || e));
     } finally {
       setVerpflegungSavingKey('');
@@ -1492,11 +1541,26 @@ export default function PayrollPage() {
 
     setRowEditSaving(true);
     setError('');
+    const target = { kenjo_employee_id: rowEditModal.employeeId };
+    const previousRow = getPayrollRowSnapshot(target);
+    const targetKey = rowEditModal.rowKey || getPayrollRowStableKey(previousRow);
+    const preview = previousRow ? buildPayrollRowPreview(previousRow, payload) : payload;
+    if (targetKey) {
+      setRowOverrides((prev) => ({ ...prev, [targetKey]: preview }));
+    }
+    updatePayrollRow(target, (currentRow) => buildPayrollRowPreview(currentRow, payload));
     try {
       await savePayrollRowOverride(result.month, rowEditModal.employeeId, payload);
-      await reloadCurrentPayrollResult();
       setRowEditModal(null);
     } catch (e) {
+      if (targetKey) {
+        setRowOverrides((prev) => {
+          const next = { ...prev };
+          delete next[targetKey];
+          return next;
+        });
+      }
+      restorePayrollRow(target, previousRow);
       setError(String(e?.message || e));
     } finally {
       setRowEditSaving(false);
