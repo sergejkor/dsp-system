@@ -99,7 +99,8 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json());
+// Payroll exports can contain a full month's rows and exceed Express's 100 KB default.
+app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/health', (_req, res) => {
   let finance;

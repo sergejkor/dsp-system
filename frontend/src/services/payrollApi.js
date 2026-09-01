@@ -173,7 +173,6 @@ export async function exportPayrollToAdp(month, rows, result) {
       rows,
       from: result?.from || null,
       to: result?.to || null,
-      result: result || null,
     }),
   }));
   if (!response.ok) {
