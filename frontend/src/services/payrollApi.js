@@ -79,6 +79,23 @@ export async function savePayrollManualEntry(periodId, employeeId, payload) {
   return response.json();
 }
 
+export async function savePayrollRowOverride(periodId, employeeId, payload) {
+  const response = await fetch(`${API_BASE}/api/payroll/row-override`, authOpts({
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      period_id: periodId,
+      employee_id: employeeId,
+      payload: payload || {},
+    }),
+  }));
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Save payroll row override failed');
+  }
+  return data;
+}
+
 /** lines: [ { amount, comment }, { amount, comment }, { amount, comment } ] */
 export async function savePayrollAbzug(periodId, employeeId, lines) {
   const response = await fetch(`${API_BASE}/api/payroll/abzug`, authOpts({

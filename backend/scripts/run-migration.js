@@ -311,6 +311,20 @@ async function run() {
     console.log('Migration OK: payroll_history_snapshots table (or already exists).');
 
     await query(`
+      CREATE TABLE IF NOT EXISTS payroll_row_overrides (
+        id SERIAL PRIMARY KEY,
+        period_id VARCHAR(7) NOT NULL,
+        employee_id VARCHAR(255) NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        UNIQUE(period_id, employee_id)
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_payroll_row_overrides_period_employee ON payroll_row_overrides (period_id, employee_id)`);
+    console.log('Migration OK: payroll_row_overrides table (or already exists).');
+
+    await query(`
       CREATE TABLE IF NOT EXISTS kenjo_time_off (
         id SERIAL PRIMARY KEY,
         kenjo_request_id VARCHAR(255) NOT NULL UNIQUE,

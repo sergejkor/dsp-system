@@ -114,6 +114,22 @@ router.post('/manual-entry', async (req, res) => {
   }
 });
 
+router.put('/row-override', async (req, res) => {
+  try {
+    const { period_id, periodId, employee_id, employeeId, payload } = req.body || {};
+    const period = period_id || periodId;
+    const employee = employee_id || employeeId;
+    if (!period || !employee) {
+      return res.status(400).json({ error: 'Body must include period_id (YYYY-MM) and employee_id' });
+    }
+    const result = await payrollService.saveRowOverride(period, employee, payload || {});
+    res.json(result);
+  } catch (error) {
+    console.error('PUT /payroll/row-override error', error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
 router.get('/kpi', async (req, res) => {
   try {
     const kenjoEmployeeId = req.query.kenjo_employee_id ?? req.query.kenjoEmployeeId;

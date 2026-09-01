@@ -12,10 +12,12 @@ import {
   savePayrollBonus,
   savePayrollVerpflegungOverride,
   savePayrollManualEntry,
+  savePayrollRowOverride,
   previewPayslipImport,
   importPayslipBatch,
 } from '../services/payrollApi';
 import { getKenjoUsers } from '../services/kenjoApi';
+import { getEmployeeVacationSummary, listEmployees } from '../services/employeesApi';
 import { saveAdvances } from '../services/advancesApi';
 import { useAppSettings } from '../context/AppSettingsContext';
 
@@ -23,11 +25,32 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 const WEEKDAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 /** Hourly rate for payroll summary: (payroll h + overtime h) × rate + Verpfl. mehr + Fahrt. Geld */
 const PAYROLL_SUMMARY_HOUR_RATE_EUR = 16.7;
+const PAYROLL_TRAVEL_ALLOWANCE_VACATION_HOURS = 7;
 const PAYROLL_FROZEN_CACHE_KEY = 'dsp.payroll.frozen.lastResult.v1';
 const PAYROLL_RAW_WORKED_HOURS_FIELDS = ['total_worked_hours', 'worked_hours', 'totalWorkedHours', 'workedHours'];
-const PAYROLL_REGULAR_HOURS_FIELDS = ['worked_hours_capped', 'expected_hours', 'payroll_hours', 'workedHoursCapped', 'expectedHours', 'payrollHours', 'regular_hours', 'regularHours'];
+const PAYROLL_REGULAR_HOURS_FIELDS = ['worked_hours_capped', 'expected_hours', 'payroll_hours', 'workedHoursCapped', 'payrollHours', 'regular_hours', 'regularHours'];
 const PAYROLL_CONTRACT_HOURS_FIELDS = ['contract_expected_hours', 'expected_working_hours', 'contractHours', 'fullTimeHours', 'contract_hours', 'full_time_hours', 'fulltime_hours', 'expectedHours'];
 const PAYROLL_OVERTIME_HOURS_FIELDS = ['overtime_hours', 'overtime', 'overtimeHours'];
+const PAYROLL_ROW_EDITABLE_FIELDS = [
+  { key: 'name', inputType: 'text' },
+  { key: 'pn', inputType: 'text' },
+  { key: 'working_days', inputType: 'number', step: '0.01' },
+  { key: 'worked_hours', inputType: 'number', step: '0.01' },
+  { key: 'expected_hours', inputType: 'number', step: '0.01' },
+  { key: 'overtime_hours', inputType: 'number', step: '0.01' },
+  { key: 'krank_days', inputType: 'number', step: '0.01' },
+  { key: 'urlaub_days', inputType: 'number', step: '0.01' },
+  { key: 'carryover_days', inputType: 'number', step: '0.01' },
+  { key: 'rest_urlaub', inputType: 'number', step: '0.01' },
+  { key: 'total_bonus', inputType: 'number', step: '0.01' },
+  { key: 'abzug', inputType: 'number', step: '0.01' },
+  { key: 'verpfl_mehr', inputType: 'number', step: '0.01' },
+  { key: 'fahrt_geld', inputType: 'number', step: '0.01' },
+  { key: 'bonus', inputType: 'number', step: '0.01' },
+  { key: 'vorschuss', inputType: 'number', step: '0.01' },
+  { key: 'eintrittsdatum', inputType: 'date' },
+  { key: 'austrittsdatum', inputType: 'date' },
+];
 
 function formatDateDDMMYYYY(iso) {
   if (!iso) return '—';
@@ -129,9 +152,12 @@ function formatPayslipDocumentLabel(item) {
 function buildTimeOffTooltip(entries) {
   const list = Array.isArray(entries) ? entries : [];
   if (!list.length) return '';
-  return list
-    .map((entry) => `${formatDateDDMMYYYY(entry?.from)} -> ${formatDateDDMMYYYY(entry?.to)}`)
-    .join('\n');
+  const lines = list.map((entry) => {
+    const days = Number(entry?.days) || 0;
+    return `${days} day${days === 1 ? '' : 's'}: ${formatDateDDMMYYYY(entry?.from)} -> ${formatDateDDMMYYYY(entry?.to)}`;
+  });
+  const totalDays = list.reduce((sum, entry) => sum + (Number(entry?.days) || 0), 0);
+  return [`Total: ${totalDays} day${totalDays === 1 ? '' : 's'}`, ...lines].join('\n');
 }
 
 function formatKpiValue(num) {
@@ -161,49 +187,119 @@ function rowHasNumericField(row, fields = []) {
 }
 
 function getPayrollOvertimeHoursValue(row) {
+  const directOverride = Number(row?.payroll_overtime_hours_override);
+  if (Number.isFinite(directOverride)) return directOverride;
+
+  const workedHours = getRowNumericValue(row, PAYROLL_RAW_WORKED_HOURS_FIELDS);
+  const contractHours = getRowNumericValue(row, PAYROLL_CONTRACT_HOURS_FIELDS);
+  if (workedHours > 0 && contractHours > 0) return Math.max(workedHours - contractHours, 0);
+
   const explicit = getRowNumericValue(row, PAYROLL_OVERTIME_HOURS_FIELDS);
   if (explicit > 0 || rowHasNumericField(row, PAYROLL_OVERTIME_HOURS_FIELDS)) {
     return explicit;
   }
 
-  const workedHours = getRowNumericValue(row, PAYROLL_RAW_WORKED_HOURS_FIELDS);
-  const regularHours = getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
-  if (workedHours > 0 && regularHours > 0) return Math.max(workedHours - regularHours, 0);
-
-  const contractHours = getRowNumericValue(row, PAYROLL_CONTRACT_HOURS_FIELDS);
-  if (workedHours > 0 && contractHours > 0) return Math.max(workedHours - contractHours, 0);
+  const regularHours = getPayrollRegularHoursValue(row);
+  const totalHours = getPayrollWorkedHoursValue(row);
+  if (totalHours > 0 || regularHours > 0) return Math.max(totalHours - regularHours, 0);
   return 0;
 }
 
 function getPayrollWorkedHoursValue(row) {
+  const directOverride = Number(row?.payroll_worked_hours_override);
+  if (Number.isFinite(directOverride)) return directOverride;
+
   const totalWorked = getRowNumericValue(row, PAYROLL_RAW_WORKED_HOURS_FIELDS);
   if (totalWorked > 0) return totalWorked;
 
   const payrollHours = getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
   const overtimeHours = getRowNumericValue(row, PAYROLL_OVERTIME_HOURS_FIELDS);
   if (payrollHours > 0 || overtimeHours > 0) return payrollHours + overtimeHours;
+
+  const contractHours = getRowNumericValue(row, PAYROLL_CONTRACT_HOURS_FIELDS);
+  if (contractHours > 0) return contractHours;
   return 0;
 }
 
 function getPayrollRegularHoursValue(row) {
+  const directOverride = Number(row?.payroll_regular_hours_override);
+  if (Number.isFinite(directOverride)) return directOverride;
+
+  const contractHours = getPayrollContractHoursValue(row);
+  const workedHours = getRowNumericValue(row, PAYROLL_RAW_WORKED_HOURS_FIELDS);
+  if (workedHours > 0 && contractHours > 0) return Math.min(workedHours, contractHours);
+
   const payrollHours = getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
   if (payrollHours > 0 || rowHasNumericField(row, PAYROLL_REGULAR_HOURS_FIELDS)) {
     return payrollHours;
   }
 
-  const workedHours = getPayrollWorkedHoursValue(row);
-  const contractHours = getPayrollContractHoursValue(row);
-  if (workedHours > 0 && contractHours > 0) return Math.min(workedHours, contractHours);
-  return workedHours;
+  const totalHours = getPayrollWorkedHoursValue(row);
+  if (contractHours > 0) return Math.min(totalHours, contractHours);
+  return totalHours;
 }
 
 function getPayrollContractHoursValue(row) {
-  const explicit = getRowNumericValue(row, PAYROLL_CONTRACT_HOURS_FIELDS);
-  if (explicit > 0 || rowHasNumericField(row, PAYROLL_CONTRACT_HOURS_FIELDS)) {
-    return explicit;
+  return getRowNumericValue(row, PAYROLL_CONTRACT_HOURS_FIELDS);
+}
+
+function getPayrollEditorFieldValue(row, key) {
+  if (key === 'worked_hours') return getPayrollWorkedHoursValue(row);
+  if (key === 'expected_hours') return getPayrollRegularHoursValue(row);
+  if (key === 'overtime_hours') return getPayrollOvertimeHoursValue(row);
+  if (key === 'eintrittsdatum' || key === 'austrittsdatum') {
+    return String(row?.[key] || '').slice(0, 10);
+  }
+  return row?.[key];
+}
+
+function buildPayrollRowEditForm(row) {
+  return PAYROLL_ROW_EDITABLE_FIELDS.reduce((acc, field) => {
+    const value = getPayrollEditorFieldValue(row, field.key);
+    if (field.inputType === 'number') {
+      const numeric = Number(value);
+      acc[field.key] = Number.isFinite(numeric) ? String(numeric) : '0';
+      return acc;
+    }
+    acc[field.key] = value == null ? '' : String(value);
+    return acc;
+  }, {});
+}
+
+function getRemainingVacationFromSummary(summary, row, year, now = new Date()) {
+  const safeYear = Number.isInteger(Number(year)) ? Number(year) : now.getFullYear();
+  const totalYearVacation = Number(summary?.total_year_vacation);
+  const fallbackTotalYearVacation = Number(summary?.default_total_year_vacation);
+  const baseTotalYearVacation = Number.isFinite(totalYearVacation)
+    ? totalYearVacation
+    : Number.isFinite(fallbackTotalYearVacation)
+      ? fallbackTotalYearVacation
+      : 20;
+  const carryOverDays = Number(row?.carryover_days);
+  const carryOver = Number.isFinite(carryOverDays) ? carryOverDays : 0;
+  const approvedVacationDaysYear = Number(summary?.approved_vacation_days_year);
+  const approvedVacationDaysUntilMarch31 = Number(summary?.approved_vacation_days_until_march_31);
+  const usedYear = Number.isFinite(approvedVacationDaysYear) ? approvedVacationDaysYear : 0;
+  const usedUntilMarch31 = Number.isFinite(approvedVacationDaysUntilMarch31) ? approvedVacationDaysUntilMarch31 : 0;
+  const seed = Number(summary?.current_remaining_vacation_seed);
+  const hasSeed = Number.isFinite(seed);
+  const approvedAfterSeed = Number(summary?.approved_vacation_days_after_seed);
+  if (hasSeed) {
+    const remaining = Math.max(seed - (Number.isFinite(approvedAfterSeed) ? approvedAfterSeed : 0), 0);
+    return Math.round(remaining * 100) / 100;
   }
 
-  return getRowNumericValue(row, PAYROLL_REGULAR_HOURS_FIELDS);
+  const marchDeadline = new Date(safeYear, 2, 31, 23, 59, 59, 999);
+  const afterCarryDeadline =
+    now.getFullYear() > safeYear || (now.getFullYear() === safeYear && now > marchDeadline);
+  const carryConsumedByDeadline = Math.min(carryOver, usedUntilMarch31);
+  const chargedCurrentYearVacation = afterCarryDeadline
+    ? Math.max(usedYear - carryConsumedByDeadline, 0)
+    : Math.max(usedYear - Math.min(carryOver, usedYear), 0);
+  const remaining = afterCarryDeadline
+    ? Math.max(baseTotalYearVacation - chargedCurrentYearVacation, 0)
+    : Math.max(baseTotalYearVacation + carryOver - usedYear, 0);
+  return Math.round(remaining * 100) / 100;
 }
 
 function buildPayrollSummaryCards(rows, selectedMonth, t) {
@@ -212,16 +308,17 @@ function buildPayrollSummaryCards(rows, selectedMonth, t) {
   const sums = list.reduce(
     (acc, row) => {
       const abzugFromLines = (row.abzug_lines || []).reduce((sum, line) => sum + (Number(line?.amount) || 0), 0);
+      const urlaubDays = Number(row.urlaub_days) || 0;
       acc.workedHours += getPayrollWorkedHoursValue(row);
       acc.payrollHours += getPayrollRegularHoursValue(row);
       acc.overtimeHours += getPayrollOvertimeHoursValue(row);
       acc.totalBonus += Number(row.total_bonus) || 0;
       acc.totalAbzug += typeof row.abzug === 'number' ? row.abzug : abzugFromLines;
       acc.verpflMehr += Math.max(0, Number(row.verpfl_mehr) || 0);
-      acc.fahrtGeld += Number(row.fahrt_geld) || 0;
+      acc.fahrtGeld += urlaubDays * PAYROLL_TRAVEL_ALLOWANCE_VACATION_HOURS * PAYROLL_SUMMARY_HOUR_RATE_EUR;
       acc.bonus += Number(row.bonus) || 0;
       acc.kranktage += Number(row.krank_days) || 0;
-      acc.urlaubstage += Number(row.urlaub_days) || 0;
+      acc.urlaubstage += urlaubDays;
       if (String(row.austritsdatum || row.austrittsdatum || '').slice(0, 7) === month) {
         acc.maAustrit += 1;
       }
@@ -277,6 +374,29 @@ function formatPayrollHistoryLabel(item) {
   return `${MONTH_NAMES[monthIndex]} ${year}`;
 }
 
+function getPayrollRowStableKey(row) {
+  const id = String(row?.kenjo_employee_id || '').trim();
+  if (id) return `id:${id}`;
+  const pn = normalizePayrollPn(row?.pn);
+  const name = String(row?.name || '').trim().toLowerCase();
+  if (pn || name) return `pn:${pn}|name:${name}`;
+  return '';
+}
+
+function getPayrollRenderKey(row, idx) {
+  const stableKey = getPayrollRowStableKey(row);
+  if (stableKey) return stableKey;
+  return `idx:${Number(idx) || 0}`;
+}
+
+function normalizePayrollPn(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (!/^\d+$/.test(raw)) return raw.toLowerCase();
+  const normalized = raw.replace(/^0+/, '');
+  return normalized || '0';
+}
+
 export default function PayrollPage() {
   const navigate = useNavigate();
   const { t } = useAppSettings();
@@ -289,6 +409,7 @@ export default function PayrollPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  const [rowOverrides, setRowOverrides] = useState({});
   const [abzugModal, setAbzugModal] = useState(null);
   const [abzugSaving, setAbzugSaving] = useState(false);
   const [addRecordOpen, setAddRecordOpen] = useState(false);
@@ -348,8 +469,112 @@ export default function PayrollPage() {
   const [showBonusBreakdown, setShowBonusBreakdown] = useState(false);
   const [bonusBreakdownRow, setBonusBreakdownRow] = useState(null);
   const [selectedPayrollRowKey, setSelectedPayrollRowKey] = useState('');
+  const [payrollEditMode, setPayrollEditMode] = useState(false);
+  const [rowEditModal, setRowEditModal] = useState(null);
+  const [rowEditSaving, setRowEditSaving] = useState(false);
   const [verpflegungSavingKey, setVerpflegungSavingKey] = useState('');
   const calendarTitleRef = useRef(null);
+  const vacationSummaryCacheRef = useRef(new Map());
+  const employeeDirectoryPromiseRef = useRef(null);
+
+  const loadEmployeeDirectory = async () => {
+    if (!employeeDirectoryPromiseRef.current) {
+      employeeDirectoryPromiseRef.current = listEmployees({ onlyActive: false })
+        .then((items) => {
+          const rows = Array.isArray(items) ? items : [];
+          const byKenjoId = new Map();
+          const byPn = new Map();
+          for (const item of rows) {
+            const preferredRef =
+              String(item?.employee_id || '').trim() ||
+              String(item?.id || '').trim() ||
+              String(item?.kenjo_user_id || '').trim();
+            if (!preferredRef) continue;
+            const kenjoId = String(item?.kenjo_user_id || '').trim();
+            const pn = String(item?.pn || '').trim();
+            if (kenjoId && !byKenjoId.has(kenjoId)) byKenjoId.set(kenjoId, preferredRef);
+            if (pn && !byPn.has(pn)) byPn.set(pn, preferredRef);
+          }
+          return { byKenjoId, byPn };
+        })
+        .catch(() => ({ byKenjoId: new Map(), byPn: new Map() }));
+    }
+    return employeeDirectoryPromiseRef.current;
+  };
+
+  const enrichPayrollRowsWithVacationBalances = async (payload) => {
+    if (!payload || !Array.isArray(payload.rows) || !payload.rows.length) return payload;
+    const payloadYear = Number(String(payload.month || month || '').slice(0, 4));
+    const year = Number.isInteger(payloadYear) ? payloadYear : new Date().getFullYear();
+    const employeeDirectory = await loadEmployeeDirectory();
+    const rows = [];
+    for (const row of payload.rows) {
+      const kenjoEmployeeId = String(row?.kenjo_employee_id || '').trim();
+      const pn = String(row?.pn || '').trim();
+      const employeeRef =
+        employeeDirectory.byKenjoId.get(kenjoEmployeeId) ||
+        employeeDirectory.byPn.get(pn) ||
+        kenjoEmployeeId;
+      if (!employeeRef) {
+        rows.push(row);
+        continue;
+      }
+      const currentRemaining = Number(row?.rest_urlaub);
+      if (Number.isFinite(currentRemaining) && currentRemaining > 0) {
+        rows.push(row);
+        continue;
+      }
+
+      const cacheKey = `${employeeRef}-${year}`;
+      let summaryPromise = vacationSummaryCacheRef.current.get(cacheKey);
+      if (!summaryPromise) {
+        summaryPromise = getEmployeeVacationSummary(employeeRef, year).catch(() => null);
+        vacationSummaryCacheRef.current.set(cacheKey, summaryPromise);
+      }
+
+      const summary = await summaryPromise;
+      const remainingVacation = getRemainingVacationFromSummary(summary, row, year);
+      if (remainingVacation == null) {
+        rows.push(row);
+      } else {
+        rows.push({ ...row, rest_urlaub: remainingVacation });
+      }
+    }
+    return { ...payload, rows };
+  };
+
+  const rowsWithOverrides = useMemo(() => {
+    const baseRows = Array.isArray(result?.rows) ? result.rows : [];
+    return baseRows.map((row, idx) => {
+      const stableKey = getPayrollRowStableKey(row);
+      const renderKey = getPayrollRenderKey(row, idx);
+      const stableOverride = stableKey ? rowOverrides[stableKey] : null;
+      const renderOverride = renderKey ? rowOverrides[renderKey] : null;
+      const override = stableOverride || renderOverride
+        ? {
+            ...(stableOverride || {}),
+            ...(renderOverride || {}),
+          }
+        : null;
+      if (!override) return row;
+      const manualEntryOverride = stableOverride?.manual_entry || renderOverride?.manual_entry
+        ? {
+            ...(stableOverride?.manual_entry || {}),
+            ...(renderOverride?.manual_entry || {}),
+          }
+        : null;
+      return {
+        ...row,
+        ...override,
+        manual_entry: row?.manual_entry || manualEntryOverride
+          ? {
+              ...(row?.manual_entry || {}),
+              ...(manualEntryOverride || {}),
+            }
+          : row?.manual_entry,
+      };
+    });
+  }, [result?.rows, rowOverrides]);
 
   useEffect(() => {
     if (!result?.month || !Array.isArray(result?.rows) || !result.rows.length) return;
@@ -358,14 +583,14 @@ export default function PayrollPage() {
         month: String(result.month || '').slice(0, 7),
         from: String(result.from || '').slice(0, 10),
         to: String(result.to || '').slice(0, 10),
-        rows: result.rows,
+        rows: rowsWithOverrides,
         savedAt: Date.now(),
       };
       window.localStorage.setItem(PAYROLL_FROZEN_CACHE_KEY, JSON.stringify(payload));
     } catch {
       // ignore storage errors (private mode / quota)
     }
-  }, [result?.month, result?.from, result?.to, result?.rows]);
+  }, [result?.month, result?.from, result?.to, rowsWithOverrides]);
 
   useEffect(() => {
     if (!addRecordOpen) return;
@@ -461,10 +686,63 @@ export default function PayrollPage() {
   // Employees who have no record in the selected month (for Add record dropdown)
   const addRecordEmployeesAvailable = useMemo(() => {
     const existingIds = new Set(
-      (result?.rows || []).map((r) => String(r.kenjo_employee_id || '').trim()).filter(Boolean)
+      rowsWithOverrides.map((r) => String(r.kenjo_employee_id || '').trim()).filter(Boolean)
     );
     return (addRecordEmployees || []).filter((e) => !existingIds.has(String(e._id || e.id || '').trim()));
-  }, [addRecordEmployees, result?.rows]);
+  }, [addRecordEmployees, rowsWithOverrides]);
+
+  const reloadCurrentPayrollResult = async () => {
+    const activeFrom = String(fromDate || result?.from || '').slice(0, 10);
+    const activeTo = String(toDate || result?.to || '').slice(0, 10);
+    if (!activeFrom || !activeTo) return false;
+    const data = await calculatePayroll(month, activeFrom, activeTo);
+    const enriched = await enrichPayrollRowsWithVacationBalances(data);
+    setRowOverrides({});
+    setResult(enriched);
+    return true;
+  };
+
+  const matchesPayrollRow = (row, target) => {
+    if (target?.rowRef && row === target.rowRef) return true;
+    const targetId = String(target?.kenjo_employee_id || '').trim();
+    const targetPn = normalizePayrollPn(target?.pn);
+    const targetName = String(target?.name || '').trim().toLowerCase();
+    if (!targetId && !targetPn && !targetName) return false;
+    const rowId = String(row?.kenjo_employee_id || '').trim();
+    const rowPn = normalizePayrollPn(row?.pn);
+    const rowName = String(row?.name || '').trim().toLowerCase();
+    if (targetId) return rowId === targetId;
+    if (targetPn && rowPn === targetPn) return !targetName || rowName === targetName;
+    if (targetName) return rowName === targetName;
+    return rowName === targetName;
+  };
+
+  const getPayrollRowSnapshot = (target) => {
+    if (!rowsWithOverrides.length) return null;
+    return rowsWithOverrides.find((row) => matchesPayrollRow(row, target)) || null;
+  };
+
+  const updatePayrollRow = (target, updater) => {
+    if (!target) return;
+    setResult((prev) => {
+      if (!prev?.rows) return prev;
+      let updated = false;
+      return {
+        ...prev,
+        rows: prev.rows.map((row) => {
+          const matches = !updated && matchesPayrollRow(row, target);
+          if (!matches) return row;
+          updated = true;
+          return updater(row);
+        }),
+      };
+    });
+  };
+
+  const restorePayrollRow = (target, snapshot) => {
+    if (!snapshot) return;
+    updatePayrollRow(target, () => snapshot);
+  };
 
   const handleLoad = async () => {
     if (!fromDate || !toDate) {
@@ -475,26 +753,8 @@ export default function PayrollPage() {
     setError('');
     setResult(null);
     try {
-      const periodId = String(month || '').slice(0, 7);
-      const hasFrozenSnapshot = payrollHistory.some((item) => String(item?.period_id || '') === periodId);
-      if (hasFrozenSnapshot) {
-        const snapshot = await getPayrollHistorySnapshot(periodId);
-        const payload = snapshot?.payload || null;
-        if (payload) {
-          setResult(payload);
-          setFromDate(String(payload.from || snapshot?.period_from || fromDate).slice(0, 10));
-          setToDate(String(payload.to || snapshot?.period_to || toDate).slice(0, 10));
-          setFrozenPayrollPeriodId(periodId);
-        } else {
-          const data = await calculatePayroll(month, fromDate, toDate);
-          setResult(data);
-          setFrozenPayrollPeriodId('');
-        }
-      } else {
-        const data = await calculatePayroll(month, fromDate, toDate);
-        setResult(data);
-        setFrozenPayrollPeriodId('');
-      }
+      await reloadCurrentPayrollResult();
+      setFrozenPayrollPeriodId('');
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -503,14 +763,14 @@ export default function PayrollPage() {
   };
 
   const handleExportAdp = async () => {
-    if (!result?.month || !result?.rows?.length) {
+    if (!result?.month || !rowsWithOverrides.length) {
       setError('Load payroll first, then export.');
       return;
     }
     setExportAdpLoading(true);
     setError('');
     try {
-      await exportPayrollToAdp(result.month, result.rows, result);
+      await exportPayrollToAdp(result.month, rowsWithOverrides, { ...result, rows: rowsWithOverrides });
       const history = await getPayrollHistory().catch(() => []);
       setPayrollHistory(Array.isArray(history) ? history : []);
       setFrozenPayrollPeriodId(String(result.month || '').slice(0, 7));
@@ -523,14 +783,14 @@ export default function PayrollPage() {
   };
 
   const handleExportExcel = async () => {
-    if (!result?.month || !result?.rows?.length) {
+    if (!result?.month || !rowsWithOverrides.length) {
       setError('Load payroll first, then export.');
       return;
     }
     setExportExcelLoading(true);
     setError('');
     try {
-      await exportPayrollToExcel(result.month, result.rows);
+      await exportPayrollToExcel(result.month, rowsWithOverrides);
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -539,14 +799,14 @@ export default function PayrollPage() {
   };
 
   const handleExportPdf = async () => {
-    if (!result?.month || !result?.rows?.length) {
+    if (!result?.month || !rowsWithOverrides.length) {
       setError('Load payroll first, then export.');
       return;
     }
     setExportPdfLoading(true);
     setError('');
     try {
-      await exportPayrollToPdf(result.month, result.rows);
+      await exportPayrollToPdf(result.month, rowsWithOverrides);
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -555,7 +815,7 @@ export default function PayrollPage() {
   };
 
   const handleExportReports = async () => {
-    if (!result?.month || !result?.rows?.length) {
+    if (!result?.month || !rowsWithOverrides.length) {
       setError('Load payroll first, then export.');
       return;
     }
@@ -564,8 +824,8 @@ export default function PayrollPage() {
     setExportPdfLoading(true);
     setError('');
     try {
-      await exportPayrollToExcel(result.month, result.rows);
-      await exportPayrollToPdf(result.month, result.rows);
+      await exportPayrollToExcel(result.month, rowsWithOverrides);
+      await exportPayrollToPdf(result.month, rowsWithOverrides);
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
@@ -591,7 +851,8 @@ export default function PayrollPage() {
     setError('');
     try {
       const snapshot = await getPayrollHistorySnapshot(id);
-      setPayrollHistoryModal(snapshot);
+      const payload = await enrichPayrollRowsWithVacationBalances(snapshot?.payload);
+      setPayrollHistoryModal(payload ? { ...snapshot, payload } : snapshot);
     } catch (e) {
       setError(String(e?.message || e));
       setPayrollHistoryModal(null);
@@ -622,7 +883,7 @@ export default function PayrollPage() {
     setActiveDriversLoading(true);
     setActiveDriversList([]);
     setError('');
-    const inPayrollIds = new Set((result?.rows || []).map((r) => String(r.kenjo_employee_id || '').trim()).filter(Boolean));
+    const inPayrollIds = new Set(rowsWithOverrides.map((r) => String(r.kenjo_employee_id || '').trim()).filter(Boolean));
     getKenjoUsers()
       .then((list) => {
         const users = Array.isArray(list) ? list : [];
@@ -923,10 +1184,7 @@ export default function PayrollPage() {
         bonus,
         vorschuss,
       });
-      if (fromDate && toDate) {
-        const data = await calculatePayroll(month, fromDate, toDate);
-        setResult(data);
-      } else {
+      if (!(await reloadCurrentPayrollResult())) {
         const afterAbzug = Math.round((totalBonus - abzug) * 100) / 100;
         const maxVerpfl = workingDays * 14;
         const derivedVerpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
@@ -981,14 +1239,17 @@ export default function PayrollPage() {
     { amount: 0, comment: '' },
   ];
 
-  const openAbzug = (row) => {
+  const openAbzug = (row, rowRenderKey = '') => {
     if (isFrozenPayroll) return;
     const lines = (row.abzug_lines && row.abzug_lines.length >= 3)
       ? row.abzug_lines.map((l) => ({ amount: Number(l.amount) || 0, comment: String(l.comment ?? '').trim() }))
       : defaultAbzugLines();
     setAbzugModal({
+      rowRef: row,
+      rowRenderKey,
       kenjo_employee_id: row.kenjo_employee_id,
       name: row.name,
+      pn: row.pn,
       periodId: result?.month,
       working_days: Number(row.working_days) || 0,
       lines: [
@@ -1026,46 +1287,84 @@ export default function PayrollPage() {
     if (!abzugModal || !result?.month || !abzugModal.lines) return;
     const lines = abzugModal.lines.map((l) => ({ amount: Number(l.amount) || 0, comment: String(l.comment ?? '').trim() }));
     if (lines.some((l) => Number.isNaN(l.amount) || l.amount < 0)) return;
+    const previousRow = getPayrollRowSnapshot(abzugModal);
+    const targetKey = abzugModal.rowRenderKey || getPayrollRowStableKey(abzugModal);
+    const totalAbzug = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    const roundedAbzug = Math.round(totalAbzug * 100) / 100;
+    const normalizedLines = lines.map((line) => ({
+      amount: Math.round((Number(line.amount) || 0) * 100) / 100,
+      comment: line.comment,
+    }));
     setAbzugSaving(true);
+    setError('');
+    if (targetKey && previousRow) {
+      const totalBonus = Math.round((Number(previousRow.total_bonus) || 0) * 100) / 100;
+      const workingDays = Number(previousRow.working_days) || 0;
+      const afterAbzug = Math.round((totalBonus - roundedAbzug) * 100) / 100;
+      const maxVerpfl = workingDays * 14;
+      const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+      const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+      setRowOverrides((prev) => ({
+        ...prev,
+        [targetKey]: {
+          abzug: roundedAbzug,
+          abzug_lines: normalizedLines,
+          after_abzug: afterAbzug,
+          verpfl_mehr: verpflMehr,
+          fahrt_geld: fahrtGeld,
+          manual_entry: previousRow?.manual_entry
+            ? {
+                ...previousRow.manual_entry,
+                abzug: roundedAbzug,
+                verpfl_mehr: verpflMehr,
+                fahrt_geld: fahrtGeld,
+              }
+            : previousRow?.manual_entry,
+        },
+      }));
+      updatePayrollRow(abzugModal, (row) => ({
+        ...row,
+        abzug: roundedAbzug,
+        abzug_lines: normalizedLines,
+        after_abzug: afterAbzug,
+        verpfl_mehr: verpflMehr,
+        fahrt_geld: fahrtGeld,
+        manual_entry: row?.manual_entry
+          ? {
+              ...row.manual_entry,
+              abzug: roundedAbzug,
+              verpfl_mehr: verpflMehr,
+              fahrt_geld: fahrtGeld,
+            }
+          : row?.manual_entry,
+      }));
+    }
+    closeAbzug();
     try {
       await savePayrollAbzug(result.month, abzugModal.kenjo_employee_id, lines);
-      const totalAbzug = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
-      setResult((prev) => ({
-        ...prev,
-        rows: prev.rows.map((r) =>
-          r.kenjo_employee_id === abzugModal.kenjo_employee_id
-            ? {
-                ...r,
-                abzug: Math.round(totalAbzug * 100) / 100,
-                abzug_lines: lines.map((l) => ({ amount: Math.round((Number(l.amount) || 0) * 100) / 100, comment: l.comment })),
-                after_abzug: Math.round((r.total_bonus - totalAbzug) * 100) / 100,
-                verpfl_mehr: r.verpfl_mehr_removed ? 0 : (() => {
-                  const after = r.total_bonus - totalAbzug;
-                  const maxV = r.working_days * 14;
-                  return Math.round((after <= maxV ? after : maxV) * 100) / 100;
-                })(),
-                fahrt_geld: (() => {
-                  const after = r.total_bonus - totalAbzug;
-                  const maxV = r.working_days * 14;
-                  return Math.round((after > maxV ? after - maxV : 0) * 100) / 100;
-                })(),
-              }
-            : r
-        ),
-      }));
-      closeAbzug();
     } catch (e) {
+      if (targetKey) {
+        setRowOverrides((prev) => {
+          const next = { ...prev };
+          delete next[targetKey];
+          return next;
+        });
+      }
+      restorePayrollRow(abzugModal, previousRow);
       setError(String(e?.message || e));
     } finally {
       setAbzugSaving(false);
     }
   };
 
-  const openBonus = (row) => {
+  const openBonus = (row, rowRenderKey = '') => {
     if (isFrozenPayroll) return;
     setBonusModal({
+      rowRef: row,
+      rowRenderKey,
       kenjo_employee_id: row.kenjo_employee_id,
       name: row.name,
+      pn: row.pn,
       amount: Number(row.bonus) || 0,
       comment: '',
     });
@@ -1081,52 +1380,133 @@ export default function PayrollPage() {
     if (!bonusModal || !result?.month) return;
     const amount = Number(bonusModal.amount);
     if (Number.isNaN(amount) || amount < 0) return;
+    const previousRow = getPayrollRowSnapshot(bonusModal);
+    const targetKey = bonusModal.rowRenderKey || getPayrollRowStableKey(bonusModal);
+    const roundedBonus = Math.round(amount * 100) / 100;
     setBonusSaving(true);
-    try {
-      setError('');
-      await savePayrollBonus(result.month, bonusModal.kenjo_employee_id, amount, bonusModal.comment ?? '');
-      setResult((prev) => ({
+    setError('');
+    if (targetKey) {
+      setRowOverrides((prev) => ({
         ...prev,
-        rows: prev.rows.map((r) =>
-          r.kenjo_employee_id === bonusModal.kenjo_employee_id
-            ? { ...r, bonus: Math.round(amount * 100) / 100 }
-            : r
-        ),
+        [targetKey]: {
+          bonus: roundedBonus,
+          manual_entry: previousRow?.manual_entry
+            ? {
+                ...previousRow.manual_entry,
+                bonus: roundedBonus,
+              }
+            : previousRow?.manual_entry,
+        },
       }));
-      closeBonus();
+      updatePayrollRow(bonusModal, (row) => ({
+        ...row,
+        bonus: roundedBonus,
+        manual_entry: row?.manual_entry
+          ? {
+              ...row.manual_entry,
+              bonus: roundedBonus,
+            }
+          : row?.manual_entry,
+      }));
+    }
+    closeBonus();
+    try {
+      await savePayrollBonus(result.month, bonusModal.kenjo_employee_id, amount, bonusModal.comment ?? '');
     } catch (e) {
+      if (targetKey) {
+        setRowOverrides((prev) => {
+          const next = { ...prev };
+          delete next[targetKey];
+          return next;
+        });
+      }
+      restorePayrollRow(bonusModal, previousRow);
       setError(String(e?.message || e));
     } finally {
       setBonusSaving(false);
     }
   };
 
-  const toggleVerpflegung = async (row, rowKey) => {
+  const toggleVerpflegung = async (row, rowRenderKey = '') => {
     if (isFrozenPayroll || !result?.month || !row?.kenjo_employee_id) return;
     const isRemoved = Boolean(row.verpfl_mehr_removed);
     if (!isRemoved && !window.confirm(`Remove Verpflegung for ${row.name || 'this employee'}?`)) return;
-    setVerpflegungSavingKey(rowKey);
+    const targetKey = rowRenderKey || getPayrollRowStableKey(row);
+    setVerpflegungSavingKey(targetKey);
     setError('');
     try {
       await savePayrollVerpflegungOverride(result.month, row.kenjo_employee_id, !isRemoved);
-      setResult((prev) => ({
-        ...prev,
-        rows: prev.rows.map((currentRow) => {
-          if (currentRow.kenjo_employee_id !== row.kenjo_employee_id) return currentRow;
-          const afterAbzug = Number(currentRow.after_abzug) || 0;
-          const maxVerpflegung = (Number(currentRow.working_days) || 0) * 14;
-          const calculatedVerpflegung = Math.round((afterAbzug <= maxVerpflegung ? afterAbzug : maxVerpflegung) * 100) / 100;
-          return {
-            ...currentRow,
-            verpfl_mehr: isRemoved ? calculatedVerpflegung : 0,
-            verpfl_mehr_removed: !isRemoved,
-          };
-        }),
-      }));
+      await reloadCurrentPayrollResult();
     } catch (e) {
       setError(String(e?.message || e));
     } finally {
       setVerpflegungSavingKey('');
+    }
+  };
+
+  const openRowEditModal = (row, rowKey = '') => {
+    if (isFrozenPayroll || !row?.kenjo_employee_id) return;
+    setSelectedPayrollRowKey(rowKey);
+    setRowEditModal({
+      employeeId: row.kenjo_employee_id,
+      rowKey,
+      employeeName: row.name || '',
+      form: buildPayrollRowEditForm(row),
+    });
+  };
+
+  const closeRowEditModal = () => {
+    if (rowEditSaving) return;
+    setRowEditModal(null);
+  };
+
+  const updateRowEditForm = (field, value) => {
+    setRowEditModal((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        form: {
+          ...prev.form,
+          [field]: value,
+        },
+      };
+    });
+  };
+
+  const saveRowEditModal = async () => {
+    if (!result?.month || !rowEditModal?.employeeId) return;
+    const payload = PAYROLL_ROW_EDITABLE_FIELDS.reduce((acc, field) => {
+      const rawValue = rowEditModal.form?.[field.key];
+      if (field.inputType === 'number') {
+        const numeric = Number(rawValue);
+        acc[field.key] = Number.isFinite(numeric) ? numeric : 0;
+        return acc;
+      }
+      if (field.inputType === 'date') {
+        acc[field.key] = String(rawValue || '').slice(0, 10) || null;
+        return acc;
+      }
+      acc[field.key] = String(rawValue ?? '');
+      return acc;
+    }, {});
+
+    setRowEditSaving(true);
+    setError('');
+    try {
+      await savePayrollRowOverride(result.month, rowEditModal.employeeId, payload);
+      await reloadCurrentPayrollResult();
+      setRowEditModal(null);
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setRowEditSaving(false);
+    }
+  };
+
+  const handlePayrollRowClick = (row, rowKey = '') => {
+    setSelectedPayrollRowKey(rowKey);
+    if (payrollEditMode) {
+      openRowEditModal(row, rowKey);
     }
   };
 
@@ -1136,7 +1516,6 @@ export default function PayrollPage() {
     { key: 'working_days', label: t('payroll.columns.working_days') },
     { key: 'worked_hours', label: t('payroll.columns.worked_hours') },
     { key: 'expected_hours', label: t('payroll.columns.expected_hours') },
-    { key: 'contract_expected_hours', label: t('payroll.columns.contract_expected_hours') },
     { key: 'overtime_hours', label: t('payroll.columns.overtime_hours') },
     { key: 'krank_days', label: t('payroll.columns.krank_days') },
     { key: 'urlaub_days', label: t('payroll.columns.urlaub_days') },
@@ -1147,10 +1526,34 @@ export default function PayrollPage() {
     { key: 'verpfl_mehr', label: t('payroll.columns.verpfl_mehr') },
     { key: 'fahrt_geld', label: t('payroll.columns.fahrt_geld') },
     { key: 'bonus', label: t('payroll.columns.bonus') },
+    { key: 'vorschuss', label: t('payroll.columns.vorschuss') },
     { key: 'eintrittsdatum', label: t('payroll.columns.eintrittsdatum') },
     { key: 'austrittsdatum', label: t('payroll.columns.austrittsdatum') },
-    { key: 'vorschuss', label: t('payroll.columns.vorschuss') },
   ];
+  const editableColumnLabels = useMemo(
+    () => Object.fromEntries(columns.map((column) => [column.key, column.label])),
+    [columns]
+  );
+  const columnWidths = {
+    name: '10.5rem',
+    pn: '4.1rem',
+    working_days: '4rem',
+    worked_hours: '6rem',
+    expected_hours: '5.8rem',
+    overtime_hours: '3.6rem',
+    krank_days: '3.6rem',
+    urlaub_days: '4.4rem',
+    carryover_days: '4.4rem',
+    rest_urlaub: '5.6rem',
+    total_bonus: '5.4rem',
+    abzug: '5.4rem',
+    verpfl_mehr: '5.2rem',
+    fahrt_geld: '5.2rem',
+    bonus: '5.2rem',
+    vorschuss: '4rem',
+    eintrittsdatum: '5.6rem',
+    austrittsdatum: '5.4rem',
+  };
 
   const getSortValue = (row, key) => {
     if (key === 'abzug') {
@@ -1164,8 +1567,8 @@ export default function PayrollPage() {
   };
 
   const sortedRows = useMemo(() => {
-    if (!result?.rows || !sortBy) return result?.rows ?? [];
-    const rows = [...result.rows];
+    if (!rowsWithOverrides.length || !sortBy) return rowsWithOverrides;
+    const rows = [...rowsWithOverrides];
     const mult = sortDir === 'asc' ? 1 : -1;
     rows.sort((a, b) => {
       const va = getSortValue(a, sortBy);
@@ -1175,7 +1578,7 @@ export default function PayrollPage() {
       return mult * String(va).localeCompare(String(vb));
     });
     return rows;
-  }, [result?.rows, sortBy, sortDir]);
+  }, [rowsWithOverrides, sortBy, sortDir]);
 
   const handleSort = (key) => {
     if (sortBy === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -1190,15 +1593,11 @@ export default function PayrollPage() {
   const addRecordVerpflMehr = Math.round((addRecordAfterAbzug <= addRecordMaxVerpfl ? addRecordAfterAbzug : addRecordMaxVerpfl) * 100) / 100;
   const addRecordFahrtGeld = Math.round((addRecordAfterAbzug > addRecordMaxVerpfl ? addRecordAfterAbzug - addRecordMaxVerpfl : 0) * 100) / 100;
   const getPayrollRowKey = (row, idx) => {
-    const id = String(row?.kenjo_employee_id || '').trim();
-    if (id) return id;
-    const pn = String(row?.pn || '').trim();
-    const name = String(row?.name || '').trim();
-    return `${pn}-${name}-${idx}`;
+    return getPayrollRenderKey(row, idx);
   };
   const payrollSummaryCards = useMemo(() => {
-    return buildPayrollSummaryCards(result?.rows, result?.month || month, t);
-  }, [result?.month, result?.rows, month, t]);
+    return buildPayrollSummaryCards(rowsWithOverrides, result?.month || month, t);
+  }, [result?.month, rowsWithOverrides, month, t]);
 
   const visibleTerminationWindow = useMemo(() => {
     const monthValue = String(result?.month || month || '').trim();
@@ -1279,6 +1678,22 @@ export default function PayrollPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-start' }}>
             <button type="button" className="btn-primary" onClick={handleLoad} disabled={loading} style={{ width: 'auto', minWidth: 100 }}>
               {loading ? t('payroll.loading') : t('payroll.load')}
+            </button>
+            <button
+              type="button"
+              className={payrollEditMode ? 'btn-primary' : 'btn-secondary'}
+              onClick={() => setPayrollEditMode((prev) => !prev)}
+              disabled={isFrozenPayroll || !result?.rows?.length}
+              style={{
+                width: 'auto',
+                minWidth: 100,
+                background: payrollEditMode ? '#dc2626' : undefined,
+                borderColor: payrollEditMode ? '#dc2626' : undefined,
+                color: payrollEditMode ? '#fff' : undefined,
+                boxShadow: payrollEditMode ? '0 0 0 2px rgba(220, 38, 38, 0.18)' : undefined,
+              }}
+            >
+              {payrollEditMode ? 'Edit On' : 'Edit'}
             </button>
             <button type="button" className="btn-secondary" onClick={openAddRecord} disabled={isFrozenPayroll} style={{ width: 'auto', minWidth: 100 }}>
               {t('payroll.addRecord')}
@@ -1568,25 +1983,82 @@ export default function PayrollPage() {
         .payroll-main-row:hover td {
           background: rgba(37, 99, 235, 0.06);
         }
+        .payroll-main-row--edit-mode:hover td {
+          background: rgba(220, 38, 38, 0.08);
+        }
         .payroll-main-row--selected td {
           background: rgba(37, 99, 235, 0.14);
           box-shadow: inset 0 1px 0 rgba(37, 99, 235, 0.25), inset 0 -1px 0 rgba(37, 99, 235, 0.25);
         }
+        .payroll-main-row--selected.payroll-main-row--edit-mode td {
+          background: rgba(220, 38, 38, 0.14);
+          box-shadow: inset 0 1px 0 rgba(220, 38, 38, 0.22), inset 0 -1px 0 rgba(220, 38, 38, 0.22);
+        }
+        .payroll-loading-spinner {
+          width: 2.5rem;
+          height: 2.5rem;
+          border-radius: 999px;
+          border: 3px solid rgba(148, 163, 184, 0.35);
+          border-top-color: #2563eb;
+          animation: payroll-spin 0.9s linear infinite;
+        }
+        @keyframes payroll-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
         body.dark .payroll-main-row:hover td {
           background: rgba(96, 165, 250, 0.12);
+        }
+        body.dark .payroll-main-row--edit-mode:hover td {
+          background: rgba(248, 113, 113, 0.16);
         }
         body.dark .payroll-main-row--selected td {
           background: rgba(37, 99, 235, 0.32);
           box-shadow: inset 0 1px 0 rgba(147, 197, 253, 0.22), inset 0 -1px 0 rgba(147, 197, 253, 0.22);
         }
+        body.dark .payroll-main-row--selected.payroll-main-row--edit-mode td {
+          background: rgba(185, 28, 28, 0.34);
+          box-shadow: inset 0 1px 0 rgba(254, 202, 202, 0.16), inset 0 -1px 0 rgba(254, 202, 202, 0.16);
+        }
       `}</style>
 
       {error && <p className="error-text" style={{ marginBottom: '1rem' }}>{error}</p>}
+      {loading && (
+        <PayrollModalPortal backdrop="rgba(15, 23, 42, 0.22)">
+          <div
+            style={{
+              background: 'var(--bg-card, #fff)',
+              color: 'var(--text, #111827)',
+              borderRadius: 14,
+              border: '1px solid var(--border, rgba(148, 163, 184, 0.3))',
+              boxShadow: '0 18px 48px rgba(15, 23, 42, 0.18)',
+              padding: '1.2rem 1.4rem',
+              width: 'min(22rem, calc(100% - 2rem))',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.9rem',
+            }}
+          >
+            <div className="payroll-loading-spinner" aria-hidden="true" />
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: '0.18rem' }}>Loading payroll</div>
+              <div style={{ fontSize: '0.92rem', color: 'var(--text-muted, #6b7280)' }}>
+                Calculating hours, bonuses and vacation balances for the selected period.
+              </div>
+            </div>
+          </div>
+        </PayrollModalPortal>
+      )}
         {isFrozenPayroll && (
           <p style={{ marginBottom: '1rem', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', padding: '0.65rem 0.8rem', borderRadius: 8 }}>
             Frozen payroll snapshot loaded. Use Payroll history / Edit to reopen this month in editable mode.
           </p>
         )}
+      {payrollEditMode && !isFrozenPayroll && result?.rows?.length > 0 && (
+        <p style={{ marginBottom: '1rem', color: '#991b1b', background: '#fef2f2', border: '1px solid #fca5a5', padding: '0.65rem 0.8rem', borderRadius: 8 }}>
+          Edit mode is active. Click any employee row to open the full editor and save changes.
+        </p>
+      )}
 
       {showBonusBreakdown && (
         <PayrollModalPortal>
@@ -1728,23 +2200,15 @@ export default function PayrollPage() {
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', minWidth: '96rem', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: '10.5rem' }} />
-              <col style={{ width: '4.1rem' }} />
-              <col style={{ width: '4rem' }} />
-              <col style={{ width: '6rem' }} />
-              <col style={{ width: '5.8rem' }} />
-              <col style={{ width: '3.6rem', minWidth: '3.6rem' }} />
-              <col style={{ width: '3.6rem', minWidth: '3.6rem' }} />
-              <col style={{ width: '4.4rem' }} />
-              <col style={{ width: '4.4rem' }} />
-              <col style={{ width: '5.6rem' }} />
-              <col style={{ width: '5.4rem' }} />
-              <col style={{ width: '5.4rem' }} />
-              <col style={{ width: '5.2rem' }} />
-              <col style={{ width: '5.2rem' }} />
-              <col style={{ width: '5.2rem' }} />
-              <col style={{ width: '5.6rem' }} />
-              <col style={{ width: '5.4rem' }} />
+              {columns.map((col) => (
+                <col
+                  key={col.key}
+                  style={{
+                    width: columnWidths[col.key] || '5rem',
+                    minWidth: columnWidths[col.key] || '5rem',
+                  }}
+                />
+              ))}
             </colgroup>
             <thead>
               <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
@@ -1759,6 +2223,8 @@ export default function PayrollPage() {
                       userSelect: 'none',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
+                      width: columnWidths[col.key] || 'auto',
+                      minWidth: columnWidths[col.key] || 'auto',
                       ...((col.key === 'krank_days' || col.key === 'urlaub_days') ? { minWidth: '3.5rem', width: '3.5rem' } : {}),
                     }}
                     onClick={() => handleSort(col.key)}
@@ -1773,23 +2239,54 @@ export default function PayrollPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedRows.map((row, idx) => (
+              {sortedRows.map((row, idx) => {
+                const rowKey = getPayrollRowKey(row, idx);
+                const stableKey = getPayrollRowStableKey(row);
+                const stableOverride = stableKey ? rowOverrides[stableKey] : null;
+                const renderOverride = rowKey ? rowOverrides[rowKey] : null;
+                const manualEntryOverride = stableOverride?.manual_entry || renderOverride?.manual_entry
+                  ? {
+                      ...(stableOverride?.manual_entry || {}),
+                      ...(renderOverride?.manual_entry || {}),
+                    }
+                  : null;
+                const displayRow = stableOverride || renderOverride
+                  ? {
+                      ...row,
+                      ...(stableOverride || {}),
+                      ...(renderOverride || {}),
+                      manual_entry: row?.manual_entry || manualEntryOverride
+                        ? {
+                            ...(row?.manual_entry || {}),
+                            ...(manualEntryOverride || {}),
+                          }
+                        : row?.manual_entry,
+                    }
+                  : row;
+                return (
                 <tr
-                  key={`${row.kenjo_employee_id}-${idx}`}
-                  className={`payroll-main-row ${selectedPayrollRowKey === getPayrollRowKey(row, idx) ? 'payroll-main-row--selected' : ''}`}
+                  key={rowKey}
+                  className={`payroll-main-row ${payrollEditMode ? 'payroll-main-row--edit-mode' : ''} ${selectedPayrollRowKey === rowKey ? 'payroll-main-row--selected' : ''}`}
                   style={{ borderBottom: '1px solid #f3f4f6' }}
-                  onClick={() => setSelectedPayrollRowKey(getPayrollRowKey(row, idx))}
+                  onClick={() => handlePayrollRowClick(displayRow, rowKey)}
                 >
                   {columns.map((col) => {
                     if (col.key === 'abzug') {
-                      const abzugSum = (row.abzug_lines || []).reduce((s, l) => s + (Number(l?.amount) || 0), 0);
-                      const abzugVal = typeof row.abzug === 'number' ? row.abzug : abzugSum;
+                      const abzugSum = (displayRow.abzug_lines || []).reduce((s, l) => s + (Number(l?.amount) || 0), 0);
+                      const abzugVal = typeof displayRow.abzug === 'number' ? displayRow.abzug : abzugSum;
                       return (
                         <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                           {formatCurrency(abzugVal)}
                           <button
                             type="button"
-                            onClick={() => openAbzug(row)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (payrollEditMode) {
+                                openRowEditModal(displayRow, rowKey);
+                                return;
+                              }
+                              openAbzug(displayRow, rowKey);
+                            }}
                             title="Edit Abzug"
                             style={{ marginLeft: '0.25rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}
                           >
@@ -1801,10 +2298,17 @@ export default function PayrollPage() {
                     if (col.key === 'bonus') {
                       return (
                         <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          {formatCurrency(row.bonus)}
+                          {formatCurrency(displayRow.bonus)}
                           <button
                             type="button"
-                            onClick={() => openBonus(row)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (payrollEditMode) {
+                                openRowEditModal(displayRow, rowKey);
+                                return;
+                              }
+                              openBonus(displayRow, rowKey);
+                            }}
                             title="Edit Bonus"
                             style={{ marginLeft: '0.25rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}
                           >
@@ -1814,18 +2318,21 @@ export default function PayrollPage() {
                       );
                     }
                     if (col.key === 'verpfl_mehr') {
-                      const rowKey = getPayrollRowKey(row, idx);
-                      const isRemoved = Boolean(row.verpfl_mehr_removed);
+                      const isRemoved = Boolean(displayRow.verpfl_mehr_removed);
                       const isSaving = verpflegungSavingKey === rowKey;
                       return (
                         <td key={col.key} style={{ padding: '0.32rem 0.34rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          {formatCurrency(row.verpfl_mehr)}
+                          {formatCurrency(displayRow.verpfl_mehr)}
                           {!isFrozenPayroll && (
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                toggleVerpflegung(row, rowKey);
+                                if (payrollEditMode) {
+                                  openRowEditModal(displayRow, rowKey);
+                                  return;
+                                }
+                                toggleVerpflegung(displayRow, rowKey);
                               }}
                               disabled={isSaving}
                               title={isRemoved ? 'Restore calculated Verpflegung' : 'Remove Verpflegung'}
@@ -1844,7 +2351,14 @@ export default function PayrollPage() {
                           <button
                             type="button"
                             className="payroll-table-link"
-                            onClick={() => setBonusBreakdownRow(row)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (payrollEditMode) {
+                                openRowEditModal(displayRow, rowKey);
+                                return;
+                              }
+                              setBonusBreakdownRow(displayRow);
+                            }}
                             style={{
                               background: 'none',
                               border: 'none',
@@ -1854,40 +2368,52 @@ export default function PayrollPage() {
                             }}
                             title="Open weekly bonus breakdown"
                           >
-                            {formatCurrency(row.total_bonus)}
+                            {formatCurrency(displayRow.total_bonus)}
                           </button>
                         </td>
                       );
                     }
-                    if (col.key === 'name' && row.kenjo_employee_id && row.is_manual) {
+                    if (col.key === 'name' && displayRow.kenjo_employee_id && displayRow.is_manual) {
                       return (
                         <td key={col.key} style={{ padding: '0.32rem 0.34rem', maxWidth: '10.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
                             <button
                               type="button"
                               className="payroll-table-link"
-                              onClick={() =>
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (payrollEditMode) {
+                                  openRowEditModal(displayRow, rowKey);
+                                  return;
+                                }
                                 navigate('/employee', {
                                   state: {
-                                    kenjoEmployeeId: row.kenjo_employee_id,
+                                    kenjoEmployeeId: displayRow.kenjo_employee_id,
                                     payrollContext: {
                                       month: result?.month || month,
                                       from: result?.from || fromDate,
                                       to: result?.to || toDate,
                                     },
-                                    payrollRow: row,
+                                    payrollRow: displayRow,
                                   },
-                                })
-                              }
+                                });
+                              }}
                               style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                              title={row.name ?? 'Open employee profile'}
+                              title={displayRow.name ?? 'Open employee profile'}
                             >
-                              {row.name ?? '-'}
+                              {displayRow.name ?? '-'}
                             </button>
                             <button
                               type="button"
                               className="payroll-table-link"
-                              onClick={() => openEditManualRecord(row)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (payrollEditMode) {
+                                  openRowEditModal(displayRow, rowKey);
+                                  return;
+                                }
+                                openEditManualRecord(displayRow);
+                              }}
                               title="Edit manual row"
                               style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', padding: 0, lineHeight: 1 }}
                             >
@@ -1895,7 +2421,7 @@ export default function PayrollPage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => openEditManualRecord(row)}
+                              onClick={() => openEditManualRecord(displayRow)}
                               title="Edit manual row"
                               style={{ display: 'none' }}
                             >
@@ -1905,47 +2431,50 @@ export default function PayrollPage() {
                         </td>
                       );
                     }
-                    if (col.key === 'name' && row.kenjo_employee_id) {
+                    if (col.key === 'name' && displayRow.kenjo_employee_id) {
                       return (
                         <td key={col.key} style={{ padding: '0.32rem 0.34rem', maxWidth: '10.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <button
                             type="button"
                             className="payroll-table-link"
-                            onClick={() =>
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (payrollEditMode) {
+                                openRowEditModal(displayRow, rowKey);
+                                return;
+                              }
                               navigate('/employee', {
                                 state: {
-                                  kenjoEmployeeId: row.kenjo_employee_id,
+                                  kenjoEmployeeId: displayRow.kenjo_employee_id,
                                   payrollContext: {
                                     month: result?.month || month,
                                     from: result?.from || fromDate,
                                     to: result?.to || toDate,
                                   },
-                                  payrollRow: row,
+                                  payrollRow: displayRow,
                                 },
-                              })
-                            }
+                              });
+                            }}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, font: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                            title={row.name ?? 'Open employee profile'}
+                            title={displayRow.name ?? 'Open employee profile'}
                           >
-                            {row.name ?? '—'}
+                            {displayRow.name ?? '—'}
                           </button>
                         </td>
                       );
                     }
                     const val = col.key === 'worked_hours'
-                      ? getPayrollWorkedHoursValue(row)
+                      ? getPayrollWorkedHoursValue(displayRow)
                       : col.key === 'expected_hours'
-                        ? getPayrollRegularHoursValue(row)
-                        : col.key === 'contract_expected_hours'
-                          ? getPayrollContractHoursValue(row)
-                          : col.key === 'overtime_hours'
-                            ? getPayrollOvertimeHoursValue(row)
-                            : (col.key === 'krank_days' || col.key === 'urlaub_days')
-                              ? (row[col.key] ?? 0)
-                              : row[col.key];
-                    const isHoursCol = ['worked_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours'].includes(col.key);
+                        ? getPayrollRegularHoursValue(displayRow)
+                        : col.key === 'overtime_hours'
+                          ? getPayrollOvertimeHoursValue(displayRow)
+                          : (col.key === 'krank_days' || col.key === 'urlaub_days')
+                            ? (displayRow[col.key] ?? 0)
+                            : displayRow[col.key];
+                    const isHoursCol = ['worked_hours', 'expected_hours', 'overtime_hours'].includes(col.key);
                     const isCurrency = ['total_bonus', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
-                    const isNumericCol = ['pn', 'working_days', 'worked_hours', 'expected_hours', 'contract_expected_hours', 'overtime_hours', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
+                    const isNumericCol = ['pn', 'working_days', 'worked_hours', 'expected_hours', 'overtime_hours', 'krank_days', 'urlaub_days', 'carryover_days', 'rest_urlaub', 'total_bonus', 'abzug', 'verpfl_mehr', 'fahrt_geld', 'bonus', 'vorschuss'].includes(col.key);
                     const display =
                       col.key === 'eintrittsdatum' || col.key === 'austrittsdatum'
                         ? formatDateDDMMYYYY(val)
@@ -1958,15 +2487,23 @@ export default function PayrollPage() {
                             : (col.key === 'carryover_days' || col.key === 'rest_urlaub')
                               ? formatWholeDays(val)
                             : typeof val === 'number' ? (Number.isInteger(val) ? val : val.toFixed(2)) : val ?? '—';
-                    let cellStyle = { padding: '0.32rem 0.34rem', textAlign: isNumericCol ? 'right' : 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+                    let cellStyle = {
+                      padding: '0.32rem 0.34rem',
+                      textAlign: isNumericCol ? 'right' : 'left',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      width: columnWidths[col.key] || 'auto',
+                      minWidth: columnWidths[col.key] || 'auto',
+                    };
                     let content = display;
                     let title;
                     if (col.key === 'krank_days' && Number(val) > 0) {
-                      title = buildTimeOffTooltip(row.krank_entries);
+                      title = buildTimeOffTooltip(displayRow.krank_entries);
                       if (title) cellStyle = { ...cellStyle, cursor: 'help' };
                     }
                     if (col.key === 'urlaub_days' && Number(val) > 0) {
-                      title = buildTimeOffTooltip(row.urlaub_entries);
+                      title = buildTimeOffTooltip(displayRow.urlaub_entries);
                       if (title) cellStyle = { ...cellStyle, cursor: 'help' };
                     }
                     if (col.key === 'austrittsdatum' && val) {
@@ -1991,10 +2528,53 @@ export default function PayrollPage() {
                     );
                   })}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
+      )}
+
+      {rowEditModal && (
+        <PayrollModalPortal>
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: 12, width: 'min(960px, calc(100% - 2rem))', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: '0 0 0.35rem' }}>Edit payroll row</h3>
+                <p style={{ margin: 0, color: '#6b7280' }}>
+                  {rowEditModal.employeeName || 'Employee'} | {result?.month || month}
+                </p>
+              </div>
+              <button type="button" className="btn-secondary" onClick={closeRowEditModal} disabled={rowEditSaving}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.85rem 1rem' }}>
+              {PAYROLL_ROW_EDITABLE_FIELDS.map((field) => (
+                <label key={field.key} style={{ display: 'grid', gap: '0.3rem' }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{editableColumnLabels[field.key] || field.key}</span>
+                  <input
+                    type={field.inputType}
+                    step={field.step}
+                    value={rowEditModal.form?.[field.key] ?? ''}
+                    onChange={(event) => updateRowEditForm(field.key, event.target.value)}
+                    style={{ width: '100%', padding: '0.55rem 0.6rem', boxSizing: 'border-box' }}
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
+              <button type="button" className="btn-secondary" onClick={closeRowEditModal} disabled={rowEditSaving}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary" onClick={saveRowEditModal} disabled={rowEditSaving}>
+                {rowEditSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </PayrollModalPortal>
       )}
 
       {abzugModal && (
@@ -2466,25 +3046,15 @@ export default function PayrollPage() {
             <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', minWidth: '96rem', borderCollapse: 'collapse', fontSize: '0.82rem', tableLayout: 'fixed' }}>
                 <colgroup>
-                  <col style={{ width: '10.5rem' }} />
-                  <col style={{ width: '4.1rem' }} />
-                  <col style={{ width: '4rem' }} />
-                  <col style={{ width: '6rem' }} />
-                  <col style={{ width: '5.8rem' }} />
-                  <col style={{ width: '5.8rem' }} />
-                  <col style={{ width: '5.8rem' }} />
-                  <col style={{ width: '5.8rem' }} />
-                  <col style={{ width: '3.6rem' }} />
-                  <col style={{ width: '4.4rem' }} />
-                  <col style={{ width: '4.4rem' }} />
-                  <col style={{ width: '5.6rem' }} />
-                  <col style={{ width: '5.4rem' }} />
-                  <col style={{ width: '5.4rem' }} />
-                  <col style={{ width: '5.2rem' }} />
-                  <col style={{ width: '5.2rem' }} />
-                  <col style={{ width: '5.2rem' }} />
-                  <col style={{ width: '5.6rem' }} />
-                  <col style={{ width: '5.4rem' }} />
+                  {columns.map((col) => (
+                    <col
+                      key={col.key}
+                      style={{
+                        width: columnWidths[col.key] || '5rem',
+                        minWidth: columnWidths[col.key] || '5rem',
+                      }}
+                    />
+                  ))}
                 </colgroup>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
@@ -2501,7 +3071,6 @@ export default function PayrollPage() {
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.working_days ?? '—'}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollWorkedHoursValue(row))}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollRegularHoursValue(row))}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollContractHoursValue(row))}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatHours(getPayrollOvertimeHoursValue(row))}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.krank_days ?? 0}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{row.urlaub_days ?? 0}</td>
@@ -2512,9 +3081,9 @@ export default function PayrollPage() {
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.verpfl_mehr)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.fahrt_geld)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.bonus)}</td>
+                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.vorschuss)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatDateDDMMYYYY(row.eintrittsdatum)}</td>
                       <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatDateDDMMYYYY(row.austrittsdatum)}</td>
-                      <td style={{ padding: '0.45rem 0.35rem', whiteSpace: 'nowrap' }}>{formatCurrency(row.vorschuss)}</td>
                     </tr>
                   ))}
                 </tbody>

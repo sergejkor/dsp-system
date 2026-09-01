@@ -44,6 +44,20 @@ function getWeeksInRange(fromDate, toDate) {
   return weeks;
 }
 
+function getIsoWeekRange(year, week) {
+  const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
+  const dayOfWeek = simple.getUTCDay() || 7;
+  const monday = new Date(simple);
+  if (dayOfWeek <= 4) monday.setUTCDate(simple.getUTCDate() - dayOfWeek + 1);
+  else monday.setUTCDate(simple.getUTCDate() + 8 - dayOfWeek);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  return {
+    from: monday.toISOString().slice(0, 10),
+    to: sunday.toISOString().slice(0, 10),
+  };
+}
+
 function parseIsoDate(value) {
   const date = new Date(`${String(value || '').slice(0, 10)}T12:00:00`);
   return Number.isNaN(date.getTime()) ? null : date;
@@ -57,6 +71,175 @@ function addDays(value, amount) {
   const next = new Date(value);
   next.setDate(next.getDate() + amount);
   return next;
+}
+
+function roundDays(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.round(parsed * 100) / 100;
+}
+
+function normalizeDateOnly(value) {
+  if (value == null) return '';
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const formatDate = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  if (value instanceof Date) return formatDate(value);
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? '' : formatDate(date);
+}
+
+function countWeekdaysInclusive(startDate, endDate) {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  if (!start || !end || start > end) return 0;
+  let total = 0;
+  for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
+    const dayOfWeek = day.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) total += 1;
+  }
+  return total;
+}
+
+function sumWorkingDaysForRanges(ranges, rangeStart, rangeEnd) {
+  let total = 0;
+  for (const range of Array.isArray(ranges) ? ranges : []) {
+    const startDate = normalizeDateOnly(range?.start_date ?? range?.start);
+    const endDate = normalizeDateOnly(range?.end_date ?? range?.end);
+    if (!startDate || !endDate) continue;
+    const effectiveStart = startDate > rangeStart ? startDate : rangeStart;
+    const effectiveEnd = endDate < rangeEnd ? endDate : rangeEnd;
+    if (effectiveStart > effectiveEnd) continue;
+    total += countWeekdaysInclusive(effectiveStart, effectiveEnd);
+  }
+  return total;
+}
+
+function getNormalizedLookupKey(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function getNormalizedPnLookupKey(value) {
+  const normalized = getNormalizedLookupKey(value);
+  return normalized.replace(/^0+/, '') || normalized;
+}
+
+function updateContractStateLookup(map, rawKey, contractEndDate, isOpenContract) {
+  const key = getNormalizedLookupKey(rawKey);
+  if (!key) return;
+  if (!map.has(key)) {
+    map.set(key, { matched: false, hasOpenContract: false, latestContractEnd: '' });
+  }
+  const state = map.get(key);
+  state.matched = true;
+  if (isOpenContract) state.hasOpenContract = true;
+  const normalizedEndDate = normalizeDateOnly(contractEndDate);
+  if (normalizedEndDate && (!state.latestContractEnd || normalizedEndDate > state.latestContractEnd)) {
+    state.latestContractEnd = normalizedEndDate;
+  }
+}
+
+function resolveContractStateLookup(map, rawKeys) {
+  let matched = false;
+  let hasOpenContract = false;
+  let latestContractEnd = '';
+  for (const rawKey of Array.isArray(rawKeys) ? rawKeys : []) {
+    const key = getNormalizedLookupKey(rawKey);
+    if (!key || !map.has(key)) continue;
+    const state = map.get(key);
+    matched = matched || !!state?.matched;
+    hasOpenContract = hasOpenContract || !!state?.hasOpenContract;
+    if (state?.latestContractEnd && (!latestContractEnd || state.latestContractEnd > latestContractEnd)) {
+      latestContractEnd = state.latestContractEnd;
+    }
+  }
+  return {
+    matched,
+    contract_end: hasOpenContract ? null : (latestContractEnd || null),
+  };
+}
+
+function normalizeAbzugLines(lines) {
+  const source = Array.isArray(lines) ? lines : [];
+  const normalized = [
+    { amount: Number(source[0]?.amount) || 0, comment: String(source[0]?.comment ?? '').trim() },
+    { amount: Number(source[1]?.amount) || 0, comment: String(source[1]?.comment ?? '').trim() },
+    { amount: Number(source[2]?.amount) || 0, comment: String(source[2]?.comment ?? '').trim() },
+  ];
+  return normalized.map((line) => ({
+    amount: Math.round((Number(line.amount) || 0) * 100) / 100,
+    comment: line.comment,
+  }));
+}
+
+function hasExplicitAbzugLines(lines) {
+  return normalizeAbzugLines(lines).some((line) => (Number(line.amount) || 0) !== 0 || !!String(line.comment || '').trim());
+}
+
+function getTotalAbzugFromLines(lines) {
+  return Math.round(
+    normalizeAbzugLines(lines).reduce((sum, line) => sum + (Number(line.amount) || 0), 0) * 100
+  ) / 100;
+}
+
+function getUserCarryOverDays(user) {
+  const directValue = user?.carryOverDays ?? user?.work?.carryOverDays;
+  if (directValue != null && directValue !== '' && Number.isFinite(Number(directValue))) {
+    return roundDays(directValue);
+  }
+  const customField = (Array.isArray(user?.customFields) ? user.customFields : []).find((field) => {
+    const key = String(field?.key ?? '').trim();
+    const name = String(field?.name ?? '').trim();
+    return key === 'c_CarryOverDays' || name === 'Carry over days';
+  });
+  return roundDays(customField?.value);
+}
+
+function buildVacationBalanceSnapshot({
+  totalYearVacation,
+  carryOverDays,
+  approvedVacationDaysYear,
+  approvedVacationDaysUntilMarch31,
+  currentRemainingVacationSeed,
+  currentRemainingVacationSeedDate,
+  approvedVacationDaysAfterSeed,
+  year,
+  now = new Date(),
+}) {
+  const safeYear = Number.isInteger(Number(year)) ? Number(year) : now.getFullYear();
+  const baseTotalYearVacation = roundDays(totalYearVacation || 20);
+  const carryOver = roundDays(carryOverDays);
+  const usedYear = roundDays(approvedVacationDaysYear);
+  const usedUntilMarch31 = roundDays(approvedVacationDaysUntilMarch31);
+  const seedStartingBalance =
+    currentRemainingVacationSeed != null && Number.isFinite(Number(currentRemainingVacationSeed))
+      ? roundDays(currentRemainingVacationSeed)
+      : null;
+  const seedDateIso = currentRemainingVacationSeedDate ? String(currentRemainingVacationSeedDate).slice(0, 10) : '';
+  const seedApplied = seedStartingBalance != null && !!seedDateIso;
+  const usedAfterSeed = seedApplied ? roundDays(approvedVacationDaysAfterSeed) : 0;
+  const marchDeadline = new Date(safeYear, 2, 31, 23, 59, 59, 999);
+  const carryConsumedByDeadline = Math.min(carryOver, usedUntilMarch31);
+  const afterCarryDeadline = now.getFullYear() > safeYear || (now.getFullYear() === safeYear && now > marchDeadline);
+  const carryExpired = afterCarryDeadline ? Math.max(carryOver - carryConsumedByDeadline, 0) : 0;
+  const carryAvailableNow = afterCarryDeadline ? 0 : Math.max(carryOver - usedYear, 0);
+  const chargedCurrentYearVacation = afterCarryDeadline
+    ? Math.max(usedYear - carryConsumedByDeadline, 0)
+    : Math.max(usedYear - Math.min(carryOver, usedYear), 0);
+  const remainingVacationDays = seedApplied
+    ? Math.max(seedStartingBalance - usedAfterSeed, 0)
+    : afterCarryDeadline
+      ? Math.max(baseTotalYearVacation - chargedCurrentYearVacation, 0)
+      : Math.max(baseTotalYearVacation + carryOver - usedYear, 0);
+
+  return {
+    carryOver,
+    remainingVacationDays: roundDays(remainingVacationDays),
+  };
 }
 
 function normalizeKenjoAttendancePayload(json) {
@@ -146,6 +329,84 @@ function countWorkingDaysFromAttendances(attendances, fromDate, toDate) {
 
 function round2(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+const PAYROLL_ROW_OVERRIDE_TEXT_FIELDS = new Set(['name', 'pn']);
+const PAYROLL_ROW_OVERRIDE_DATE_FIELDS = new Set(['eintrittsdatum', 'austrittsdatum']);
+const PAYROLL_ROW_OVERRIDE_NUMBER_FIELDS = new Set([
+  'working_days',
+  'worked_hours',
+  'expected_hours',
+  'overtime_hours',
+  'krank_days',
+  'urlaub_days',
+  'carryover_days',
+  'rest_urlaub',
+  'total_bonus',
+  'abzug',
+  'verpfl_mehr',
+  'fahrt_geld',
+  'bonus',
+  'vorschuss',
+]);
+const PAYROLL_ROW_OVERRIDE_ALLOWED_FIELDS = new Set([
+  ...PAYROLL_ROW_OVERRIDE_TEXT_FIELDS,
+  ...PAYROLL_ROW_OVERRIDE_DATE_FIELDS,
+  ...PAYROLL_ROW_OVERRIDE_NUMBER_FIELDS,
+]);
+
+function sanitizePayrollRowOverridePayload(payload) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const sanitized = {};
+  for (const [key, rawValue] of Object.entries(source)) {
+    if (!PAYROLL_ROW_OVERRIDE_ALLOWED_FIELDS.has(key)) continue;
+    if (PAYROLL_ROW_OVERRIDE_TEXT_FIELDS.has(key)) {
+      sanitized[key] = String(rawValue ?? '').trim();
+      continue;
+    }
+    if (PAYROLL_ROW_OVERRIDE_DATE_FIELDS.has(key)) {
+      const normalized = normalizeDateOnly(rawValue);
+      sanitized[key] = normalized || null;
+      continue;
+    }
+    const numeric = Number(rawValue);
+    if (!Number.isFinite(numeric)) {
+      throw new Error(`${key} must be a valid number`);
+    }
+    sanitized[key] = round2(numeric);
+  }
+  return sanitized;
+}
+
+function applyPayrollRowOverride(row, payload) {
+  const next = { ...row };
+  const override = sanitizePayrollRowOverridePayload(payload);
+  for (const [key, value] of Object.entries(override)) {
+    if (key === 'worked_hours') {
+      next.total_worked_hours = value;
+      next.worked_hours = value;
+      next.payroll_worked_hours_override = value;
+      continue;
+    }
+    if (key === 'expected_hours') {
+      next.expected_hours = value;
+      next.worked_hours_capped = value;
+      next.payroll_regular_hours_override = value;
+      continue;
+    }
+    if (key === 'overtime_hours') {
+      next.overtime_hours = value;
+      next.payroll_overtime_hours_override = value;
+      continue;
+    }
+    next[key] = value;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(override, 'total_bonus') || Object.prototype.hasOwnProperty.call(override, 'abzug')) {
+    next.after_abzug = round2((Number(next.total_bonus) || 0) - (Number(next.abzug) || 0));
+  }
+
+  return next;
 }
 
 function resolveKenjoEmployeeId(record) {
@@ -429,6 +690,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
   const monthStart = `${monthStr}-01`;
   const lastDay = new Date(y, m, 0).getDate();
   const monthEnd = `${monthStr}-${String(lastDay).padStart(2, '0')}`;
+  const yearStart = `${y}-01-01`;
+  const yearEnd = `${y}-12-31`;
+  const marchDeadline = `${y}-03-31`;
   const weeksInPeriod = getWeeksInRange(from, to);
   const numWeeks = weeksInPeriod.length;
 
@@ -479,7 +743,20 @@ export async function calculatePayroll(month, fromDate, toDate) {
     weeklyFactsRows = weeklyFactsRes;
   }
 
-  const [users, attendancesMonth, attendancesPeriod, abzugRows, vorschussRows, bonusRows, verpflegungOverrideRows, kenjoEmployeesRows] = await Promise.all([
+  const [
+    users,
+    attendancesMonth,
+    attendancesPeriod,
+    abzugRows,
+    vorschussRows,
+    bonusRows,
+    verpflegungOverrideRows,
+    rowOverrideRows,
+    kenjoEmployeesRows,
+    localEmployeesRows,
+    contractHistoryRows,
+    contractExtensionRows,
+  ] = await Promise.all([
     getKenjoUsersList(),
     getKenjoAttendancesForPayrollRange(monthStart, monthEnd),
     getKenjoAttendancesForPayrollRange(from, to),
@@ -500,7 +777,74 @@ export async function calculatePayroll(month, fromDate, toDate) {
       [monthStr]
     ).catch(() => ({ rows: [] })),
     query(
+      `SELECT employee_id, payload FROM payroll_row_overrides WHERE period_id = $1`,
+      [monthStr]
+    ).catch(() => ({ rows: [] })),
+    query(
       `SELECT kenjo_user_id, transporter_id FROM kenjo_employees WHERE transporter_id IS NOT NULL AND transporter_id != ''`
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT
+          employee_id,
+          pn,
+          transporter_id,
+          kenjo_user_id,
+          contract_end,
+          vacation_days_override,
+          vacation_days_override_year,
+          vacation_balance_seed,
+          vacation_balance_seed_year,
+          vacation_balance_seed_date,
+          contract_state.effective_contract_end
+       FROM employees
+       LEFT JOIN LATERAL (
+         SELECT
+           CASE
+             WHEN BOOL_OR(contract_rows.is_open_contract) THEN NULL
+             ELSE MAX(contract_rows.contract_end_date)
+           END AS effective_contract_end
+         FROM (
+           SELECT
+             COALESCE(c.termination_date, c.end_date) AS contract_end_date,
+             (c.termination_date IS NULL AND c.end_date IS NULL) AS is_open_contract
+           FROM employee_contracts c
+           WHERE c.employee_ref = ANY(
+             ARRAY_REMOVE(ARRAY[
+               employees.employee_id,
+               employees.pn,
+               employees.transporter_id,
+               employees.kenjo_user_id,
+               employees.id::text
+             ], NULL)
+           )
+              OR (
+                employees.kenjo_user_id IS NOT NULL
+                AND c.kenjo_employee_id = employees.kenjo_user_id
+              )
+           UNION ALL
+           SELECT
+             ext.end_date AS contract_end_date,
+             ext.end_date IS NULL AS is_open_contract
+           FROM employee_contract_extensions ext
+           WHERE ext.employee_ref = ANY(
+             ARRAY_REMOVE(ARRAY[
+               employees.employee_id,
+               employees.pn,
+               employees.transporter_id,
+               employees.kenjo_user_id,
+               employees.id::text
+             ], NULL)
+           )
+         ) contract_rows
+       ) contract_state ON TRUE`
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT employee_ref, kenjo_employee_id, end_date, termination_date
+       FROM employee_contracts`
+    ).catch(() => ({ rows: [] })),
+    query(
+      `SELECT employee_ref, end_date
+       FROM employee_contract_extensions`
     ).catch(() => ({ rows: [] })),
   ]);
 
@@ -586,52 +930,120 @@ export async function calculatePayroll(month, fromDate, toDate) {
 
   const KENJO_TYPE_KRANK = '685e7223e6bac64cb0a27e39';
   const KENJO_TYPE_URLAUB = '685e7223e6bac64cb0a27e38';
+  const REJECTED_TIME_OFF_STATUSES = new Set(['rejected', 'declined', 'cancelled', 'canceled']);
 
   const timeOffRows = await query(
     `SELECT kenjo_user_id,
             to_char(start_date, 'YYYY-MM-DD') AS start_date,
             to_char(end_date, 'YYYY-MM-DD') AS end_date,
-            time_off_type FROM kenjo_time_off
-     WHERE start_date <= $2::date AND end_date >= $1::date
-       AND (status IS NULL OR status = 'Processed')`,
-    [monthStart, monthEnd]
+            time_off_type,
+            status
+     FROM kenjo_time_off
+     WHERE start_date <= $2::date AND end_date >= $1::date`,
+    [yearStart, yearEnd]
   ).catch(() => ({ rows: [] }));
 
-  function toDateStr(val) {
-    if (val == null) return '';
-    if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10);
-    if (val instanceof Date) return val.toISOString().slice(0, 10);
-    const s = String(val).trim();
-    return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
-  }
-
   const timeOffDaysByEmployee = new Map();
+  const vacationRangesByEmployee = new Map();
   for (const r of timeOffRows?.rows || []) {
     const eid = String(r.kenjo_user_id ?? '').trim();
     if (!eid) continue;
     const typeId = String(r.time_off_type ?? '').trim();
     if (typeId !== KENJO_TYPE_KRANK && typeId !== KENJO_TYPE_URLAUB) continue;
-    const start = toDateStr(r.start_date);
-    const end = toDateStr(r.end_date);
+    const status = String(r.status ?? '').trim().toLowerCase();
+    if (REJECTED_TIME_OFF_STATUSES.has(status)) continue;
+    const start = normalizeDateOnly(r.start_date);
+    const end = normalizeDateOnly(r.end_date);
     if (!start || !end) continue;
-    const startT = new Date(start + 'T12:00:00').getTime();
-    const endT = new Date(end + 'T12:00:00').getTime();
-    const monthStartT = new Date(monthStart + 'T12:00:00').getTime();
-    const monthEndT = new Date(monthEnd + 'T12:00:00').getTime();
-    let count = 0;
-    for (let t = Math.max(startT, monthStartT); t <= Math.min(endT, monthEndT); t += 86400000) {
-      const d = new Date(t);
-      const dayOfWeek = d.getDay();
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
+    const effectiveMonthStart = start > monthStart ? start : monthStart;
+    const effectiveMonthEnd = end < monthEnd ? end : monthEnd;
+    const count =
+      effectiveMonthStart <= effectiveMonthEnd
+        ? countWeekdaysInclusive(effectiveMonthStart, effectiveMonthEnd)
+        : 0;
+    if (!timeOffDaysByEmployee.has(eid)) {
+      timeOffDaysByEmployee.set(eid, {
+        krank_days: 0,
+        urlaub_days: 0,
+        krank_entries: [],
+        urlaub_entries: [],
+      });
     }
-    if (!timeOffDaysByEmployee.has(eid)) timeOffDaysByEmployee.set(eid, { krank_days: 0, urlaub_days: 0 });
     const rec = timeOffDaysByEmployee.get(eid);
-    if (typeId === KENJO_TYPE_KRANK) rec.krank_days += count;
-    else if (typeId === KENJO_TYPE_URLAUB) rec.urlaub_days += count;
+    const entry =
+      count > 0
+        ? {
+            from: effectiveMonthStart,
+            to: effectiveMonthEnd,
+            days: count,
+          }
+        : null;
+    if (typeId === KENJO_TYPE_KRANK) {
+      rec.krank_days += count;
+      if (entry) rec.krank_entries.push(entry);
+    } else if (typeId === KENJO_TYPE_URLAUB) {
+      rec.urlaub_days += count;
+      if (entry) rec.urlaub_entries.push(entry);
+      if (!vacationRangesByEmployee.has(eid)) vacationRangesByEmployee.set(eid, []);
+      vacationRangesByEmployee.get(eid).push({ start_date: start, end_date: end });
+    }
+  }
+
+  const contractStateByLookup = new Map();
+  for (const row of contractHistoryRows?.rows || []) {
+    const contractEndDate = normalizeDateOnly(row.termination_date) || normalizeDateOnly(row.end_date) || '';
+    const isOpenContract = !normalizeDateOnly(row.termination_date) && !normalizeDateOnly(row.end_date);
+    updateContractStateLookup(contractStateByLookup, row.employee_ref, contractEndDate, isOpenContract);
+    updateContractStateLookup(contractStateByLookup, row.kenjo_employee_id, contractEndDate, isOpenContract);
+  }
+  for (const row of contractExtensionRows?.rows || []) {
+    const contractEndDate = normalizeDateOnly(row.end_date) || '';
+    const isOpenContract = !contractEndDate;
+    updateContractStateLookup(contractStateByLookup, row.employee_ref, contractEndDate, isOpenContract);
+  }
+
+  const localEmployeeByKenjoId = new Map();
+  const localEmployeeByEmployeeId = new Map();
+  const localEmployeeByPn = new Map();
+  const localEmployeeByNormalizedPn = new Map();
+  const localEmployeeByTransporterId = new Map();
+  for (const row of localEmployeesRows?.rows || []) {
+    const employeeId = String(row.employee_id ?? '').trim().toLowerCase();
+    const kenjoId = String(row.kenjo_user_id ?? '').trim().toLowerCase();
+    const pnValue = String(row.pn ?? '').trim().toLowerCase();
+    const normalizedPnValue = pnValue.replace(/^0+/, '') || pnValue;
+    const transporterId = String(row.transporter_id ?? '').trim().toLowerCase();
+    const derivedContractState = resolveContractStateLookup(contractStateByLookup, [
+      employeeId,
+      pnValue,
+      normalizedPnValue,
+      transporterId,
+      kenjoId,
+    ]);
+    const record = {
+      contract_end: derivedContractState.matched
+        ? derivedContractState.contract_end
+        : (
+            normalizeDateOnly(row.effective_contract_end) ||
+            normalizeDateOnly(row.contract_end) ||
+            null
+          ),
+      vacation_days_override: row.vacation_days_override,
+      vacation_days_override_year: Number(row.vacation_days_override_year) || null,
+      vacation_balance_seed: row.vacation_balance_seed,
+      vacation_balance_seed_year: Number(row.vacation_balance_seed_year) || null,
+      vacation_balance_seed_date: normalizeDateOnly(row.vacation_balance_seed_date),
+    };
+    if (employeeId) localEmployeeByEmployeeId.set(employeeId, record);
+    if (kenjoId) localEmployeeByKenjoId.set(kenjoId, record);
+    if (pnValue) localEmployeeByPn.set(pnValue, record);
+    if (normalizedPnValue) localEmployeeByNormalizedPn.set(normalizedPnValue, record);
+    if (transporterId) localEmployeeByTransporterId.set(transporterId, record);
   }
 
   const rows = [];
   const weeklyFactsToUpsert = [];
+  const vacationBalanceByEmployee = new Map();
   const debugSample = [];
   const DEBUG_SAMPLE_SIZE = 8;
   let employeesWithTransporterId = 0;
@@ -654,8 +1066,55 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const abzug = abzugByEmployee.get(uid) ?? 0;
     const vorschuss = vorschussByEmployee.get(uid) ?? 0;
     const bonus = bonusByEmployeeCorrect.get(uid) ?? 0;
+    const normalizedPn = String(pn ?? '').trim().toLowerCase().replace(/^0+/, '') || String(pn ?? '').trim().toLowerCase();
+    const directContractState = resolveContractStateLookup(contractStateByLookup, [
+      uid,
+      pn,
+      normalizedPn,
+      transporterId,
+    ]);
+    const localEmployeeVacation =
+      localEmployeeByKenjoId.get(uid.toLowerCase()) ||
+      localEmployeeByPn.get(String(pn ?? '').trim().toLowerCase()) ||
+      localEmployeeByNormalizedPn.get(normalizedPn) ||
+      localEmployeeByTransporterId.get(transporterId.toLowerCase()) ||
+      localEmployeeByEmployeeId.get(transporterId.toLowerCase()) ||
+      null;
+    const vacationRanges = vacationRangesByEmployee.get(uid) || [];
+    const approvedVacationDaysYear = sumWorkingDaysForRanges(vacationRanges, yearStart, yearEnd);
+    const approvedVacationDaysUntilMarch31 = sumWorkingDaysForRanges(vacationRanges, yearStart, marchDeadline);
+    const currentRemainingVacationSeed =
+      localEmployeeVacation?.vacation_balance_seed_year === y
+        ? Number(localEmployeeVacation?.vacation_balance_seed)
+        : null;
+    const currentRemainingVacationSeedDate =
+      localEmployeeVacation?.vacation_balance_seed_year === y
+        ? normalizeDateOnly(localEmployeeVacation?.vacation_balance_seed_date)
+        : '';
+    const approvedVacationDaysAfterSeed =
+      currentRemainingVacationSeed != null && currentRemainingVacationSeedDate
+        ? sumWorkingDaysForRanges(vacationRanges, currentRemainingVacationSeedDate, yearEnd)
+        : 0;
+    const vacationBalance = buildVacationBalanceSnapshot({
+      totalYearVacation:
+        localEmployeeVacation?.vacation_days_override_year === y
+          ? Number(localEmployeeVacation?.vacation_days_override)
+          : 20,
+      carryOverDays: getUserCarryOverDays(u),
+      approvedVacationDaysYear,
+      approvedVacationDaysUntilMarch31,
+      currentRemainingVacationSeed,
+      currentRemainingVacationSeedDate,
+      approvedVacationDaysAfterSeed,
+      year: y,
+    });
+    vacationBalanceByEmployee.set(uid, {
+      carryover_days: vacationBalance.carryOver,
+      rest_urlaub: vacationBalance.remainingVacationDays,
+    });
 
     let totalBonus = 0;
+    const weeklyBreakdown = [];
     const daysPerWeekUser = daysPerWeekPeriod.get(uid);
     const pnStr = String(pn ?? '').trim();
     const uidLower = uid.toLowerCase();
@@ -673,6 +1132,16 @@ export async function calculatePayroll(month, fromDate, toDate) {
       // Use saved fact only if it has non-zero bonus; otherwise recalc from kpi_data (stale 0 would block correct bonus)
       if (savedFact && (savedFact.quality_bonus_week || 0) > 0) {
         totalBonus += savedFact.quality_bonus_week;
+        const weekRange = getIsoWeekRange(year, week);
+        weeklyBreakdown.push({
+          year,
+          week,
+          period_from: weekRange.from,
+          period_to: weekRange.to,
+          working_days: Number(savedFact.worked_days) || 0,
+          kpi: Number(savedFact.kpi) || 0,
+          weekly_bonus: Math.round((Number(savedFact.quality_bonus_week) || 0) * 100) / 100,
+        });
         if (!debugFirstWeek) {
           debugFirstWeek = { year, week, source: 'weekly_facts', kpi: savedFact.kpi, daysInWeek: savedFact.worked_days, rate: null, qualityBonusWeek: savedFact.quality_bonus_week };
         }
@@ -701,6 +1170,16 @@ export async function calculatePayroll(month, fromDate, toDate) {
       }
       const qualityBonusWeek = Math.round(daysInWeek * rate * 100) / 100;
       totalBonus += qualityBonusWeek;
+      const weekRange = getIsoWeekRange(year, week);
+      weeklyBreakdown.push({
+        year,
+        week,
+        period_from: weekRange.from,
+        period_to: weekRange.to,
+        working_days: daysInWeek,
+        kpi: kpiFromKpiData,
+        weekly_bonus: qualityBonusWeek,
+      });
       if (!debugFirstWeek) {
         debugFirstWeek = { year, week, kpiByKenjo, kpiByPn, kpiByTrans, kpiUsed: kpiFromKpiData, daysInWeek, rate, qualityBonusWeek };
       }
@@ -740,7 +1219,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
       { amount: 0, comment: '' },
     ];
     // Only include employees who have at least one working day in the calculation month
-    const timeOff = timeOffDaysByEmployee.get(uid) || { krank_days: 0, urlaub_days: 0 };
+    const timeOff = timeOffDaysByEmployee.get(uid) || { krank_days: 0, urlaub_days: 0, krank_entries: [], urlaub_entries: [] };
     if (workingDays > 0) {
       rows.push({
         kenjo_employee_id: uid,
@@ -764,11 +1243,18 @@ export async function calculatePayroll(month, fromDate, toDate) {
         verpfl_mehr_removed: verpflegungRemovedByEmployee.has(uid),
         fahrt_geld: Math.round(fahrtGeld * 100) / 100,
         bonus: Math.round(bonus * 100) / 100,
+        weekly_breakdown: weeklyBreakdown,
         eintrittsdatum: u.startDate || null,
-        austrittsdatum: u.contractEnd || null,
+        austrittsdatum: directContractState.matched
+          ? directContractState.contract_end
+          : (localEmployeeVacation?.contract_end || u.contractEnd || null),
         vorschuss: Math.round(vorschuss * 100) / 100,
+        carryover_days: vacationBalance.carryOver,
+        rest_urlaub: vacationBalance.remainingVacationDays,
         krank_days: timeOff.krank_days,
+        krank_entries: timeOff.krank_entries,
         urlaub_days: timeOff.urlaub_days,
+        urlaub_entries: timeOff.urlaub_entries,
       });
     }
   }
@@ -808,24 +1294,38 @@ export async function calculatePayroll(month, fromDate, toDate) {
         ? 0
         : Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
       const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
+      const explicitAbzugLines = normalizeAbzugLines(row.abzug_lines);
+      const effectiveAbzug = hasExplicitAbzugLines(explicitAbzugLines)
+        ? getTotalAbzugFromLines(explicitAbzugLines)
+        : Math.round((Number(manual.abzug) || 0) * 100) / 100;
+      const effectiveAfterAbzug = Math.round((manual.total_bonus - effectiveAbzug) * 100) / 100;
+      const effectiveVerpflMehr = verpflegungRemovedByEmployee.has(eid)
+        ? 0
+        : Math.round((effectiveAfterAbzug <= maxVerpfl ? effectiveAfterAbzug : maxVerpfl) * 100) / 100;
+      const effectiveFahrtGeld = Math.round((effectiveAfterAbzug > maxVerpfl ? effectiveAfterAbzug - maxVerpfl : 0) * 100) / 100;
       rowsWithManual.push({
         ...row,
         working_days: manual.working_days,
         total_bonus: Math.round(manual.total_bonus * 100) / 100,
-        abzug: Math.round(manual.abzug * 100) / 100,
-        abzug_lines: [
-          { amount: Math.round(manual.abzug * 100) / 100, comment: '' },
-          { amount: 0, comment: '' },
-          { amount: 0, comment: '' },
-        ],
-        after_abzug: afterAbzug,
-        verpfl_mehr: verpflMehr,
+        abzug: effectiveAbzug,
+        abzug_lines: hasExplicitAbzugLines(explicitAbzugLines)
+          ? explicitAbzugLines
+          : normalizeAbzugLines([
+              { amount: Math.round((Number(manual.abzug) || 0) * 100) / 100, comment: '' },
+              { amount: 0, comment: '' },
+              { amount: 0, comment: '' },
+            ]),
+        after_abzug: effectiveAfterAbzug,
+        verpfl_mehr: effectiveVerpflMehr,
         verpfl_mehr_removed: verpflegungRemovedByEmployee.has(eid),
-        fahrt_geld: fahrtGeld,
+        fahrt_geld: effectiveFahrtGeld,
         bonus: Math.round(manual.bonus * 100) / 100,
         vorschuss: Math.round(manual.vorschuss * 100) / 100,
+        weekly_breakdown: row.weekly_breakdown ?? [],
         krank_days: row.krank_days ?? 0,
+        krank_entries: row.krank_entries ?? [],
         urlaub_days: row.urlaub_days ?? 0,
+        urlaub_entries: row.urlaub_entries ?? [],
       });
     } else {
       rowsWithManual.push(row);
@@ -836,19 +1336,48 @@ export async function calculatePayroll(month, fromDate, toDate) {
     const u = userIdToUser.get(eid);
     const name = u?.displayName || [u?.firstName, u?.lastName].filter(Boolean).join(' ') || eid;
     const pn = u?.employeeNumber ?? u?.employee_number ?? '';
+    const normalizedPn = String(pn ?? '').trim().toLowerCase().replace(/^0+/, '') || String(pn ?? '').trim().toLowerCase();
+    const transporterId = String(
+      (
+        transporterIdByKenjoId.get(String(eid || '').trim().toLowerCase()) ||
+        u?.transportationId ||
+        u?.transporterId ||
+        ''
+      )
+    )
+      .trim()
+      .toLowerCase();
+    const directContractState = resolveContractStateLookup(contractStateByLookup, [
+      eid,
+      pn,
+      normalizedPn,
+      transporterId,
+    ]);
+    const localEmployeeVacation =
+      localEmployeeByKenjoId.get(String(eid || '').trim().toLowerCase()) ||
+      localEmployeeByPn.get(String(pn ?? '').trim().toLowerCase()) ||
+      localEmployeeByNormalizedPn.get(normalizedPn) ||
+      localEmployeeByTransporterId.get(transporterId) ||
+      localEmployeeByEmployeeId.get(transporterId) ||
+      null;
     const monthlyHours = monthlyHoursByEmployee.get(eid) || {
       workedHours: 0,
       regularHours: 0,
       expectedHours: 0,
       overtimeHours: 0,
     };
-    const afterAbzug = Math.round((manual.total_bonus - manual.abzug) * 100) / 100;
+    const vacationBalance = vacationBalanceByEmployee.get(eid) || { carryover_days: 0, rest_urlaub: 0 };
+    const abzugLines = normalizeAbzugLines(abzugLinesByEmployee.get(eid));
+    const effectiveAbzug = hasExplicitAbzugLines(abzugLines)
+      ? getTotalAbzugFromLines(abzugLines)
+      : Math.round((Number(manual.abzug) || 0) * 100) / 100;
+    const afterAbzug = Math.round((manual.total_bonus - effectiveAbzug) * 100) / 100;
     const maxVerpfl = manual.working_days * 14;
     const verpflMehr = verpflegungRemovedByEmployee.has(eid)
       ? 0
       : Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
     const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
-    const timeOff = timeOffDaysByEmployee.get(eid) || { krank_days: 0, urlaub_days: 0 };
+    const timeOff = timeOffDaysByEmployee.get(eid) || { krank_days: 0, urlaub_days: 0, krank_entries: [], urlaub_entries: [] };
     rowsWithManual.push({
       kenjo_employee_id: eid,
       name,
@@ -863,25 +1392,54 @@ export async function calculatePayroll(month, fromDate, toDate) {
       overtime_hours: monthlyHours.overtimeHours,
       period_days: periodDays,
       total_bonus: Math.round(manual.total_bonus * 100) / 100,
-      abzug: Math.round(manual.abzug * 100) / 100,
-      abzug_lines: [
-        { amount: Math.round(manual.abzug * 100) / 100, comment: '' },
-        { amount: 0, comment: '' },
-        { amount: 0, comment: '' },
-      ],
+      abzug: effectiveAbzug,
+      abzug_lines: hasExplicitAbzugLines(abzugLines)
+        ? abzugLines
+        : normalizeAbzugLines([
+            { amount: Math.round((Number(manual.abzug) || 0) * 100) / 100, comment: '' },
+            { amount: 0, comment: '' },
+            { amount: 0, comment: '' },
+          ]),
       after_abzug: afterAbzug,
       verpfl_mehr: verpflMehr,
       verpfl_mehr_removed: verpflegungRemovedByEmployee.has(eid),
       fahrt_geld: fahrtGeld,
       bonus: Math.round(manual.bonus * 100) / 100,
+      weekly_breakdown: [],
       eintrittsdatum: u?.startDate || null,
-      austrittsdatum: u?.contractEnd || null,
+      austrittsdatum: directContractState.matched
+        ? directContractState.contract_end
+        : (localEmployeeVacation?.contract_end || u?.contractEnd || null),
       vorschuss: Math.round(manual.vorschuss * 100) / 100,
+      carryover_days: vacationBalance.carryover_days,
+      rest_urlaub: vacationBalance.rest_urlaub,
       krank_days: timeOff.krank_days,
+      krank_entries: timeOff.krank_entries,
       urlaub_days: timeOff.urlaub_days,
+      urlaub_entries: timeOff.urlaub_entries,
     });
   }
-  rowsWithManual.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const rowOverrideByEmployee = new Map();
+  for (const overrideRow of rowOverrideRows?.rows || []) {
+    const employeeId = String(overrideRow?.employee_id ?? '').trim();
+    if (!employeeId) continue;
+    try {
+      const payload = sanitizePayrollRowOverridePayload(overrideRow?.payload);
+      if (Object.keys(payload).length) {
+        rowOverrideByEmployee.set(employeeId, payload);
+      }
+    } catch (error) {
+      console.error('Ignoring invalid payroll row override', { employeeId, error: String(error?.message || error) });
+    }
+  }
+
+  const rowsWithFinalOverrides = rowsWithManual.map((row) => {
+    const employeeId = String(row?.kenjo_employee_id || '').trim();
+    const payload = employeeId ? rowOverrideByEmployee.get(employeeId) : null;
+    return payload ? applyPayrollRowOverride(row, payload) : row;
+  });
+
+  rowsWithFinalOverrides.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
   for (const row of weeklyFactsToUpsert) {
     await query(
@@ -912,7 +1470,7 @@ export async function calculatePayroll(month, fromDate, toDate) {
     sample: debugSample,
   };
 
-  return { month: monthStr, from, to, period_days: periodDays, rows: rowsWithManual, debug };
+  return { month: monthStr, from, to, period_days: periodDays, rows: rowsWithFinalOverrides, debug };
 }
 
 /**
@@ -922,12 +1480,10 @@ export async function saveAbzug(periodId, employeeId, lines) {
   const period = String(periodId || '').trim().slice(0, 7);
   const empId = String(employeeId || '').trim();
   if (!period || !/^\d{4}-\d{2}$/.test(period) || !empId) throw new Error('period_id (YYYY-MM) and employee_id are required');
-  const arr = Array.isArray(lines) ? lines : [];
-  const three = [
-    { amount: Number(arr[0]?.amount) || 0, comment: String(arr[0]?.comment ?? '').trim().slice(0, 500) },
-    { amount: Number(arr[1]?.amount) || 0, comment: String(arr[1]?.comment ?? '').trim().slice(0, 500) },
-    { amount: Number(arr[2]?.amount) || 0, comment: String(arr[2]?.comment ?? '').trim().slice(0, 500) },
-  ];
+  const three = normalizeAbzugLines(lines).map((line) => ({
+    amount: Number(line.amount) || 0,
+    comment: String(line.comment ?? '').trim().slice(0, 500),
+  }));
   for (let lineNo = 0; lineNo < 3; lineNo++) {
     const { amount, comment } = three[lineNo];
     if (Number.isNaN(amount) || amount < 0) throw new Error('amount must be a non-negative number');
@@ -938,6 +1494,14 @@ export async function saveAbzug(periodId, employeeId, lines) {
       [period, empId, lineNo, amount, comment || '']
     );
   }
+  await query(
+    `UPDATE payroll_manual_entries
+     SET abzug = $3,
+         updated_at = NOW()
+     WHERE period_id = $1
+       AND kenjo_employee_id = $2`,
+    [period, empId, getTotalAbzugFromLines(three)]
+  ).catch(() => null);
   return { ok: true };
 }
 
@@ -1006,6 +1570,34 @@ export async function saveManualEntry(periodId, employeeId, payload) {
     [period, empId, working_days, total_bonus, abzug, bonus, vorschuss]
   );
   return { ok: true };
+}
+
+export async function saveRowOverride(periodId, employeeId, payload) {
+  const period = String(periodId || '').trim().slice(0, 7);
+  const empId = String(employeeId || '').trim();
+  if (!period || !/^\d{4}-\d{2}$/.test(period) || !empId) {
+    throw new Error('period_id (YYYY-MM) and employee_id are required');
+  }
+
+  const sanitized = sanitizePayrollRowOverridePayload(payload);
+  if (!Object.keys(sanitized).length) {
+    await query(
+      `DELETE FROM payroll_row_overrides WHERE period_id = $1 AND employee_id = $2`,
+      [period, empId]
+    );
+    return { ok: true, payload: {} };
+  }
+
+  await query(
+    `INSERT INTO payroll_row_overrides (period_id, employee_id, payload, updated_at)
+     VALUES ($1, $2, $3::jsonb, NOW())
+     ON CONFLICT (period_id, employee_id) DO UPDATE SET
+       payload = EXCLUDED.payload,
+       updated_at = NOW()`,
+    [period, empId, JSON.stringify(sanitized)]
+  );
+
+  return { ok: true, payload: sanitized };
 }
 
 export async function listPayrollHistory() {
