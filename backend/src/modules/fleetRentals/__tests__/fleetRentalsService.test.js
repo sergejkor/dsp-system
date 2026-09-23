@@ -82,6 +82,9 @@ test('rental endpoints require authentication, including read access', async () 
   try {
     const url = `http://127.0.0.1:${server.address().port}/api/fleet-rentals`;
     assert.equal((await fetch(url)).status, 401);
+    assert.equal((await fetch(`${url}/7/documents`)).status, 401);
+    assert.equal((await fetch(`${url}/7/documents/1`)).status, 401);
+    assert.equal((await fetch(`${url}/7/documents`, { method: 'POST' })).status, 401);
     assert.equal((await fetch(`${url}/driven-routes?month=2026-09`)).status, 401);
     assert.equal((await fetch(`${url}/7`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })).status, 401);
   } finally { await new Promise(resolve => server.close(resolve)); }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { createDamage, deleteDamage, deleteDamageFile, downloadDamageFile, getDamageById, getDamageFiles, getDamages, saveInsuranceReport, updateDamage, uploadDamageFiles } from '../services/damagesApi';
 import { getCars, getDrivers } from '../services/carPlanningApi';
 import { getKenjoEmployeeProfile } from '../services/kenjoApi';
@@ -12,6 +13,8 @@ function formatDate(d) {
 }
 
 export default function DamagesPage() {
+  const [params, setParams] = useSearchParams();
+  const [initialVehicle, setInitialVehicle] = useState('');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -20,6 +23,14 @@ export default function DamagesPage() {
   const [viewId, setViewId] = useState(null);
   const [editId, setEditId] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
+  useEffect(() => {
+    if (params.get('add') !== '1') return;
+    setInitialVehicle([params.get('vehicle'), params.get('vin')].filter(Boolean).join(' · '));
+    setAddOpen(true);
+    const next = new URLSearchParams(params);
+    ['add', 'vehicle', 'vin'].forEach(key => next.delete(key));
+    setParams(next, { replace: true });
+  }, [params, setParams]);
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState('date');
   const [sortDir, setSortDir] = useState('desc'); // 'asc' | 'desc'
@@ -288,9 +299,10 @@ export default function DamagesPage() {
       {addOpen && (
         <DamageEditModal
           mode="add"
+          initialVehicle={initialVehicle}
           saving={saving}
-          onClose={() => setAddOpen(false)}
-          onSaved={() => { setAddOpen(false); load(); }}
+          onClose={() => { setAddOpen(false); setInitialVehicle(''); }}
+          onSaved={() => { setAddOpen(false); setInitialVehicle(''); load(); }}
           onError={setError}
           setSaving={setSaving}
         />
@@ -544,7 +556,7 @@ function DamageViewModal({ id, onClose, onError }) {
   );
 }
 
-function DamageEditModal({ mode, id, saving, setSaving, onClose, onSaved, onError }) {
+function DamageEditModal({ mode, id, initialVehicle = '', saving, setSaving, onClose, onSaved, onError }) {
   const isAdd = mode === 'add';
   const [loading, setLoading] = useState(!isAdd);
   const [files, setFiles] = useState([]);
@@ -568,7 +580,7 @@ function DamageEditModal({ mode, id, saving, setSaving, onClose, onSaved, onErro
     heute: '',
     alter_tage_lt_90: '',
     kurzbeschreibung: '',
-    kommentare: '',
+    kommentare: initialVehicle ? `Vehicle: ${initialVehicle}` : '',
   }));
   const [newFiles, setNewFiles] = useState([]);
 

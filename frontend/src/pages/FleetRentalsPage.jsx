@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
+import RentalDocuments from './RentalDocuments';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getFleetRentals, saveFleetRental, getDrivenRoutes } from '../services/fleetRentalsApi';
 import { monthRentalCost, rentalStatus, rentalTotals, rentalSource, rentalOverlapsMonth, updateRentalPricing, rentalPricingFields } from '../utils/rentalCalculations';
@@ -14,9 +16,14 @@ const sourceClass = rentalSource;
 
 function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   const dialog = useRef(null);
+  const navigate = useNavigate();
+  const documents = useRef(null);
+  const [documentBusy, setDocumentBusy] = useState(false);
   const isLmr = rentalSource(car) === 'lmr';
   const [form, setForm] = useState(() => Object.fromEntries(['active_from', 'active_to', 'daily_rate', 'daily_km', 'total_price', 'total_km', 'extra_km_rate', 'odometer_start', 'odometer_end', 'notes'].map(key => [key, car[key] ?? ''])));
   const [saving, setSaving] = useState(false);
+  const originalForm = useRef(JSON.stringify(form));
+  const busy = saving || documentBusy;
   const [error, setError] = useState('');
   const totals = rentalTotals(form);
   const pricingFields = rentalPricingFields(form);
@@ -37,6 +44,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   </label>;
   async function submit(event) {
     event.preventDefault();
+    if (busy) return;
     if (totals.days == null) { setError(c.errorDates); return; }
     if (!isLmr && form.odometer_end !== '' && (form.odometer_start === '' || Number(form.odometer_end) < Number(form.odometer_start))) { setError(c.errorOdometer); return; }
     setSaving(true); setError('');
@@ -45,11 +53,11 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
     finally { setSaving(false); }
   }
   return createPortal(<dialog ref={dialog} className="fr-dialog" data-portal-localized aria-labelledby="fr-dialog-title"
-    onCancel={event => { event.preventDefault(); if (!saving) onClose(); }}>
+    onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
     <form onSubmit={submit}>
       <header className="fr-dialog-header"><div><span className="fr-eyebrow">{c.details}</span><h2 id="fr-dialog-title">{title(car)}</h2>
         <p>{[car.fleet_provider, car.model, car.station].filter(Boolean).join(' · ')}</p></div>
-        <button className="fr-icon" type="button" aria-label={c.close} disabled={saving} onClick={onClose}>×</button></header>
+        <button className="fr-icon" type="button" aria-label={c.close} disabled={busy} onClick={onClose}>×</button></header>
       <div className={`fr-dialog-body ${isLmr ? 'fr-lmr-dialog' : ''}`}><fieldset disabled={saving} className="fr-editor">
         <section><h3>{c.period}</h3><div className="fr-fields">{field('active_from', c.from, 'date')}{field('active_to', c.to, 'date')}</div><p className="fr-help">{c.inclusive}</p></section>
         {!isLmr && <><section><h3>{c.pricing}</h3><div className="fr-fields">{field('daily_rate', c.rate)}{field('daily_km', c.dailyKm)}{field('total_price', c.totalPricing)}{field('total_km', c.totalKm)}{field('extra_km_rate', c.extraRate, 'number', '0.0001')}</div><p className="fr-help">{c.linkedPricingHelp}</p></section>
@@ -63,8 +71,17 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
           [c.extra, money(totals.extra)]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
         <p className="fr-help">{c.balanceHelp}</p><div className="fr-total"><span>{c.total}</span><strong>{money(totals.total)}</strong></div>
         {totals.total == null && <p className="fr-help">{totals.driven == null ? c.pending : c.unpriced}</p>}<p className="fr-help">{c.currency}</p>
-      </aside>}</div>
-      <footer className="fr-dialog-footer">{error && <p className="fr-error" role="alert">{error}</p>}<div><button type="button" className="fr-button" disabled={saving} onClick={onClose}>{c.cancel}</button><button className="fr-button primary" type="submit" disabled={saving}>{saving ? c.saving : c.save}</button></div></footer>
+      </aside>}
+        <RentalDocuments ref={documents} carId={car.id} copy={c} onBusyChange={setDocumentBusy} disabled={saving} />
+      </div>
+      <footer className="fr-dialog-footer">{error && <p className="fr-error" role="alert">{error}</p>}<div className="fr-footer-actions"><div className="fr-related-actions">
+        <button type="button" className="fr-button" disabled={busy} onClick={() => {
+          if (JSON.stringify(form) !== originalForm.current && !window.confirm(c.unsavedNavigation)) return;
+          const params = new URLSearchParams({ add: '1', vehicle: title(car), vin: car.vin || '' });
+          navigate(`/damages?${params}`);
+        }}>{c.addDamage}</button>
+        <button type="button" className="fr-button" disabled={busy} onClick={() => documents.current?.uploadProtocol()}>{c.uploadProtocol}</button>
+      </div><div className="fr-save-actions"><button type="button" className="fr-button" disabled={busy} onClick={onClose}>{c.cancel}</button><button className="fr-button primary" type="submit" disabled={busy}>{saving ? c.saving : c.save}</button></div></div></footer>
     </form>
   </dialog>, document.body);
 }
