@@ -164,7 +164,9 @@ export default function FleetRentalsPage() {
         {[[c.vehicles, monthly.length, ''], [c.monthlyCost, money(monthlyCost), unknownRates ? `${unknownRates} ${c.missingRates}` : c.knownOnly],
           [c.totalCost, money(totalCost), `${c.totalCostHelp}${missingTotalCosts ? ` · ${missingTotalCosts} ${c.missingTotalCosts}` : ''}`],
           [c.ending, monthly.filter(car => rentalStatus(car, today) === 'active' && car.active_to <= soon).length, c.today],
-          [c.lmrVehicles, monthly.filter(car => rentalSource(car) === 'lmr').length, c.lmrSeparate]].map(([label, value, hint]) => <article key={label}><span>{label}</span><strong>{loading ? '—' : value}</strong><small>{hint || '\u00a0'}</small></article>)}
+          [c.lmrVehicles, monthly.filter(car => rentalSource(car) === 'lmr').length, c.lmrSeparate],
+          [c.selfVehicles, monthly.filter(car => rentalSource(car) === 'self').length, c.vehicles],
+          [c.rentalVehicles, monthly.filter(car => rentalSource(car) === 'rental').length, c.vehicles]].map(([label, value, hint]) => <article key={label}><span>{label}</span><strong>{loading ? '—' : value}</strong><small>{hint || '\u00a0'}</small></article>)}
       </section>
       <section className="fr-calendar">
         <div className="fr-toolbar"><div className="fr-month"><button className="fr-icon" onClick={() => shiftMonth(-1)} aria-label={c.previous}>‹</button>

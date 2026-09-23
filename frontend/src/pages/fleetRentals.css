@@ -11,7 +11,7 @@
 .fr-button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
 .fr-button:disabled, .fr-icon:disabled { opacity: .55; cursor: wait; }
 .fr-page button:focus-visible, .fr-dialog button:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
-.fr-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.fr-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
 .fr-kpis article { background: var(--bg-card-strong); border: 1px solid var(--border); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 5px 18px #0f172a04; }
 .fr-kpis article > span { font-size: 12px; color: var(--text-muted); }
 .fr-kpis article > strong { font-size: 28px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
