@@ -155,3 +155,25 @@ test('rejects inconsistent mileage and oversized notes', () => {
   assert.throws(() => validateRental({ ...rental, notes: 'x'.repeat(5001) }), { status: 400 });
   assert.throws(() => validateRental({ ...rental, revision: undefined }), { status: 400 });
 });
+
+ test('monthly inputs remain exact across saving and changed rental dates', () => {
+  let form = { active_from: '2026-09-01', active_to: '2026-09-30', revision: 'test' };
+  form = updateRentalPricing(form, 'monthly_rate', '1000');
+  form = updateRentalPricing(form, 'monthly_km', '2000');
+  assert.equal(rentalTotals(form).base, 1000);
+  assert.equal(rentalTotals(form).allowance, 2000);
+  assert.equal(rentalPricingFields(form).daily_rate, 33.33);
+  const saved = validateRental(form);
+  assert.equal(saved.monthly_rate, 1000);
+  assert.equal(saved.total_price, null);
+  assert.equal(rentalTotals(saved).base, 1000);
+  assert.equal(rentalTotals({ ...saved, active_to: '2026-10-01' }).base, 1033.33);
+  form = updateRentalPricing(saved, 'daily_rate', '40');
+  assert.equal(form.monthly_rate, '');
+  assert.equal(rentalPricingFields(form).monthly_rate, 1200);
+  form = updateRentalPricing(form, 'total_km', '3000');
+  assert.equal(form.monthly_km, '');
+  assert.equal(rentalPricingFields(form).monthly_km, 3000);
+  assert.equal(rentalTotals(updateRentalPricing(form, 'monthly_rate', '0')).base, 0);
+  assert.equal(rentalTotals(updateRentalPricing(form, 'monthly_rate', '')).base, null);
+ });

@@ -16,7 +16,7 @@ export function validateRental(data) {
     out[key] = value;
   }
   if (out.active_to < out.active_from) throw rentalError('End date must be on or after start date.');
-  for (const key of ['daily_rate', 'daily_km', 'total_price', 'total_km', 'odometer_start', 'odometer_end', 'extra_km_rate']) {
+  for (const key of ['daily_rate', 'daily_km', 'monthly_rate', 'monthly_km', 'total_price', 'total_km', 'odometer_start', 'odometer_end', 'extra_km_rate']) {
     const value = data[key];
     if (value == null || value === '') { out[key] = null; continue; }
     const precision = key === 'extra_km_rate' ? 4 : 2;
@@ -29,6 +29,12 @@ export function validateRental(data) {
     out[key] = Number(value);
   }
   const days = (Date.parse(out.active_to) - Date.parse(out.active_from)) / 86400000 + 1;
+  for (const [monthly, daily, total] of [['monthly_rate', 'daily_rate', 'total_price'], ['monthly_km', 'daily_km', 'total_km']]) {
+    if (out[monthly] != null) {
+      out[total] = null;
+      out[daily] = Math.round((out[monthly] / 30 + Number.EPSILON) * 100) / 100;
+    }
+  }
   // Exact contract totals remain authoritative, even when the daily equivalent repeats.
   if (out.total_price != null) out.daily_rate = Math.round((out.total_price / days + Number.EPSILON) * 100) / 100;
   if (out.total_km != null) out.daily_km = Math.round((out.total_km / days + Number.EPSILON) * 100) / 100;

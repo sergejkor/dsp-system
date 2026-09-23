@@ -20,7 +20,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   const documents = useRef(null);
   const [documentBusy, setDocumentBusy] = useState(false);
   const isLmr = rentalSource(car) === 'lmr';
-  const [form, setForm] = useState(() => Object.fromEntries(['active_from', 'active_to', 'daily_rate', 'daily_km', 'total_price', 'total_km', 'extra_km_rate', 'odometer_start', 'odometer_end', 'notes'].map(key => [key, car[key] ?? ''])));
+  const [form, setForm] = useState(() => Object.fromEntries(['active_from', 'active_to', 'daily_rate', 'daily_km', 'monthly_rate', 'monthly_km', 'total_price', 'total_km', 'extra_km_rate', 'odometer_start', 'odometer_end', 'notes'].map(key => [key, car[key] ?? ''])));
   const [saving, setSaving] = useState(false);
   const originalForm = useRef(JSON.stringify(form));
   const busy = saving || documentBusy;
@@ -61,7 +61,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
         <button className="fr-icon" type="button" aria-label={c.close} disabled={busy} onClick={onClose}>×</button></header>
       <div className={`fr-dialog-body ${isLmr ? 'fr-lmr-dialog' : ''}`}><fieldset disabled={saving} className="fr-editor">
         <section><h3>{c.period}</h3><div className="fr-fields">{field('active_from', c.from, 'date')}{field('active_to', c.to, 'date')}</div><p className="fr-help">{c.inclusive}</p></section>
-        {!isLmr && <><section><h3>{c.pricing}</h3><div className="fr-fields">{field('daily_rate', c.rate)}{field('daily_km', c.dailyKm)}{field('total_price', c.totalPricing)}{field('total_km', c.totalKm)}{field('extra_km_rate', c.extraRate, 'number', '0.0001')}</div><p className="fr-help">{c.linkedPricingHelp}</p></section>
+        {!isLmr && <><section><h3>{c.pricing}</h3><div className="fr-fields">{field('daily_rate', c.rate)}{field('daily_km', c.dailyKm)}{field('monthly_rate', c.monthlyRate)}{field('monthly_km', c.monthlyKm)}{field('total_price', c.totalPricing)}{field('total_km', c.totalKm)}{field('extra_km_rate', c.extraRate, 'number', '0.0001')}</div><p className="fr-help">{c.linkedPricingHelp}</p></section>
         <section><h3>{c.odometer}</h3><div className="fr-fields">{field('odometer_start', c.startKm)}{field('odometer_end', c.endKm)}</div>
           {car.mileage != null && <p className="fr-help">{c.currentKm}: {number(Number(car.mileage))} km</p>}</section></>}
         <label className="fr-field"><span>{c.notes}</span><textarea name="notes" rows="3" maxLength="5000" value={form.notes} onChange={change} placeholder={c.notesPlaceholder} /></label>

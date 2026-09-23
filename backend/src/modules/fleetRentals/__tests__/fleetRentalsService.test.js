@@ -44,9 +44,15 @@ test('rental service selects shared vehicle data and saves both records atomical
     calls.length = 0;
     await saveRental(7, { ...form, total_price: '1000', total_km: '2000', revision: rows[0].revision });
     const totalsWrite = calls.find(call => call.sql.startsWith('INSERT INTO fleet_rental_details'));
-    assert.deepEqual(totalsWrite.params.slice(-2), [1000, 2000]);
+    assert.deepEqual(totalsWrite.params.slice(7, 9), [1000, 2000]);
     assert.equal(totalsWrite.params[1], 41.67);
     assert.equal(totalsWrite.params[2], 83.33);
+    calls.length = 0;
+    await saveRental(7, { ...form, monthly_rate: '1000', monthly_km: '2000', revision: rows[0].revision });
+    const monthlyWrite = calls.find(call => call.sql.startsWith('INSERT INTO fleet_rental_details'));
+    assert.deepEqual(monthlyWrite.params.slice(7), [null, null, 1000, 2000]);
+    assert.equal(monthlyWrite.params[1], 33.33);
+    assert.equal(monthlyWrite.params[2], 66.67);
 
     calls.length = 0;
     await assert.rejects(saveRental(7, { ...form, revision: 'stale' }), { status: 409 });

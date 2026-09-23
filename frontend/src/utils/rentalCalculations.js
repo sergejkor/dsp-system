@@ -22,7 +22,8 @@ const money = value => Math.round((value + Number.EPSILON) * 100) / 100;
 export function rentalTotals(rental) {
   const start = date(rental.active_from), end = date(rental.active_to);
   const days = start != null && end != null && end >= start ? (end - start) / DAY + 1 : null;
-  const rate = number(rental.daily_rate), km = number(rental.daily_km);
+  const rate = number(rental.monthly_rate) != null ? Number(rental.monthly_rate) / 30 : number(rental.daily_rate);
+  const km = number(rental.monthly_km) != null ? Number(rental.monthly_km) / 30 : number(rental.daily_km);
   const initial = number(rental.odometer_start), final = number(rental.odometer_end);
   const extraRate = number(rental.extra_km_rate);
   const base = days == null ? null : number(rental.total_price) ?? (rate != null ? money(days * rate) : null);
@@ -50,16 +51,22 @@ export function monthRentalCost(car, first, last) {
 
 // The last edited side becomes authoritative; the opposite side is display-only derived data.
 export function updateRentalPricing(form, name, value) {
-  const opposite = { daily_rate: 'total_price', total_price: 'daily_rate', daily_km: 'total_km', total_km: 'daily_km' };
-  return { ...form, [name]: value, ...(opposite[name] ? { [opposite[name]]: '' } : {}) };
+  const groups = [['daily_rate', 'monthly_rate', 'total_price'], ['daily_km', 'monthly_km', 'total_km']];
+  const group = groups.find(keys => keys.includes(name));
+  return { ...form, ...(group ? Object.fromEntries(group.filter(key => key !== name).map(key => [key, ''])) : {}), [name]: value };
 }
 
 export function rentalPricingFields(form) {
   const totals = rentalTotals(form);
+  const monthlyRate = number(form.monthly_rate), monthlyKm = number(form.monthly_km);
+  const dailyRate = number(form.total_price) != null ? totals.days ? Number(form.total_price) / totals.days : null : monthlyRate != null ? monthlyRate / 30 : number(form.daily_rate);
+  const dailyKm = number(form.total_km) != null ? totals.days ? Number(form.total_km) / totals.days : null : monthlyKm != null ? monthlyKm / 30 : number(form.daily_km);
   return {
-    daily_rate: number(form.total_price) != null ? totals.days ? money(Number(form.total_price) / totals.days) : '' : form.daily_rate,
+    monthly_rate: monthlyRate != null ? form.monthly_rate : dailyRate != null ? money(dailyRate * 30) : '',
+    monthly_km: monthlyKm != null ? form.monthly_km : dailyKm != null ? money(dailyKm * 30) : '',
+    daily_rate: monthlyRate != null ? money(monthlyRate / 30) : number(form.total_price) != null ? totals.days ? money(Number(form.total_price) / totals.days) : '' : form.daily_rate,
     total_price: number(form.total_price) != null ? form.total_price : totals.base ?? '',
-    daily_km: number(form.total_km) != null ? totals.days ? money(Number(form.total_km) / totals.days) : '' : form.daily_km,
+    daily_km: monthlyKm != null ? money(monthlyKm / 30) : number(form.total_km) != null ? totals.days ? money(Number(form.total_km) / totals.days) : '' : form.daily_km,
     total_km: number(form.total_km) != null ? form.total_km : totals.allowance ?? '',
   };
 }
