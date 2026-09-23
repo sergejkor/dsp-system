@@ -290,12 +290,13 @@ async function getCarsForPlanning() {
   await ensureCarPlanningWorkshopColumns();
   const res = await query(
     `SELECT c.id, c.vehicle_id, c.license_plate, c.status,
-            c.service_type,
+            c.service_type, c.fleet_provider, lease.active_from::text, lease.active_to::text,
             c.planned_workshop_from::text AS planned_workshop_from,
             c.planned_workshop_to::text AS planned_workshop_to,
             c.planned_workshop_name,
             c.planned_workshop_comment
      FROM cars c
+     LEFT JOIN car_planning_car_state lease ON lease.car_id = c.id
      ORDER BY c.vehicle_id`
   );
   return (res.rows || []).map((row) => ({
@@ -309,23 +310,11 @@ async function getCarsForPlanning() {
  * Get car planning state (deactivated per car).
  */
 async function getCarStates() {
-  const res = await query(
-    `SELECT car_id, deactivated, active_from, active_to FROM car_planning_car_state`
-  );
-  const map = new Map();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  (res.rows || []).forEach((r) => {
-    let deactivated = !!r.deactivated;
-    const from = r.active_from ? new Date(r.active_from) : null;
-    const to = r.active_to ? new Date(r.active_to) : null;
-    if (!deactivated) {
-      if (from && today < from) deactivated = true;
-      if (to && today > to) deactivated = true;
-    }
-    map.set(r.car_id, deactivated);
-  });
-  return map;
+  const res = await query(`SELECT car_id,
+    (deactivated OR COALESCE(active_from > (NOW() AT TIME ZONE 'Europe/Berlin')::date, false)
+      OR COALESCE(active_to < (NOW() AT TIME ZONE 'Europe/Berlin')::date, false)) AS deactivated
+    FROM car_planning_car_state`);
+  return new Map(res.rows.map(row => [row.car_id, row.deactivated]));
 }
 
 /**
@@ -391,6 +380,19 @@ async function getPlanningData(dates) {
  */
 async function savePlanningData(carStates = {}, slots = []) {
   await ensureCarPlanningWorkshopColumns();
+  // Validate before any writes/deletions. Existing history may be saved unchanged.
+  const leaseConflict = await query(`SELECT incoming.car_id, incoming.plan_date
+    FROM jsonb_to_recordset($1::jsonb) AS incoming(car_id int, plan_date date, driver_identifier text)
+    JOIN cars c ON c.id = incoming.car_id
+    JOIN car_planning_car_state lease ON lease.car_id = c.id
+    LEFT JOIN car_planning previous ON previous.car_id = c.id AND previous.plan_date = incoming.plan_date
+    WHERE LOWER(TRIM(c.fleet_provider)) = ANY($2::text[])
+      AND (incoming.plan_date < lease.active_from OR incoming.plan_date > lease.active_to)
+      AND NULLIF(TRIM(incoming.driver_identifier), '') IS NOT NULL
+      AND TRIM(incoming.driver_identifier) IS DISTINCT FROM TRIM(previous.driver_identifier)
+    LIMIT 1`, [JSON.stringify(slots), ['lmr', 'rental', 'lmr rental', 'self source']]);
+  if (leaseConflict.rows.length) throw new Error('Vehicle is outside its lease period. Extend the lease dates in Cars before assigning a driver.');
+
   const carIds = Object.keys(carStates).map((k) => parseInt(k, 10)).filter(Number.isFinite);
   for (const carId of carIds) {
     await query(

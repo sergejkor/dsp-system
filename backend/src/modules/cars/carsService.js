@@ -1,4 +1,5 @@
-import { query } from '../../db.js';
+import { query, pool } from '../../db.js';
+import { validateLease, saveLease } from './carLease.js';
 
 const STATUS_ACTIVE = 'Active';
 const STATUS_MAINTENANCE = 'Maintenance';
@@ -218,6 +219,7 @@ async function getCars(filters = {}) {
   const res = await query(
     `SELECT c.id, c.vehicle_id, c.license_plate, c.vin, c.model, c.year, c.fuel_type, c.vehicle_type, c.inspection_vehicle_type,
             c.status, c.station, c.fleet_provider, c.assigned_driver_id, c.mileage,
+            lease.active_from::text, lease.active_to::text,
             c.last_maintenance_date, c.next_maintenance_date, c.next_maintenance_mileage,
             c.safety_score, c.incidents, c.registration_expiry, c.insurance_expiry, c.lease_expiry,
             c.planned_defleeting_date,
@@ -227,6 +229,7 @@ async function getCars(filters = {}) {
             p_today.driver_identifier AS today_planning_driver,
             pr_latest.total_grade AS condition_grade
      FROM cars c
+     LEFT JOIN car_planning_car_state lease ON lease.car_id = c.id
      LEFT JOIN kenjo_employees k ON k.kenjo_user_id = c.assigned_driver_id
      LEFT JOIN LATERAL (
        SELECT p.driver_identifier
@@ -313,8 +316,9 @@ async function getCarById(id) {
   await ensureInspectionVehicleColumns();
   await ensureWorkshopColumns();
   const carRes = await query(
-    `SELECT c.*, k.first_name AS driver_first_name, k.last_name AS driver_last_name
+    `SELECT c.*, lease.active_from::text, lease.active_to::text, k.first_name AS driver_first_name, k.last_name AS driver_last_name
      FROM cars c
+     LEFT JOIN car_planning_car_state lease ON lease.car_id = c.id
      LEFT JOIN kenjo_employees k ON k.kenjo_user_id = c.assigned_driver_id
      WHERE c.id = $1`,
     [id]
@@ -406,32 +410,41 @@ async function getCarDocumentForDownload(carId, docId) {
  */
 async function createCar(data) {
   await ensureInspectionVehicleColumns();
-  const res = await query(
-    `INSERT INTO cars (
-      vehicle_id, license_plate, vin, model, year, fuel_type, vehicle_type, status,
-      station, fleet_provider, mileage, registration_expiry, insurance_expiry, lease_expiry,
-      inspection_vehicle_type
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-    RETURNING *`,
-    [
-      data.vehicle_id || null,
-      data.license_plate || null,
-      data.vin || null,
-      data.model || null,
-      data.year ? Number(data.year) : null,
-      data.fuel_type || null,
-      data.vehicle_type || null,
-      data.status || STATUS_ACTIVE,
-      data.station || null,
-      data.fleet_provider || null,
-      data.mileage != null ? Number(data.mileage) : 0,
-      data.registration_expiry || null,
-      data.insurance_expiry || null,
-      data.lease_expiry || null,
-      normalizeInspectionVehicleType(data.inspection_vehicle_type),
-    ]
-  );
-  return normalizeCarDates(res.rows[0]);
+  const lease = validateLease(data, data.fleet_provider);
+  const client = await pool.connect();
+  const query = client.query.bind(client);
+  try {
+    await query('BEGIN');
+    const res = await query(
+      `INSERT INTO cars (
+        vehicle_id, license_plate, vin, model, year, fuel_type, vehicle_type, status,
+        station, fleet_provider, mileage, registration_expiry, insurance_expiry, lease_expiry,
+        inspection_vehicle_type
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING *`,
+      [
+        data.vehicle_id || null,
+        data.license_plate || null,
+        data.vin || null,
+        data.model || null,
+        data.year ? Number(data.year) : null,
+        data.fuel_type || null,
+        data.vehicle_type || null,
+        data.status || STATUS_ACTIVE,
+        data.station || null,
+        data.fleet_provider || null,
+        data.mileage != null ? Number(data.mileage) : 0,
+        data.registration_expiry || null,
+        data.insurance_expiry || null,
+        data.lease_expiry || null,
+        normalizeInspectionVehicleType(data.inspection_vehicle_type),
+      ]
+    );
+    await saveLease(query, res.rows[0].id, lease);
+    await query('COMMIT');
+    return normalizeCarDates({ ...res.rows[0], ...lease });
+  } catch (error) { await query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 }
 
 /**
@@ -440,27 +453,42 @@ async function createCar(data) {
 async function updateCar(id, data) {
   await ensureInspectionVehicleColumns();
   await ensureWorkshopColumns();
-  const fields = [];
-  const values = [];
-  let idx = 1;
-  const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'inspection_vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to', 'planned_workshop_name', 'planned_workshop_comment'];
-  for (const key of allow) {
-    if (data[key] !== undefined) {
-      fields.push(`${key} = $${idx}`);
-      if (['year', 'mileage', 'incidents', 'safety_score'].includes(key) && data[key] !== null) values.push(Number(data[key]));
-      else if (key === 'inspection_vehicle_type') values.push(normalizeInspectionVehicleType(data[key]));
-      else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to'].includes(key)) values.push(data[key] || null);
-      else values.push(data[key] ?? null);
-      idx++;
+  const client = await pool.connect();
+  const query = client.query.bind(client);
+  try {
+    await query('BEGIN');
+    const current = (await query('SELECT * FROM cars WHERE id = $1 FOR UPDATE', [id])).rows[0];
+    if (!current) { await query('COMMIT'); return null; }
+    const lease = validateLease(data, data.fleet_provider ?? current.fleet_provider);
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    const allow = ['license_plate', 'vin', 'model', 'year', 'fuel_type', 'vehicle_type', 'inspection_vehicle_type', 'status', 'station', 'fleet_provider', 'mileage', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'last_maintenance_date', 'next_maintenance_date', 'next_maintenance_mileage', 'safety_score', 'incidents', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to', 'planned_workshop_name', 'planned_workshop_comment'];
+    for (const key of allow) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = $${idx}`);
+        if (['year', 'mileage', 'incidents', 'safety_score'].includes(key) && data[key] !== null) values.push(Number(data[key]));
+        else if (key === 'inspection_vehicle_type') values.push(normalizeInspectionVehicleType(data[key]));
+        else if (['last_maintenance_date', 'next_maintenance_date', 'registration_expiry', 'insurance_expiry', 'lease_expiry', 'planned_defleeting_date', 'planned_workshop_from', 'planned_workshop_to'].includes(key)) values.push(data[key] || null);
+        else values.push(data[key] ?? null);
+        idx++;
+      }
     }
-  }
-  if (fields.length === 0) return normalizeCarDates((await query('SELECT * FROM cars WHERE id = $1', [id])).rows[0]);
-  values.push(id);
-  const res = await query(
-    `UPDATE cars SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING *`,
-    values
-  );
-  return normalizeCarDates(res.rows[0]);
+    if (fields.length === 0) {
+      await saveLease(query, id, lease);
+      await query('COMMIT');
+      return normalizeCarDates({ ...current, ...lease });
+    }
+    values.push(id);
+    const res = await query(
+      `UPDATE cars SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    await saveLease(query, id, lease);
+    await query('COMMIT');
+    return normalizeCarDates({ ...res.rows[0], ...lease });
+  } catch (error) { await query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 }
 
 /**

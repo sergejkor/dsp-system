@@ -1,3 +1,4 @@
+import { isOutsideLease } from '../utils/carLeaseAvailability';
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, getHistoricalAssignment, addCar } from '../services/carPlanningApi';
@@ -414,7 +415,7 @@ export default function CarPlanningPage() {
   }, []);
 
   const isCarUnavailableForPlanning = useCallback(
-    (car, dateStr) => isStatusAutoDeactivated(car?.status) || !!getWorkshopBlockForDate(car, dateStr),
+    (car, dateStr) => isOutsideLease(car, dateStr) || isStatusAutoDeactivated(car?.status) || !!getWorkshopBlockForDate(car, dateStr),
     [getWorkshopBlockForDate]
   );
 
@@ -1082,9 +1083,9 @@ export default function CarPlanningPage() {
               {sortedCars.map((car) => {
                 const { plateRaw, plateClass } = getCarPlateDisplay(car);
                 const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
-                const statusBlocked = isStatusAutoDeactivated(car.status);
+                const statusBlocked = isOutsideLease(car, newDayDate) || isStatusAutoDeactivated(car.status);
                 const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
-                const rowInactiveTitle = statusBlocked
+                const rowInactiveTitle = isOutsideLease(car, newDayDate) ? 'Outside lease period' : statusBlocked
                   ? `Unavailable because of car status: ${car.status || 'inactive'}`
                   : newDayWorkshopBlock
                     ? `Workshop: ${newDayWorkshopBlock.periodLabel}`
@@ -1115,7 +1116,7 @@ export default function CarPlanningPage() {
                     >
                       {statusBlocked ? (
                         <div
-                          title={car.status || 'Unavailable'}
+                          title={isOutsideLease(car, newDayDate) ? 'Outside lease period' : car.status || 'Unavailable'}
                           style={{
                             minHeight: '2.6rem',
                             padding: '0.35rem 0.5rem',
@@ -1127,7 +1128,7 @@ export default function CarPlanningPage() {
                             lineHeight: 1.25,
                           }}
                         >
-                          <strong>{car.status || 'Unavailable'}</strong>
+                          <strong>{isOutsideLease(car, newDayDate) ? 'Outside lease period' : car.status || 'Unavailable'}</strong>
                           <div>Car is deactivated in planning</div>
                         </div>
                       ) : newDayWorkshopBlock ? (
@@ -1217,13 +1218,13 @@ export default function CarPlanningPage() {
             <tbody>
               {sortedCars.map((car) => {
                 const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
-                const statusBlocked = isStatusAutoDeactivated(car.status);
+                const statusBlocked = isOutsideLease(car, newDayDate) || isStatusAutoDeactivated(car.status);
                 const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
                 return (
                   <tr key={car.id} className={rowInactive ? 'car-planning-row-inactive' : ''}>
                     {scrollDates.map((date) => {
                       const workshopBlock = getWorkshopBlockForDate(car, date);
-                      const statusBlock = isStatusAutoDeactivated(car.status);
+                      const statusBlock = isOutsideLease(car, date) || isStatusAutoDeactivated(car.status);
                       return (
                         <td
                           key={date}
@@ -1232,7 +1233,7 @@ export default function CarPlanningPage() {
                         >
                           {statusBlock ? (
                             <div
-                              title={car.status || 'Unavailable'}
+                              title={isOutsideLease(car, date) ? 'Outside lease period' : car.status || 'Unavailable'}
                               style={{
                                 minHeight: '2.6rem',
                                 padding: '0.35rem 0.4rem',
@@ -1244,7 +1245,7 @@ export default function CarPlanningPage() {
                                 lineHeight: 1.2,
                               }}
                             >
-                              <strong>{car.status || 'Unavailable'}</strong>
+                              <strong>{isOutsideLease(car, date) ? 'Outside lease period' : car.status || 'Unavailable'}</strong>
                             </div>
                           ) : workshopBlock ? (
                             <div
