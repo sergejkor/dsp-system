@@ -2,6 +2,22 @@ import { query } from '../../db.js';
 import { parseScorecardPdf } from './scorecardPdfParser.js';
 import { computeCDF, computeTotalScore } from './scorecardFormulas.js';
 import settingsService from '../settings/settingsService.js';
+import { syncKenjoEmployeesToDb } from '../kenjo/kenjoSyncService.js';
+
+let directoryRefreshAt = 0;
+let directoryRefreshPromise = null;
+
+// A report needs current names. Refresh at most once per minute so opening a report
+// repairs a stale local Kenjo cache without creating a request for every table row.
+async function refreshEmployeeDirectory() {
+  if (Date.now() - directoryRefreshAt < 60_000) return;
+  if (!directoryRefreshPromise) {
+    directoryRefreshPromise = syncKenjoEmployeesToDb()
+      .catch((error) => console.error('Scorecard employee directory refresh failed:', error.message))
+      .finally(() => { directoryRefreshAt = Date.now(); directoryRefreshPromise = null; });
+  }
+  await directoryRefreshPromise;
+}
 
 /**
  * Get all weeks (1–53) for a year with upload status.
@@ -31,13 +47,30 @@ async function getEmployeesForWeek(year, week) {
   const y = Number(year);
   const w = Number(week);
   if (!Number.isFinite(y) || !Number.isFinite(w) || w < 1 || w > 53) return [];
+  await refreshEmployeeDirectory();
   const res = await query(
-    `SELECT DISTINCT ON (s.id) s.id, s.transporter_id, s.delivered, s.dcr, s.dsc_dpmo, s.lor_dpmo, s.pod, s.cc, s.ce, s.cdf_dpmo, s.cdf, s.total_score,
-            k.first_name, k.last_name
+    `SELECT s.id, s.transporter_id, s.delivered, s.dcr, s.dsc_dpmo, s.lor_dpmo, s.pod, s.cc, s.ce, s.cdf_dpmo, s.cdf, s.total_score,
+            directory.first_name, directory.last_name, directory.display_name,
+            directory.source AS name_source
      FROM scorecard_employees s
-     LEFT JOIN kenjo_employees k ON k.transporter_id = s.transporter_id
+     LEFT JOIN LATERAL (
+       SELECT first_name, last_name, display_name, source
+       FROM (
+         SELECT k.first_name, k.last_name, k.display_name, 'kenjo'::text AS source, k.updated_at, 1 AS priority
+         FROM kenjo_employees k
+         WHERE UPPER(TRIM(COALESCE(k.transporter_id, ''))) = UPPER(TRIM(s.transporter_id))
+         UNION ALL
+         SELECT e.first_name, e.last_name, e.display_name, 'employee'::text AS source, e.updated_at, 2 AS priority
+         FROM employees e
+         WHERE UPPER(TRIM(COALESCE(e.transporter_id, ''))) = UPPER(TRIM(s.transporter_id))
+       ) matches
+       WHERE NULLIF(TRIM(CONCAT_WS(' ', first_name, last_name)), '') IS NOT NULL
+          OR NULLIF(TRIM(display_name), '') IS NOT NULL
+       ORDER BY priority, updated_at DESC NULLS LAST
+       LIMIT 1
+     ) directory ON TRUE
      WHERE s.year = $1 AND s.week = $2
-     ORDER BY s.id, k.updated_at DESC NULLS LAST`,
+     ORDER BY s.id`,
     [y, w]
   );
   return (res.rows || []).map(({ id, ...row }) => row);

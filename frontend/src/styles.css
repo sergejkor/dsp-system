@@ -1335,6 +1335,21 @@ body.dark .scorecard-status--failed {
   background: rgba(148, 163, 184, 0.12);
   color: var(--text);
 }
+.scorecard-report-table tr.scorecard-report-row--fantastic-plus td { background: #dcfce7; color: #14532d; }
+.scorecard-report-table tr.scorecard-report-row--fantastic td { background: #86efac; color: #14532d; }
+.scorecard-report-table tr.scorecard-report-row--great td { background: #fef3c7; color: #78350f; }
+.scorecard-report-table tr.scorecard-report-row--fair td { background: #fee2e2; color: #991b1b; }
+.scorecard-report-table tr.scorecard-report-row--poor td { background: #7f1d1d; color: #fff; }
+.scorecard-report-table tr.scorecard-report-row--fantastic-plus:hover td { background: #bbf7d0; color: #14532d; }
+.scorecard-report-table tr.scorecard-report-row--fantastic:hover td { background: #4ade80; color: #14532d; }
+.scorecard-report-table tr.scorecard-report-row--great:hover td { background: #fde68a; color: #78350f; }
+.scorecard-report-table tr.scorecard-report-row--fair:hover td { background: #fecaca; color: #991b1b; }
+.scorecard-report-table tr.scorecard-report-row--poor:hover td { background: #651717; color: #fff; }
+.scorecard-kpi-legend { flex: 0 0 auto; margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-card); }
+.scorecard-kpi-legend h4 { margin: 0 0 10px; font-size: 14px; }
+.scorecard-kpi-legend > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 8px 18px; }
+.scorecard-kpi-legend p { display: grid; grid-template-columns: max-content 1fr; gap: 7px; margin: 0; font-size: 12px; line-height: 1.4; color: var(--text-muted); }
+.scorecard-kpi-legend strong { color: var(--text); }
 
 /* Cortex attendance calendar – theme-aware */
 .calendar-upload-status {
