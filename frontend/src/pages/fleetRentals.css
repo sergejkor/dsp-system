@@ -93,6 +93,16 @@
 .fr-summary dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; font-size: 12px; border-bottom: 1px solid #94a3b820; }
 .fr-summary dt { color: var(--text-muted); }
 .fr-summary dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.fr-financials { border-top: 1px solid #94a3b830; margin-top: 20px; padding-top: 18px; }
+.fr-financials table { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.fr-financials th, .fr-financials td { padding: 10px 3px; border-bottom: 1px solid #94a3b825; text-align: right; }
+.fr-financials th:first-child { text-align: left; }
+.fr-financials thead th { color: var(--text-muted); font-weight: 500; }
+.fr-financials tbody td { white-space: nowrap; }
+.fr-margin { font-weight: 700; }
+.fr-margin.positive { color: #059669; background: #10b9810d; }
+.fr-margin.negative { color: #dc4646; background: #ef44440d; }
+[data-theme='dark'] .fr-margin.positive { color: #6ee7b7; }
 .fr-total { display: flex; flex-direction: column; gap: 9px; padding-top: 22px; margin-top: 18px; border-top: 1px solid #94a3b830; }
 .fr-total span { font-size: 12px; }
 .fr-total strong { font-size: 30px; letter-spacing: -.025em; }

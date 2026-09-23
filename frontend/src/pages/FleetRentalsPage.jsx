@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import RentalDocuments from './RentalDocuments';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getFleetRentals, saveFleetRental, getDrivenRoutes } from '../services/fleetRentalsApi';
-import { monthRentalCost, rentalStatus, rentalTotals, rentalSource, rentalOverlapsMonth, updateRentalPricing, rentalPricingFields } from '../utils/rentalCalculations';
+import { monthRentalCost, rentalStatus, rentalTotals, rentalSource, rentalOverlapsMonth, updateRentalPricing, rentalPricingFields, rentalFinancials } from '../utils/rentalCalculations';
 import { fleetRentalsCopy } from './fleetRentalsCopy';
 import './fleetRentals.css';
 
@@ -26,6 +26,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   const busy = saving || documentBusy;
   const [error, setError] = useState('');
   const totals = rentalTotals(form);
+  const finances = rentalFinancials({ ...form, service_type: car.service_type });
   const pricingFields = rentalPricingFields(form);
   const money = value => value == null ? '—' : new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(value);
   const number = value => value == null ? '—' : new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
@@ -56,7 +57,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
     onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
     <form onSubmit={submit}>
       <header className="fr-dialog-header"><div><span className="fr-eyebrow">{c.details}</span><h2 id="fr-dialog-title">{title(car)}</h2>
-        <p>{[car.fleet_provider, car.model, car.station].filter(Boolean).join(' · ')}</p></div>
+        <p>{[car.fleet_provider, car.service_type, car.model, car.station].filter(Boolean).join(' · ')}</p></div>
         <button className="fr-icon" type="button" aria-label={c.close} disabled={busy} onClick={onClose}>×</button></header>
       <div className={`fr-dialog-body ${isLmr ? 'fr-lmr-dialog' : ''}`}><fieldset disabled={saving} className="fr-editor">
         <section><h3>{c.period}</h3><div className="fr-fields">{field('active_from', c.from, 'date')}{field('active_to', c.to, 'date')}</div><p className="fr-help">{c.inclusive}</p></section>
@@ -69,8 +70,19 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
           [c.driven, totals.driven == null ? '—' : `${number(totals.driven)} km`],
           [c.difference, totals.difference == null ? '—' : `${totals.difference > 0 ? '+' : ''}${number(totals.difference)} km`],
           [c.extra, money(totals.extra)]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-        <p className="fr-help">{c.balanceHelp}</p><div className="fr-total"><span>{c.total}</span><strong>{money(totals.total)}</strong></div>
-        {totals.total == null && <p className="fr-help">{totals.driven == null ? c.pending : c.unpriced}</p>}<p className="fr-help">{c.currency}</p>
+        <p className="fr-help">{c.balanceHelp}</p>
+        <section className="fr-financials"><h3>{c.financialResult}</h3>
+          <p className="fr-help">{car.service_type || c.noServiceType}{finances.dailyIncome != null && <> · {money(finances.dailyIncome)} {c.netPerDay}</>}</p>
+          {finances.dailyIncome == null && <p className="fr-help">{c.unknownService}</p>}
+          <table><thead><tr><th></th><th>{c.net}</th><th>{c.gross}</th></tr></thead><tbody>
+            <tr><th>{c.weReceive}</th><td>{money(finances.incomeNet)}</td><td>{money(finances.incomeGross)}</td></tr>
+            <tr><th>{c.wePay}</th><td>{money(finances.costNet)}</td><td>{money(finances.costGross)}</td></tr>
+            <tr className={`fr-margin ${finances.marginNet == null ? '' : finances.marginNet >= 0 ? 'positive' : 'negative'}`}><th>{c.resultDifference}</th>
+              <td>{finances.marginNet > 0 ? '+' : ''}{money(finances.marginNet)}</td><td>{finances.marginGross > 0 ? '+' : ''}{money(finances.marginGross)}</td></tr>
+          </tbody></table>
+          <p className="fr-help">{c.vatHelp}</p>
+          {finances.estimated && <p className="fr-help">{c.estimatedResult}</p>}
+        </section>
       </aside>}
         <RentalDocuments ref={documents} carId={car.id} copy={c} onBusyChange={setDocumentBusy} disabled={saving} />
       </div>

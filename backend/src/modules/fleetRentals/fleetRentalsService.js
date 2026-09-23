@@ -13,7 +13,7 @@ export async function ensureRentalSchema() {
 }
 
 const selectRental = `SELECT c.id, c.vehicle_id, c.license_plate, c.model, c.vin, c.station,
-  c.fleet_provider, c.mileage, s.active_from::text, s.active_to::text,
+  c.fleet_provider, c.service_type, c.mileage, s.active_from::text, s.active_to::text,
   r.daily_rate, r.daily_km, r.total_price, r.total_km, r.odometer_start, r.odometer_end, r.extra_km_rate, r.notes,
   r.updated_at::text AS rental_updated_at
   FROM cars c LEFT JOIN car_planning_car_state s ON s.car_id = c.id

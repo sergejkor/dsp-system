@@ -63,3 +63,27 @@ export function rentalPricingFields(form) {
     total_km: number(form.total_km) != null ? form.total_km : totals.allowance ?? '',
   };
 }
+
+// Net daily income rates supplied by the fleet operator.
+export function rentalIncomeRate(serviceType) {
+  const type = String(serviceType || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (type === 'standard parcel') return 41.68;
+  if (type === 'medium van' || /^electric vehicle(?: [12]\.0)?$/.test(type)) return 48.68;
+  return null;
+}
+
+export function rentalFinancials(rental, vatPercent = 19, costBasis = 'gross') {
+  const totals = rentalTotals(rental);
+  const dailyIncome = rentalIncomeRate(rental.service_type);
+  const factor = 1 + vatPercent / 100;
+  const incomeNet = dailyIncome != null && totals.days != null ? money(dailyIncome * totals.days) : null;
+  const incomeGross = incomeNet == null ? null : money(incomeNet * factor);
+  const cost = totals.total ?? totals.base;
+  const costNet = cost == null ? null : costBasis === 'gross' ? money(cost / factor) : cost;
+  const costGross = cost == null ? null : costBasis === 'gross' ? cost : money(cost * factor);
+  return { dailyIncome, incomeNet, incomeGross, costNet, costGross,
+    marginNet: incomeNet == null || costNet == null ? null : money(incomeNet - costNet),
+    marginGross: incomeGross == null || costGross == null ? null : money(incomeGross - costGross),
+    estimated: totals.total == null,
+  };
+}

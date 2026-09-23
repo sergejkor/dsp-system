@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateRental, RENTAL_SOURCES } from '../rentalValidation.js';
-import { rentalTotals, monthRentalCost, rentalStatus, rentalSource, rentalOverlapsMonth, rentalPricingFields, updateRentalPricing } from '../../../../../frontend/src/utils/rentalCalculations.js';
+import { rentalTotals, monthRentalCost, rentalStatus, rentalSource, rentalOverlapsMonth, rentalPricingFields, updateRentalPricing, rentalIncomeRate, rentalFinancials } from '../../../../../frontend/src/utils/rentalCalculations.js';
 
 test('LMR, Rental and Self source have distinct types', () => {
   assert.equal(rentalSource({ fleet_provider: ' LMR ' }), 'lmr');
@@ -21,6 +21,41 @@ test('calendar only includes rental periods intersecting the selected month', ()
 
 const rental = { active_from: '2026-03-28', active_to: '2026-03-30', daily_rate: '49.99', daily_km: '100',
   odometer_start: '1000', odometer_end: '1350', extra_km_rate: '0.25', revision: 'test' };
+
+test('income uses exact service rates including both electric vehicle variants', () => {
+  for (const type of ['Medium Van', 'Electric Vehicle', 'Electric Vehicle 1.0', 'Electric Vehicle 2.0']) assert.equal(rentalIncomeRate(type), 48.68);
+  assert.equal(rentalIncomeRate(' Standard Parcel '), 41.68);
+  assert.equal(rentalIncomeRate(null), null);
+  assert.equal(rentalIncomeRate('Unknown'), null);
+});
+
+test('gross rental expenses are converted to net before calculating margin', () => {
+  const result = rentalFinancials({ ...rental, service_type: 'Medium Van', total_price: 119, odometer_end: 1000 });
+  assert.equal(result.costGross, 119);
+  assert.equal(result.costNet, 100);
+  assert.equal(result.incomeNet, 146.04);
+  assert.equal(result.incomeGross, 173.79);
+  assert.equal(result.marginNet, 46.04);
+  assert.equal(result.marginGross, 54.79);
+  assert.equal(result.estimated, false);
+});
+
+test('negative financial result and missing service or expenses are explicit', () => {
+  const loss = rentalFinancials({ ...rental, service_type: 'Standard Parcel', total_price: 238, odometer_end: 1000 });
+  assert.equal(loss.marginNet, -74.96);
+  assert.equal(loss.marginGross, -89.2);
+  assert.equal(rentalFinancials(rental).marginNet, null);
+  assert.equal(rentalFinancials({ ...rental, service_type: 'Medium Van', daily_rate: '' }).marginGross, null);
+});
+
+test('provisional margins use base cost; completed margins include mileage charges', () => {
+  const provisional = rentalFinancials({ ...rental, service_type: 'Medium Van', odometer_end: '' });
+  assert.equal(provisional.costGross, 149.97);
+  assert.equal(provisional.estimated, true);
+  const final = rentalFinancials({ ...rental, service_type: 'Medium Van' });
+  assert.equal(final.costGross, 162.47);
+  assert.equal(final.estimated, false);
+});
 
 test('contract totals retain exact amounts despite rounded daily equivalents', () => {
   const form = { ...rental, total_price: '100', total_km: '1000' };
