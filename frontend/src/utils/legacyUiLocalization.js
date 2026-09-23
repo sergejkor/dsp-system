@@ -484,6 +484,7 @@ function translatePreservingWhitespace(rawValue, language) {
 
 function localizeTextNode(node, language) {
   if (!node?.parentElement) return;
+  if (node.parentElement.closest('[data-portal-localized]')) return;
   if (SKIP_TAGS.has(node.parentElement.tagName)) return;
   const original = TEXT_NODE_SOURCE.has(node) ? TEXT_NODE_SOURCE.get(node) : node.nodeValue;
   if (!TEXT_NODE_SOURCE.has(node)) {
@@ -497,6 +498,7 @@ function localizeTextNode(node, language) {
 
 function localizeAttributes(element, language) {
   if (!element || SKIP_TAGS.has(element.tagName)) return;
+  if (element.closest('[data-portal-localized]')) return;
   let originalValues = ATTRIBUTE_SOURCE.get(element);
   if (!originalValues) {
     originalValues = new Map();

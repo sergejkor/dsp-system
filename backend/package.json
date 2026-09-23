@@ -8,6 +8,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "test": "node --test src/modules/pave/__tests__/*.test.js src/modules/vehicleInspections/__tests__/*.test.js",
+    "test:fleet-rentals": "node --test src/modules/fleetRentals/__tests__/*.test.js",
     "transfer:sheets": "node scripts/transfer-from-sheets.js",
     "pave:backfill": "node scripts/pave-backfill.js",
     "migrate": "node scripts/run-migration.js",

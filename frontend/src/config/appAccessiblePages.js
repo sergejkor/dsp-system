@@ -13,6 +13,7 @@ export const APP_ACCESSIBLE_PAGES = [
   { path: '/sync-kenjo', labelKey: 'nav.syncKenjo', permissionCode: 'page_sync_kenjo' },
   { path: '/o2-telefonica', labelKey: 'nav.o2Telefonica', permissionCode: 'page_o2_telefonica' },
   { path: '/cars', labelKey: 'nav.cars', permissionCode: 'page_cars' },
+  { path: '/fleet-rentals', labelKey: 'nav.fleetRentals', permissionCode: 'page_cars' },
   { path: '/pave', labelKey: 'nav.pave', permissionCode: 'page_pave' },
   { path: '/analytics', labelKey: 'nav.analytics', permissionCode: 'page_analytics' },
   { path: '/gift-cards', labelKey: 'nav.giftCards', permissionCode: 'page_gift_cards' },
