@@ -1302,8 +1302,8 @@ body.dark .scorecard-status--failed {
   max-height: 70vh;
 }
 .scorecard-report-table-wrap-fullpage {
-  flex: 0 1 auto;
-  max-height: calc(100vh - 235px);
+  flex: 1;
+  max-height: none;
   overflow: auto;
   min-height: 0;
 }

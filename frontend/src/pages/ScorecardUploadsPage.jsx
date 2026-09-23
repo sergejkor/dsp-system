@@ -271,11 +271,11 @@ export default function ScorecardUploadsPage() {
                       })}
                     </tbody>
                   </table>
+                  <section className="scorecard-kpi-legend" aria-label={t('scorecardUploads.kpiLegendTitle')}>
+                    <h4>{t('scorecardUploads.kpiLegendTitle')}</h4>
+                    <div>{KPI_LEGEND_KEYS.map(([key, label]) => <p key={key}><strong>{label}</strong><span>{t(`scorecardUploads.kpiLegend.${key}`)}</span></p>)}</div>
+                  </section>
                 </div>
-                <section className="scorecard-kpi-legend" aria-label={t('scorecardUploads.kpiLegendTitle')}>
-                  <h4>{t('scorecardUploads.kpiLegendTitle')}</h4>
-                  <div>{KPI_LEGEND_KEYS.map(([key, label]) => <p key={key}><strong>{label}</strong><span>{t(`scorecardUploads.kpiLegend.${key}`)}</span></p>)}</div>
-                </section>
                 </>
               )}
             </div>
