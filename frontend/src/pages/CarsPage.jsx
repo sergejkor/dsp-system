@@ -25,6 +25,16 @@ import { formatPaveInspectionDate } from '../utils/paveInspectionDateDisplay.js'
 import { formatPortalDate, formatPortalNumber } from '../utils/portalLocale.js';
 
 const STATUS_OPTIONS = ['Active', 'Maintenance', 'Grounded', 'Out of Service', 'Defleeted', 'Defleeting candidate', 'Defleeting finalized'];
+const FLEET_PROVIDERS = ['Armada', 'Arval', 'Armada Lease Plan', 'LMR', 'Rental', 'Self Source'];
+
+function FleetProviderField({ form, setForm }) {
+  const known = FLEET_PROVIDERS.includes(form.fleet_provider);
+  return <label>Fleet Provider <select value={form.fleet_provider} onChange={(e) => setForm({ ...form, fleet_provider: e.target.value })}>
+    <option value="">—</option>
+    {!known && form.fleet_provider && <option value={form.fleet_provider}>{form.fleet_provider}</option>}
+    {FLEET_PROVIDERS.map(provider => <option key={provider} value={provider}>{provider}</option>)}
+  </select></label>;
+}
 const VEHICLE_TYPES = ['Van', 'Step Van', 'Rental', 'Personal'];
 const FUEL_TYPES = ['Diesel', 'Gasoline', 'Electric'];
 
@@ -1306,7 +1316,7 @@ function AddCarModal({ onClose, onSaved, onError }) {
             <label>Vehicle Type <select value={form.vehicle_type} onChange={(e) => setForm({ ...form, vehicle_type: e.target.value })}>{VEHICLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
             <label>Status <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
             <label>Station <input value={form.station} onChange={(e) => setForm({ ...form, station: e.target.value })} /></label>
-            <label>Fleet Provider <input value={form.fleet_provider} onChange={(e) => setForm({ ...form, fleet_provider: e.target.value })} /></label>
+            <FleetProviderField form={form} setForm={setForm} />
             <CarLeaseFields form={form} setForm={setForm} />
             <label>Initial Mileage <input type="number" value={form.mileage} onChange={(e) => setForm({ ...form, mileage: e.target.value })} /></label>
             <label>Registration Expiry <input type="date" value={form.registration_expiry} onChange={(e) => setForm({ ...form, registration_expiry: e.target.value })} /></label>
@@ -1430,7 +1440,7 @@ function EditCarModal({ carId, onClose, onSaved, onError }) {
               </label>
             )}
             <label>Station <input value={form.station} onChange={(e) => setForm({ ...form, station: e.target.value })} /></label>
-            <label>Fleet Provider <input value={form.fleet_provider} onChange={(e) => setForm({ ...form, fleet_provider: e.target.value })} /></label>
+            <FleetProviderField form={form} setForm={setForm} />
             <CarLeaseFields form={form} setForm={setForm} />
             <label>Mileage <input type="number" value={form.mileage} onChange={(e) => setForm({ ...form, mileage: e.target.value })} /></label>
             <label>Last Maintenance <input type="date" value={form.last_maintenance_date} onChange={(e) => setForm({ ...form, last_maintenance_date: e.target.value })} /></label>
