@@ -18,6 +18,27 @@ import { query } from '../../db.js';
 import { syncKenjoEmployeesToDb } from './kenjoSyncService.js';
 
 const router = Router();
+let kenjoTimeOffSchemaReady = false;
+
+function getTimeOffTypeName(item) {
+  return String(
+    item._timeOffType?.name ??
+    item.timeOffTypeName ??
+    item.time_off_type_name ??
+    item.typeName ??
+    item._policyName ??
+    item._policyType ??
+    item._type ??
+    item.type ??
+    ''
+  ).trim() || null;
+}
+
+async function ensureKenjoTimeOffSchema() {
+  if (kenjoTimeOffSchemaReady) return;
+  await query(`ALTER TABLE kenjo_time_off ALTER COLUMN time_off_type_name TYPE TEXT`);
+  kenjoTimeOffSchemaReady = true;
+}
 
 async function ensureKenjoEmployeeLocalColumns() {
   await query(`
@@ -472,6 +493,7 @@ async function buildKenjoNameMap() {
 }
 
 async function syncTimeOffMonth(year, month, nameById) {
+  await ensureKenjoTimeOffSchema();
   const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
   const lastDate = new Date(year, month, 0).getDate();
   const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDate).padStart(2, '0')}`;
@@ -495,7 +517,7 @@ async function syncTimeOffMonth(year, month, nameById) {
     const startDate = toDateOnly(fromVal);
     const endDate = toDateOnly(toVal);
     const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
-    const typeName = String(item._timeOffType?.name ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item.type ?? item.description ?? '').trim() || null;
+    const typeName = getTimeOffTypeName(item);
     const status = String(item.status ?? '').trim() || null;
     const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
     const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;
@@ -608,7 +630,7 @@ router.get('/time-off', async (req, res) => {
       const startDate = toDateOnly(fromVal);
       const endDate = toDateOnly(toVal);
       const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
-      const typeName = String(item._timeOffType?.name ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item.type ?? item.description ?? '').trim() || null;
+      const typeName = getTimeOffTypeName(item);
       const status = String(item.status ?? '').trim() || null;
       const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
       const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;
