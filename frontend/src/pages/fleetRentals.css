@@ -11,11 +11,11 @@
 .fr-button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
 .fr-button:disabled, .fr-icon:disabled { opacity: .55; cursor: wait; }
 .fr-page button:focus-visible, .fr-dialog button:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
-.fr-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
-.fr-kpis article { background: var(--bg-card-strong); border: 1px solid var(--border); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 5px 18px #0f172a04; }
-.fr-kpis article > span { font-size: 12px; color: var(--text-muted); }
-.fr-kpis article > strong { font-size: 28px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.fr-kpis article > small { color: var(--text-muted); font-size: 11px; min-height: 14px; }
+.fr-kpis { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+.fr-kpis article { min-width: 0; background: var(--bg-card-strong); border: 1px solid var(--border); border-radius: 10px; padding: 12px 10px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 5px 18px #0f172a04; }
+.fr-kpis article > span { font-size: 10px; line-height: 1.4; color: var(--text-muted); overflow-wrap: anywhere; }
+.fr-kpis article > strong { font-size: clamp(15px, 1.35vw, 22px); line-height: 1.2; letter-spacing: -.04em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fr-kpis article > small { color: var(--text-muted); font-size: 9px; line-height: 1.4; min-height: 12px; overflow-wrap: anywhere; }
 .fr-calendar { border: 1px solid var(--border); border-radius: 16px; background: var(--bg-card-strong); overflow: hidden; }
 .fr-toolbar { justify-content: space-between; padding: 20px; flex-wrap: wrap; }
 .fr-month { gap: 8px; }
