@@ -1,5 +1,6 @@
 export const fleetRentalsCopy = {
   en: {
+    totalCost: 'Rental cost total (gross)', totalCostHelp: 'All rental periods · current filters · excludes extra mileage', missingTotalCosts: 'vehicles with incomplete costs',
     businessDays: 'Business days', businessDaysHelp: 'Monday–Saturday, excluding Sundays and statewide Bavarian public holidays. Both rental dates included. Local holidays on 8 and 15 August are not applied.',
     drivenRoutes: 'Driven Roots', noRouteData: 'No uploaded route data', routesNote: '— = no uploaded route data. Counts cover the entire fleet.', routesError: 'Unable to load driven routes. Please refresh.', lmrVehicles: 'LMR vehicles this month', lmrSeparate: 'Separate payment model',
     monthlyRate: 'Monthly rate (€ gross)', monthlyKm: 'Included km / month', totalPricing: 'Total Pricing (€ gross)', totalKm: 'Included kilometres · total', linkedPricingHelp: 'Enter a daily, monthly or total value. The other values update automatically. One month = 30 days. Date changes preserve the last value entered. Daily equivalents are rounded; contract totals stay exact. Total Pricing excludes extra mileage.',
@@ -28,6 +29,7 @@ export const fleetRentalsCopy = {
     currency: 'All amounts in EUR, using the rates entered.', retry: 'Try again',
   },
   de: {
+    totalCost: 'Mietkosten gesamt (brutto)', totalCostHelp: 'Alle Mietzeiträume · aktuelle Filter · ohne Mehrkilometer', missingTotalCosts: 'Fahrzeuge mit unvollständigen Kosten',
     businessDays: 'Arbeitstage', businessDaysHelp: 'Montag–Samstag, ohne Sonntage und landesweite Feiertage in Bayern. Mietbeginn und Mietende zählen mit. Lokale Feiertage am 8. und 15. August sind nicht berücksichtigt.',
     drivenRoutes: 'Driven Roots', noRouteData: 'Keine hochgeladenen Routendaten', routesNote: '— = keine hochgeladenen Routendaten. Anzahl für die gesamte Flotte.', routesError: 'Routendaten konnten nicht geladen werden. Bitte aktualisieren.', lmrVehicles: 'LMR-Fahrzeuge diesen Monat', lmrSeparate: 'Separates Abrechnungsmodell',
     monthlyRate: 'Monatstarif (€ brutto)', monthlyKm: 'Freikilometer / Monat', totalPricing: 'Gesamtpreis (€ brutto)', totalKm: 'Freikilometer · gesamt', linkedPricingHelp: 'Tages-, Monats- oder Gesamtwert eingeben. Die anderen Werte werden automatisch berechnet. Ein Monat = 30 Tage. Bei Datumsänderungen bleibt der zuletzt eingegebene Wert erhalten. Tageswerte werden gerundet; Vertragssummen bleiben exakt. Gesamtpreis ohne Mehrkilometer.',

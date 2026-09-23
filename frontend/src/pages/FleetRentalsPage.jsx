@@ -150,6 +150,9 @@ export default function FleetRentalsPage() {
   const monthly = filtered.filter(car => rentalOverlapsMonth(car, first, last));
   const pricedRentals = monthly.filter(car => rentalSource(car) !== 'lmr');
   const monthlyCost = pricedRentals.reduce((sum, car) => sum + (monthRentalCost(car, first, last) ?? 0), 0);
+  const allTimeCosts = filtered.filter(car => rentalSource(car) !== 'lmr').map(car => rentalTotals(car).base);
+  const totalCost = allTimeCosts.reduce((sum, cost) => sum + (cost ?? 0), 0);
+  const missingTotalCosts = allTimeCosts.filter(cost => cost == null).length;
   const unknownRates = pricedRentals.filter(car => car.daily_rate == null && car.total_price == null).length;
   const soon = localDate(new Date(new Date().setDate(new Date().getDate() + 7)));
   function shiftMonth(delta) { setMonth(localDate(new Date(year, monthNumber - 1 + delta, 1)).slice(0, 7)); }
@@ -159,6 +162,7 @@ export default function FleetRentalsPage() {
     {error ? <div className="fr-error" role="alert">{error} <button className="fr-button" onClick={load}>{c.retry}</button></div> : <>
       <section className="fr-kpis" aria-label={c.summary}>
         {[[c.vehicles, monthly.length, ''], [c.monthlyCost, money(monthlyCost), unknownRates ? `${unknownRates} ${c.missingRates}` : c.knownOnly],
+          [c.totalCost, money(totalCost), `${c.totalCostHelp}${missingTotalCosts ? ` · ${missingTotalCosts} ${c.missingTotalCosts}` : ''}`],
           [c.ending, monthly.filter(car => rentalStatus(car, today) === 'active' && car.active_to <= soon).length, c.today],
           [c.lmrVehicles, monthly.filter(car => rentalSource(car) === 'lmr').length, c.lmrSeparate]].map(([label, value, hint]) => <article key={label}><span>{label}</span><strong>{loading ? '—' : value}</strong><small>{hint || '\u00a0'}</small></article>)}
       </section>
