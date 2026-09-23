@@ -7,6 +7,7 @@ import { getFleetRentals, saveFleetRental, getDrivenRoutes } from '../services/f
 import { monthRentalCost, rentalStatus, rentalTotals, rentalSource, rentalOverlapsMonth, updateRentalPricing, rentalPricingFields, rentalFinancials } from '../utils/rentalCalculations';
 import { fleetRentalsCopy } from './fleetRentalsCopy';
 import './fleetRentals.css';
+import { bavarianBusinessDays } from '../utils/bavarianBusinessDays';
 
 function localDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -26,6 +27,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   const busy = saving || documentBusy;
   const [error, setError] = useState('');
   const totals = rentalTotals(form);
+  const businessDays = useMemo(() => bavarianBusinessDays(form.active_from, form.active_to), [form.active_from, form.active_to]);
   const finances = rentalFinancials({ ...form, service_type: car.service_type });
   const pricingFields = rentalPricingFields(form);
   const money = value => value == null ? '—' : new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(value);
@@ -66,6 +68,8 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
           {car.mileage != null && <p className="fr-help">{c.currentKm}: {number(Number(car.mileage))} km</p>}</section></>}
         <label className="fr-field"><span>{c.notes}</span><textarea name="notes" rows="3" maxLength="5000" value={form.notes} onChange={change} placeholder={c.notesPlaceholder} /></label>
       </fieldset>{!isLmr && <aside className="fr-summary"><h3>{c.summary}</h3><div className="fr-days"><strong>{number(totals.days)}</strong><span>{c.days}</span></div>
+        <div className="fr-days fr-business-days"><strong>{number(businessDays)}</strong><span>{c.businessDays}</span></div>
+        <p className="fr-help fr-business-help">{c.businessDaysHelp}</p>
         <dl>{[[c.base, money(totals.base)], [c.allowance, totals.allowance == null ? '—' : `${number(totals.allowance)} km`],
           [c.driven, totals.driven == null ? '—' : `${number(totals.driven)} km`],
           [c.difference, totals.difference == null ? '—' : `${totals.difference > 0 ? '+' : ''}${number(totals.difference)} km`],

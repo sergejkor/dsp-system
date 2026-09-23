@@ -89,6 +89,9 @@
 .fr-days { display: flex; align-items: baseline; gap: 10px; margin: 20px 0; }
 .fr-days strong { font-size: 38px; color: #3b82f6; line-height: 1; }
 .fr-days span { font-size: 12px; color: var(--text-muted); }
+.fr-business-days { margin: -4px 0 0; }
+.fr-business-days strong { font-size: 28px; color: var(--text-primary); }
+.fr-business-help { margin-bottom: 16px; }
 .fr-summary dl { margin: 0; }
 .fr-summary dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; font-size: 12px; border-bottom: 1px solid #94a3b820; }
 .fr-summary dt { color: var(--text-muted); }
