@@ -16,7 +16,7 @@ export function validateRental(data) {
     out[key] = value;
   }
   if (out.active_to < out.active_from) throw rentalError('End date must be on or after start date.');
-  for (const key of ['daily_rate', 'daily_km', 'odometer_start', 'odometer_end', 'extra_km_rate']) {
+  for (const key of ['daily_rate', 'daily_km', 'total_price', 'total_km', 'odometer_start', 'odometer_end', 'extra_km_rate']) {
     const value = data[key];
     if (value == null || value === '') { out[key] = null; continue; }
     const precision = key === 'extra_km_rate' ? 4 : 2;
@@ -28,6 +28,10 @@ export function validateRental(data) {
     }
     out[key] = Number(value);
   }
+  const days = (Date.parse(out.active_to) - Date.parse(out.active_from)) / 86400000 + 1;
+  // Exact contract totals remain authoritative, even when the daily equivalent repeats.
+  if (out.total_price != null) out.daily_rate = Math.round((out.total_price / days + Number.EPSILON) * 100) / 100;
+  if (out.total_km != null) out.daily_km = Math.round((out.total_km / days + Number.EPSILON) * 100) / 100;
   if (out.odometer_end != null && out.odometer_start == null) throw rentalError('Enter the initial odometer reading first.');
   if (out.odometer_end != null && out.odometer_end < out.odometer_start) throw rentalError('Final odometer cannot be lower than initial odometer.');
   if (data.notes != null && typeof data.notes !== 'string') throw rentalError('Notes must be text.');

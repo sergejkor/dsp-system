@@ -29,8 +29,9 @@ test('rental service selects shared vehicle data and saves both records atomical
     const rows = await listRentals();
     assert.equal(rows[0].revision.length, 64);
     assert.match(calls[0].sql, /CREATE TABLE IF NOT EXISTS fleet_rental_details/);
-    assert.match(calls[1].sql, /LEFT JOIN car_planning_car_state/);
-    assert.deepEqual(calls[1].params[0], ['lmr', 'rental', 'lmr rental', 'self source']);
+    const listCall = calls.find(call => call.sql.startsWith('SELECT'));
+    assert.match(listCall.sql, /LEFT JOIN car_planning_car_state/);
+    assert.deepEqual(listCall.params[0], ['lmr', 'rental', 'lmr rental', 'self source']);
     calls.length = 0;
     await saveRental(7, { ...form, revision: rows[0].revision });
     assert.equal(calls[0].sql, 'BEGIN');
@@ -39,6 +40,13 @@ test('rental service selects shared vehicle data and saves both records atomical
     assert.deepEqual(dates.params, [7, form.active_from, form.active_to]);
     assert.doesNotMatch(dates.sql.split('DO UPDATE')[1], /deactivated\s*=/);
     assert.deepEqual(calls.slice(-2).map(call => call.sql), ['COMMIT', 'RELEASE']);
+
+    calls.length = 0;
+    await saveRental(7, { ...form, total_price: '1000', total_km: '2000', revision: rows[0].revision });
+    const totalsWrite = calls.find(call => call.sql.startsWith('INSERT INTO fleet_rental_details'));
+    assert.deepEqual(totalsWrite.params.slice(-2), [1000, 2000]);
+    assert.equal(totalsWrite.params[1], 41.67);
+    assert.equal(totalsWrite.params[2], 83.33);
 
     calls.length = 0;
     await assert.rejects(saveRental(7, { ...form, revision: 'stale' }), { status: 409 });

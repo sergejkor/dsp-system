@@ -1236,6 +1236,8 @@ async function run() {
     console.log('Migration OK: chat module tables (or already exist).');
     await query(readFileSync(new URL('../migrations/005_fleet_rentals.sql', import.meta.url), 'utf8'));
     console.log('Migration OK: fleet rental details.');
+    await query(readFileSync(new URL('../migrations/006_fleet_rental_totals.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: fleet rental contract totals.');
   } catch (e) {
     console.error('Migration failed:', e.message);
     process.exit(1);

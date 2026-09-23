@@ -1,6 +1,7 @@
 export const fleetRentalsCopy = {
   en: {
     drivenRoutes: 'Driven Roots', noRouteData: 'No uploaded route data', routesNote: '— = no uploaded route data. Counts cover the entire fleet.', routesError: 'Unable to load driven routes. Please refresh.', lmrVehicles: 'LMR vehicles this month', lmrSeparate: 'Separate payment model',
+    totalPricing: 'Total Pricing (€)', totalKm: 'Included kilometres · total', linkedPricingHelp: 'Enter a daily value or a contract total. The other value updates automatically. Date changes preserve the last value entered. Daily equivalents are rounded; contract totals stay exact. Total Pricing excludes extra mileage.',
     title: 'Rental calendar', subtitle: 'Rental periods, costs and mileage in one place.',
     search: 'Search plate, vehicle, station…', allSources: 'All sources', allStatus: 'All periods',
     active: 'Active', upcoming: 'Upcoming', ended: 'Ended', missing: 'Dates needed',
@@ -25,6 +26,7 @@ export const fleetRentalsCopy = {
   },
   de: {
     drivenRoutes: 'Driven Roots', noRouteData: 'Keine hochgeladenen Routendaten', routesNote: '— = keine hochgeladenen Routendaten. Anzahl für die gesamte Flotte.', routesError: 'Routendaten konnten nicht geladen werden. Bitte aktualisieren.', lmrVehicles: 'LMR-Fahrzeuge diesen Monat', lmrSeparate: 'Separates Abrechnungsmodell',
+    totalPricing: 'Gesamtpreis (€)', totalKm: 'Freikilometer · gesamt', linkedPricingHelp: 'Tageswert oder Vertragssumme eingeben. Der andere Wert wird automatisch berechnet. Bei Datumsänderungen bleibt der zuletzt eingegebene Wert erhalten. Tageswerte werden gerundet; Vertragssummen bleiben exakt. Gesamtpreis ohne Mehrkilometer.',
     title: 'Mietkalender', subtitle: 'Mietzeiträume, Kosten und Kilometer auf einen Blick.',
     search: 'Kennzeichen, Fahrzeug, Station suchen…', allSources: 'Alle Quellen', allStatus: 'Alle Zeiträume',
     active: 'Aktiv', upcoming: 'Geplant', ended: 'Beendet', missing: 'Zeitraum fehlt',

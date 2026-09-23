@@ -25,8 +25,8 @@ export function rentalTotals(rental) {
   const rate = number(rental.daily_rate), km = number(rental.daily_km);
   const initial = number(rental.odometer_start), final = number(rental.odometer_end);
   const extraRate = number(rental.extra_km_rate);
-  const base = days != null && rate != null ? money(days * rate) : null;
-  const allowance = days != null && km != null ? money(days * km) : null;
+  const base = days == null ? null : number(rental.total_price) ?? (rate != null ? money(days * rate) : null);
+  const allowance = days == null ? null : number(rental.total_km) ?? (km != null ? money(days * km) : null);
   const driven = initial != null && final != null && final >= initial ? money(final - initial) : null;
   const difference = driven != null && allowance != null ? money(driven - allowance) : null;
   const extra = difference == null ? null : difference <= 0 ? 0 : extraRate == null ? null : money(difference * extraRate);
@@ -42,6 +42,24 @@ export function rentalStatus(car, today) {
 
 export function monthRentalCost(car, first, last) {
   if (!car.active_from || !car.active_to || car.active_from > last || car.active_to < first) return null;
-  return rentalTotals({ ...car, active_from: car.active_from > first ? car.active_from : first,
-    active_to: car.active_to < last ? car.active_to : last }).base;
+  const full = rentalTotals(car);
+  const overlap = rentalTotals({ ...car, active_from: car.active_from > first ? car.active_from : first,
+    active_to: car.active_to < last ? car.active_to : last });
+  return full.base == null || full.days == null || overlap.days == null ? null : money(full.base * overlap.days / full.days);
+}
+
+// The last edited side becomes authoritative; the opposite side is display-only derived data.
+export function updateRentalPricing(form, name, value) {
+  const opposite = { daily_rate: 'total_price', total_price: 'daily_rate', daily_km: 'total_km', total_km: 'daily_km' };
+  return { ...form, [name]: value, ...(opposite[name] ? { [opposite[name]]: '' } : {}) };
+}
+
+export function rentalPricingFields(form) {
+  const totals = rentalTotals(form);
+  return {
+    daily_rate: number(form.total_price) != null ? totals.days ? money(Number(form.total_price) / totals.days) : '' : form.daily_rate,
+    total_price: number(form.total_price) != null ? form.total_price : totals.base ?? '',
+    daily_km: number(form.total_km) != null ? totals.days ? money(Number(form.total_km) / totals.days) : '' : form.daily_km,
+    total_km: number(form.total_km) != null ? form.total_km : totals.allowance ?? '',
+  };
 }

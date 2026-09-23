@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getFleetRentals, saveFleetRental, getDrivenRoutes } from '../services/fleetRentalsApi';
-import { monthRentalCost, rentalStatus, rentalTotals, rentalSource, rentalOverlapsMonth } from '../utils/rentalCalculations';
+import { monthRentalCost, rentalStatus, rentalTotals, rentalSource, rentalOverlapsMonth, updateRentalPricing, rentalPricingFields } from '../utils/rentalCalculations';
 import { fleetRentalsCopy } from './fleetRentalsCopy';
 import './fleetRentals.css';
 
@@ -15,10 +15,11 @@ const sourceClass = rentalSource;
 function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   const dialog = useRef(null);
   const isLmr = rentalSource(car) === 'lmr';
-  const [form, setForm] = useState(() => Object.fromEntries(['active_from', 'active_to', 'daily_rate', 'daily_km', 'extra_km_rate', 'odometer_start', 'odometer_end', 'notes'].map(key => [key, car[key] ?? ''])));
+  const [form, setForm] = useState(() => Object.fromEntries(['active_from', 'active_to', 'daily_rate', 'daily_km', 'total_price', 'total_km', 'extra_km_rate', 'odometer_start', 'odometer_end', 'notes'].map(key => [key, car[key] ?? ''])));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const totals = rentalTotals(form);
+  const pricingFields = rentalPricingFields(form);
   const money = value => value == null ? '—' : new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(value);
   const number = value => value == null ? '—' : new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value);
   useEffect(() => {
@@ -28,9 +29,9 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = overflow; previous?.focus?.(); };
   }, []);
-  const change = event => setForm(current => ({ ...current, [event.target.name]: event.target.value }));
+  const change = event => setForm(current => updateRentalPricing(current, event.target.name, event.target.value));
   const field = (name, label, type = 'number', step = '0.01') => <label className="fr-field" key={name}>
-    <span>{label}</span><input name={name} type={type} value={form[name]} onChange={change}
+    <span>{label}</span><input name={name} type={type} value={pricingFields[name] ?? form[name]} onChange={change}
       required={type === 'date'} min={type === 'date' ? name === 'active_to' ? form.active_from || '1900-01-01' : '1900-01-01' : '0'}
       max={type === 'number' ? '99999999' : '9999-12-31'} step={type === 'number' ? step : undefined} />
   </label>;
@@ -51,7 +52,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
         <button className="fr-icon" type="button" aria-label={c.close} disabled={saving} onClick={onClose}>×</button></header>
       <div className={`fr-dialog-body ${isLmr ? 'fr-lmr-dialog' : ''}`}><fieldset disabled={saving} className="fr-editor">
         <section><h3>{c.period}</h3><div className="fr-fields">{field('active_from', c.from, 'date')}{field('active_to', c.to, 'date')}</div><p className="fr-help">{c.inclusive}</p></section>
-        {!isLmr && <><section><h3>{c.pricing}</h3><div className="fr-fields">{field('daily_rate', c.rate)}{field('daily_km', c.dailyKm)}{field('extra_km_rate', c.extraRate, 'number', '0.0001')}</div></section>
+        {!isLmr && <><section><h3>{c.pricing}</h3><div className="fr-fields">{field('daily_rate', c.rate)}{field('daily_km', c.dailyKm)}{field('total_price', c.totalPricing)}{field('total_km', c.totalKm)}{field('extra_km_rate', c.extraRate, 'number', '0.0001')}</div><p className="fr-help">{c.linkedPricingHelp}</p></section>
         <section><h3>{c.odometer}</h3><div className="fr-fields">{field('odometer_start', c.startKm)}{field('odometer_end', c.endKm)}</div>
           {car.mileage != null && <p className="fr-help">{c.currentKm}: {number(Number(car.mileage))} km</p>}</section></>}
         <label className="fr-field"><span>{c.notes}</span><textarea name="notes" rows="3" maxLength="5000" value={form.notes} onChange={change} placeholder={c.notesPlaceholder} /></label>
@@ -116,7 +117,7 @@ export default function FleetRentalsPage() {
   const monthly = filtered.filter(car => rentalOverlapsMonth(car, first, last));
   const pricedRentals = monthly.filter(car => rentalSource(car) !== 'lmr');
   const monthlyCost = pricedRentals.reduce((sum, car) => sum + (monthRentalCost(car, first, last) ?? 0), 0);
-  const unknownRates = pricedRentals.filter(car => car.daily_rate == null).length;
+  const unknownRates = pricedRentals.filter(car => car.daily_rate == null && car.total_price == null).length;
   const soon = localDate(new Date(new Date().setDate(new Date().getDate() + 7)));
   function shiftMonth(delta) { setMonth(localDate(new Date(year, monthNumber - 1 + delta, 1)).slice(0, 7)); }
   return <main className="fr-page" data-portal-localized>

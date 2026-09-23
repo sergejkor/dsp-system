@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateRental, RENTAL_SOURCES } from '../rentalValidation.js';
-import { rentalTotals, monthRentalCost, rentalStatus, rentalSource, rentalOverlapsMonth } from '../../../../../frontend/src/utils/rentalCalculations.js';
+import { rentalTotals, monthRentalCost, rentalStatus, rentalSource, rentalOverlapsMonth, rentalPricingFields, updateRentalPricing } from '../../../../../frontend/src/utils/rentalCalculations.js';
 
 test('LMR, Rental and Self source have distinct types', () => {
   assert.equal(rentalSource({ fleet_provider: ' LMR ' }), 'lmr');
@@ -21,6 +21,48 @@ test('calendar only includes rental periods intersecting the selected month', ()
 
 const rental = { active_from: '2026-03-28', active_to: '2026-03-30', daily_rate: '49.99', daily_km: '100',
   odometer_start: '1000', odometer_end: '1350', extra_km_rate: '0.25', revision: 'test' };
+
+test('contract totals retain exact amounts despite rounded daily equivalents', () => {
+  const form = { ...rental, total_price: '100', total_km: '1000' };
+  assert.equal(rentalPricingFields(form).daily_rate, 33.33);
+  assert.equal(rentalPricingFields(form).daily_km, 333.33);
+  assert.equal(rentalTotals(form).base, 100);
+  assert.equal(rentalTotals(form).allowance, 1000);
+  const saved = validateRental(form);
+  assert.equal(saved.daily_rate, 33.33);
+  assert.equal(saved.daily_km, 333.33);
+  assert.equal(rentalTotals(saved).base, 100);
+  assert.equal(rentalTotals(saved).allowance, 1000);
+});
+
+test('editing either side changes the basis independently for price and kilometres', () => {
+  let form = updateRentalPricing(rental, 'total_price', '100');
+  form = updateRentalPricing(form, 'total_km', '1000');
+  assert.equal(rentalPricingFields(form).daily_rate, 33.33);
+  form = updateRentalPricing(form, 'daily_rate', '50');
+  assert.equal(rentalPricingFields(form).total_price, 150);
+  assert.equal(rentalPricingFields(form).total_km, '1000');
+  form = updateRentalPricing(form, 'daily_km', '200');
+  assert.equal(rentalPricingFields(form).total_km, 600);
+});
+
+test('date changes preserve the last entered side and empty input clears the pair', () => {
+  const form = updateRentalPricing({ ...rental, total_price: '100', total_km: '1000' }, 'active_to', '2026-03-31');
+  assert.equal(rentalPricingFields(form).daily_rate, 25);
+  assert.equal(rentalPricingFields(form).daily_km, 250);
+  const daily = updateRentalPricing(rental, 'active_to', '2026-03-31');
+  assert.equal(rentalPricingFields(daily).total_price, 199.96);
+  assert.equal(rentalPricingFields(daily).total_km, 400);
+  assert.equal(rentalPricingFields(updateRentalPricing(form, 'total_price', '')).daily_rate, '');
+  assert.equal(rentalPricingFields(updateRentalPricing(form, 'daily_km', '')).total_km, '');
+  assert.equal(rentalTotals({ ...form, total_price: '0', total_km: '0' }).base, 0);
+});
+
+test('fixed totals prorate by actual contract days for monthly cost', () => {
+  const form = { ...rental, active_from: '2026-03-30', active_to: '2026-04-01', total_price: '100' };
+  assert.equal(monthRentalCost(form, '2026-03-01', '2026-03-31'), 66.67);
+  assert.equal(monthRentalCost(form, '2026-04-01', '2026-04-30'), 33.33);
+});
 
 test('includes pickup and return days across DST and calculates excess mileage', () => {
   assert.deepEqual(rentalTotals(rental), { days: 3, base: 149.97, allowance: 300, driven: 350, difference: 50, extra: 12.5, total: 162.47 });
