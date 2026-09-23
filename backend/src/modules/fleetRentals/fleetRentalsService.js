@@ -31,8 +31,19 @@ export async function listRentals() {
   return result.rows.map(serialize);
 }
 
+// Same completed-route source and counting convention as Dashboard / Analytics.
+export async function getDrivenRoutes(month) {
+  if (typeof month !== 'string' || !/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)) {
+    throw rentalError('Enter a valid month (YYYY-MM).');
+  }
+  const result = await query(`SELECT to_char(day_key, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
+    FROM daily_upload_rows
+    WHERE day_key >= $1::date AND day_key < $1::date + INTERVAL '1 month'
+    GROUP BY day_key ORDER BY day_key`, [`${month}-01`]);
+  return result.rows;
+}
+
 export async function saveRental(id, data) {
-  const value = validateRental(data);
   await ensureRentalSchema();
   const client = await pool.connect();
   try {
@@ -40,6 +51,8 @@ export async function saveRental(id, data) {
     const car = (await client.query('SELECT fleet_provider FROM cars WHERE id = $1 FOR UPDATE', [id])).rows[0];
     if (!car) throw rentalError('Vehicle not found.', 404);
     if (!RENTAL_SOURCES.includes(String(car.fleet_provider || '').trim().toLowerCase())) throw rentalError('This vehicle is not from a rental source.');
+    const isLmr = String(car.fleet_provider).trim().toLowerCase() === 'lmr';
+    const value = validateRental(isLmr ? { ...data, daily_rate: null, daily_km: null, odometer_start: null, odometer_end: null, extra_km_rate: null } : data);
     await client.query('SELECT car_id FROM car_planning_car_state WHERE car_id = $1 FOR UPDATE', [id]);
     const current = serialize((await client.query(`${selectRental} WHERE c.id = $1`, [id])).rows[0]);
     if (current.revision !== data.revision) throw rentalError('Vehicle data changed. Close this dialog and refresh the calendar before saving.', 409);
@@ -47,7 +60,11 @@ export async function saveRental(id, data) {
       VALUES ($1, false, $2, $3, NOW()) ON CONFLICT (car_id) DO UPDATE
       SET active_from = EXCLUDED.active_from, active_to = EXCLUDED.active_to, updated_at = NOW()`,
     [id, value.active_from, value.active_to]);
-    await client.query(`INSERT INTO fleet_rental_details
+    if (isLmr) {
+      // LMR has a separate payment model. Preserve any existing rental figures.
+      await client.query(`INSERT INTO fleet_rental_details (car_id, notes) VALUES ($1, $2)
+        ON CONFLICT (car_id) DO UPDATE SET notes = EXCLUDED.notes, updated_at = NOW()`, [id, value.notes]);
+    } else await client.query(`INSERT INTO fleet_rental_details
       (car_id, daily_rate, daily_km, odometer_start, odometer_end, extra_km_rate, notes)
       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (car_id) DO UPDATE SET
       daily_rate = EXCLUDED.daily_rate, daily_km = EXCLUDED.daily_km,

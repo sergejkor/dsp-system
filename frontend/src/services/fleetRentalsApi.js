@@ -8,6 +8,7 @@ async function request(path = '', options = {}) {
   return body;
 }
 export const getFleetRentals = () => request();
+export const getDrivenRoutes = month => request(`/driven-routes?month=${encodeURIComponent(month)}`);
 export const saveFleetRental = (id, data) => request(`/${id}`, {
   method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
 });

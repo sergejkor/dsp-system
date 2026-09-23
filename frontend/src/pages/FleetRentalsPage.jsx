@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppSettings } from '../context/AppSettingsContext';
-import { getFleetRentals, saveFleetRental } from '../services/fleetRentalsApi';
-import { monthRentalCost, rentalStatus, rentalTotals } from '../utils/rentalCalculations';
+import { getFleetRentals, saveFleetRental, getDrivenRoutes } from '../services/fleetRentalsApi';
+import { monthRentalCost, rentalStatus, rentalTotals, rentalSource, rentalOverlapsMonth } from '../utils/rentalCalculations';
 import { fleetRentalsCopy } from './fleetRentalsCopy';
 import './fleetRentals.css';
 
@@ -10,10 +10,11 @@ function localDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 const title = car => car.license_plate || car.vehicle_id || `#${car.id}`;
-const sourceClass = car => String(car.fleet_provider).trim().toLowerCase() === 'self source' ? 'self' : 'rental';
+const sourceClass = rentalSource;
 
 function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   const dialog = useRef(null);
+  const isLmr = rentalSource(car) === 'lmr';
   const [form, setForm] = useState(() => Object.fromEntries(['active_from', 'active_to', 'daily_rate', 'daily_km', 'extra_km_rate', 'odometer_start', 'odometer_end', 'notes'].map(key => [key, car[key] ?? ''])));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -36,7 +37,7 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
   async function submit(event) {
     event.preventDefault();
     if (totals.days == null) { setError(c.errorDates); return; }
-    if (form.odometer_end !== '' && (form.odometer_start === '' || Number(form.odometer_end) < Number(form.odometer_start))) { setError(c.errorOdometer); return; }
+    if (!isLmr && form.odometer_end !== '' && (form.odometer_start === '' || Number(form.odometer_end) < Number(form.odometer_start))) { setError(c.errorOdometer); return; }
     setSaving(true); setError('');
     try { onSaved(await saveFleetRental(car.id, { ...form, revision: car.revision })); }
     catch (err) { setError(err.message); }
@@ -48,20 +49,20 @@ function RentalDialog({ car, copy: c, locale, onClose, onSaved }) {
       <header className="fr-dialog-header"><div><span className="fr-eyebrow">{c.details}</span><h2 id="fr-dialog-title">{title(car)}</h2>
         <p>{[car.fleet_provider, car.model, car.station].filter(Boolean).join(' · ')}</p></div>
         <button className="fr-icon" type="button" aria-label={c.close} disabled={saving} onClick={onClose}>×</button></header>
-      <div className="fr-dialog-body"><fieldset disabled={saving} className="fr-editor">
+      <div className={`fr-dialog-body ${isLmr ? 'fr-lmr-dialog' : ''}`}><fieldset disabled={saving} className="fr-editor">
         <section><h3>{c.period}</h3><div className="fr-fields">{field('active_from', c.from, 'date')}{field('active_to', c.to, 'date')}</div><p className="fr-help">{c.inclusive}</p></section>
-        <section><h3>{c.pricing}</h3><div className="fr-fields">{field('daily_rate', c.rate)}{field('daily_km', c.dailyKm)}{field('extra_km_rate', c.extraRate, 'number', '0.0001')}</div></section>
+        {!isLmr && <><section><h3>{c.pricing}</h3><div className="fr-fields">{field('daily_rate', c.rate)}{field('daily_km', c.dailyKm)}{field('extra_km_rate', c.extraRate, 'number', '0.0001')}</div></section>
         <section><h3>{c.odometer}</h3><div className="fr-fields">{field('odometer_start', c.startKm)}{field('odometer_end', c.endKm)}</div>
-          {car.mileage != null && <p className="fr-help">{c.currentKm}: {number(Number(car.mileage))} km</p>}</section>
+          {car.mileage != null && <p className="fr-help">{c.currentKm}: {number(Number(car.mileage))} km</p>}</section></>}
         <label className="fr-field"><span>{c.notes}</span><textarea name="notes" rows="3" maxLength="5000" value={form.notes} onChange={change} placeholder={c.notesPlaceholder} /></label>
-      </fieldset><aside className="fr-summary"><h3>{c.summary}</h3><div className="fr-days"><strong>{number(totals.days)}</strong><span>{c.days}</span></div>
+      </fieldset>{!isLmr && <aside className="fr-summary"><h3>{c.summary}</h3><div className="fr-days"><strong>{number(totals.days)}</strong><span>{c.days}</span></div>
         <dl>{[[c.base, money(totals.base)], [c.allowance, totals.allowance == null ? '—' : `${number(totals.allowance)} km`],
           [c.driven, totals.driven == null ? '—' : `${number(totals.driven)} km`],
           [c.difference, totals.difference == null ? '—' : `${totals.difference > 0 ? '+' : ''}${number(totals.difference)} km`],
           [c.extra, money(totals.extra)]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
         <p className="fr-help">{c.balanceHelp}</p><div className="fr-total"><span>{c.total}</span><strong>{money(totals.total)}</strong></div>
         {totals.total == null && <p className="fr-help">{totals.driven == null ? c.pending : c.unpriced}</p>}<p className="fr-help">{c.currency}</p>
-      </aside></div>
+      </aside>}</div>
       <footer className="fr-dialog-footer">{error && <p className="fr-error" role="alert">{error}</p>}<div><button type="button" className="fr-button" disabled={saving} onClick={onClose}>{c.cancel}</button><button className="fr-button primary" type="submit" disabled={saving}>{saving ? c.saving : c.save}</button></div></footer>
     </form>
   </dialog>, document.body);
@@ -73,6 +74,10 @@ export default function FleetRentalsPage() {
   const locale = language === 'de' ? 'de-DE' : 'en-GB';
   const [month, setMonth] = useState(() => localDate().slice(0, 7));
   const [cars, setCars] = useState([]);
+  const [routes, setRoutes] = useState({});
+  const [routesError, setRoutesError] = useState('');
+  const [routesLoading, setRoutesLoading] = useState(true);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -90,18 +95,28 @@ export default function FleetRentalsPage() {
   const formatDate = value => value ? new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`)) : '—';
   async function load() {
     const id = ++requestId.current;
-    setLoading(true); setError(''); setNotice('');
+    setLoading(true); setError(''); setNotice(''); setRefreshVersion(value => value + 1);
     try { const rows = await getFleetRentals(); if (id === requestId.current) setCars(rows); }
     catch (err) { if (id === requestId.current) setError(err.message); }
     finally { if (id === requestId.current) setLoading(false); }
   }
   useEffect(() => { load(); return () => { requestId.current++; }; }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setRoutes({}); setRoutesLoading(true); setRoutesError('');
+    getDrivenRoutes(month).then(rows => {
+      if (!cancelled) setRoutes(Object.fromEntries(rows.map(row => [row.date, row.count])));
+    }).catch(err => { if (!cancelled) setRoutesError(err.message); })
+      .finally(() => { if (!cancelled) setRoutesLoading(false); });
+    return () => { cancelled = true; };
+  }, [month, refreshVersion]);
   const filtered = useMemo(() => cars.filter(car => (!source || car.fleet_provider === source)
     && (!status || rentalStatus(car, today) === status)
     && [car.license_plate, car.vehicle_id, car.model, car.station, car.vin].filter(Boolean).join(' ').toLowerCase().includes(search.trim().toLowerCase())), [cars, source, status, search, today]);
-  const monthly = filtered.filter(car => rentalStatus(car, today) !== 'missing' && car.active_from <= last && car.active_to >= first);
-  const monthlyCost = monthly.reduce((sum, car) => sum + (monthRentalCost(car, first, last) ?? 0), 0);
-  const unknownRates = monthly.filter(car => car.daily_rate == null).length;
+  const monthly = filtered.filter(car => rentalOverlapsMonth(car, first, last));
+  const pricedRentals = monthly.filter(car => rentalSource(car) !== 'lmr');
+  const monthlyCost = pricedRentals.reduce((sum, car) => sum + (monthRentalCost(car, first, last) ?? 0), 0);
+  const unknownRates = pricedRentals.filter(car => car.daily_rate == null).length;
   const soon = localDate(new Date(new Date().setDate(new Date().getDate() + 7)));
   function shiftMonth(delta) { setMonth(localDate(new Date(year, monthNumber - 1 + delta, 1)).slice(0, 7)); }
   return <main className="fr-page" data-portal-localized>
@@ -110,8 +125,8 @@ export default function FleetRentalsPage() {
     {error ? <div className="fr-error" role="alert">{error} <button className="fr-button" onClick={load}>{c.retry}</button></div> : <>
       <section className="fr-kpis" aria-label={c.summary}>
         {[[c.vehicles, monthly.length, ''], [c.monthlyCost, money(monthlyCost), unknownRates ? `${unknownRates} ${c.missingRates}` : c.knownOnly],
-          [c.ending, filtered.filter(car => rentalStatus(car, today) === 'active' && car.active_to <= soon).length, c.today],
-          [c.incomplete, filtered.filter(car => rentalStatus(car, today) === 'missing').length, '']].map(([label, value, hint]) => <article key={label}><span>{label}</span><strong>{loading ? '—' : value}</strong><small>{hint || '\u00a0'}</small></article>)}
+          [c.ending, monthly.filter(car => rentalStatus(car, today) === 'active' && car.active_to <= soon).length, c.today],
+          [c.lmrVehicles, monthly.filter(car => rentalSource(car) === 'lmr').length, c.lmrSeparate]].map(([label, value, hint]) => <article key={label}><span>{label}</span><strong>{loading ? '—' : value}</strong><small>{hint || '\u00a0'}</small></article>)}
       </section>
       <section className="fr-calendar">
         <div className="fr-toolbar"><div className="fr-month"><button className="fr-icon" onClick={() => shiftMonth(-1)} aria-label={c.previous}>‹</button>
@@ -119,14 +134,15 @@ export default function FleetRentalsPage() {
           <button className="fr-icon" onClick={() => shiftMonth(1)} aria-label={c.next}>›</button><button className="fr-button" onClick={() => setMonth(today.slice(0, 7))}>{c.today}</button></div>
           <div className="fr-filters"><input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={c.search} aria-label={c.search} />
             <select aria-label={c.allSources} value={source} onChange={e => setSource(e.target.value)}><option value="">{c.allSources}</option>{[...new Set(cars.map(car => car.fleet_provider))].sort().map(value => <option key={value}>{value}</option>)}</select>
-            <select aria-label={c.allStatus} value={status} onChange={e => setStatus(e.target.value)}><option value="">{c.allStatus}</option>{['active', 'upcoming', 'ended', 'missing'].map(value => <option key={value} value={value}>{c[value]}</option>)}</select></div>
+            <select aria-label={c.allStatus} value={status} onChange={e => setStatus(e.target.value)}><option value="">{c.allStatus}</option>{['active', 'upcoming', 'ended'].map(value => <option key={value} value={value}>{c[value]}</option>)}</select></div>
         </div>
-        {loading ? <div className="fr-empty" role="status">{c.loading}</div> : !filtered.length ? <div className="fr-empty">{c.empty}</div> : <div className="fr-scroll"><div className="fr-grid" style={{ '--fr-days': dayCount }}>
-          <div className="fr-grid-header"><div className="fr-vehicle-heading">{c.vehicle} <span>{filtered.length}</span></div><div className="fr-day-headings">{days.map((day, i) => {
+        {routesError && <p className="fr-error" role="alert">{c.routesError}</p>}
+        {loading ? <div className="fr-empty" role="status">{c.loading}</div> : <div className="fr-scroll"><div className="fr-grid" style={{ '--fr-days': dayCount }}>
+          <div className="fr-grid-header"><div className="fr-vehicle-heading">{c.vehicle} <span>{monthly.length}</span></div><div className="fr-day-headings">{days.map((day, i) => {
             const date = new Date(`${day}T12:00:00`);
-            return <div key={day} className={`${[0, 6].includes(date.getDay()) ? 'weekend' : ''} ${day === today ? 'today' : ''}`}><small>{new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(date)}</small><strong>{i + 1}</strong></div>;
+            return <div key={day} className={`${[0, 6].includes(date.getDay()) ? 'weekend' : ''} ${day === today ? 'today' : ''}`}><small>{new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(date)}</small><strong>{i + 1}</strong><span className="fr-driven-routes" title={`${c.drivenRoutes}: ${routes[day] ?? c.noRouteData}`}><small>Driven<br />Roots</small><b>{routesLoading || routesError ? '—' : routes[day] ?? '—'}</b></span></div>;
           })}</div></div>
-          {filtered.map(car => {
+          {monthly.map(car => {
             const state = rentalStatus(car, today);
             const visible = state !== 'missing' && car.active_from <= last && car.active_to >= first;
             const start = visible ? Number((car.active_from < first ? first : car.active_from).slice(-2)) : 1;
@@ -138,8 +154,9 @@ export default function FleetRentalsPage() {
                   : <button className="fr-no-period" onClick={() => setSelected(car)}>{state === 'missing' ? `＋ ${c.setup}` : c.outside}</button>}
               </div></div>;
           })}
+        {!monthly.length && <div className="fr-empty">{c.empty}</div>}
         </div></div>}
-        <footer className="fr-legend"><span><i className="rental" /> LMR / Rental</span><span><i className="self" /> Self source</span><small>{c.legend}</small></footer>
+        <footer className="fr-legend"><span><i className="lmr" /> LMR</span><span><i className="rental" /> Rental</span><span><i className="self" /> Self source</span><small>{c.legend} {c.routesNote}</small></footer>
       </section>
     </>}
     {selected && <RentalDialog car={selected} copy={c} locale={locale} onClose={() => setSelected(null)} onSaved={saved => {

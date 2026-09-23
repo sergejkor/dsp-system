@@ -1,7 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateRental, RENTAL_SOURCES } from '../rentalValidation.js';
-import { rentalTotals, monthRentalCost, rentalStatus } from '../../../../../frontend/src/utils/rentalCalculations.js';
+import { rentalTotals, monthRentalCost, rentalStatus, rentalSource, rentalOverlapsMonth } from '../../../../../frontend/src/utils/rentalCalculations.js';
+
+test('LMR, Rental and Self source have distinct types', () => {
+  assert.equal(rentalSource({ fleet_provider: ' LMR ' }), 'lmr');
+  assert.equal(rentalSource({ fleet_provider: 'Rental' }), 'rental');
+  assert.equal(rentalSource({ fleet_provider: 'Self source' }), 'self');
+});
+
+test('calendar only includes rental periods intersecting the selected month', () => {
+  const visible = (from, to) => rentalOverlapsMonth({ active_from: from, active_to: to }, '2026-09-01', '2026-09-30');
+  assert.equal(visible('2026-08-01', '2026-08-31'), false);
+  assert.equal(visible('2026-10-01', '2026-10-31'), false);
+  assert.equal(visible(null, null), false);
+  assert.equal(visible('2026-08-01', '2026-09-01'), true);
+  assert.equal(visible('2026-09-30', '2026-10-31'), true);
+  assert.equal(visible('2026-09-01', '2026-09-10'), true);
+});
 
 const rental = { active_from: '2026-03-28', active_to: '2026-03-30', daily_rate: '49.99', daily_km: '100',
   odometer_start: '1000', odometer_end: '1350', extra_km_rate: '0.25', revision: 'test' };

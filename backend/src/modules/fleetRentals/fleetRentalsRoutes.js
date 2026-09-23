@@ -1,9 +1,16 @@
 import { Router } from 'express';
 import { requirePermission } from '../auth/authMiddleware.js';
-import { listRentals, saveRental } from './fleetRentalsService.js';
+import { listRentals, saveRental, getDrivenRoutes } from './fleetRentalsService.js';
 
 const router = Router();
 router.use(requirePermission('page_cars'));
+router.get('/driven-routes', async (req, res) => {
+  try { res.json(await getDrivenRoutes(req.query.month)); }
+  catch (error) {
+    if (!error.status) console.error('GET /api/fleet-rentals/driven-routes', error);
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Unable to load driven routes.' });
+  }
+});
 router.get('/', async (_req, res) => {
   try { res.json(await listRentals()); }
   catch (error) {

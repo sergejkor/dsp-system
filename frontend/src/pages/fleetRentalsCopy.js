@@ -1,5 +1,6 @@
 export const fleetRentalsCopy = {
   en: {
+    drivenRoutes: 'Driven Roots', noRouteData: 'No uploaded route data', routesNote: '— = no uploaded route data. Counts cover the entire fleet.', routesError: 'Unable to load driven routes. Please refresh.', lmrVehicles: 'LMR vehicles this month', lmrSeparate: 'Separate payment model',
     title: 'Rental calendar', subtitle: 'Rental periods, costs and mileage in one place.',
     search: 'Search plate, vehicle, station…', allSources: 'All sources', allStatus: 'All periods',
     active: 'Active', upcoming: 'Upcoming', ended: 'Ended', missing: 'Dates needed',
@@ -19,10 +20,11 @@ export const fleetRentalsCopy = {
     cancel: 'Cancel', save: 'Save changes', saving: 'Saving…', close: 'Close', saved: 'Rental details saved.',
     errorDates: 'Enter valid dates. End date must be on or after start date.',
     errorOdometer: 'Enter an initial reading; final mileage cannot be lower than initial mileage.',
-    knownOnly: 'Known daily rates · excludes extra mileage', missingRates: 'vehicles without a daily rate',
+    knownOnly: 'Rental / Self source · excludes extra mileage', missingRates: 'vehicles without a daily rate',
     currency: 'All amounts in EUR, using the rates entered.', retry: 'Try again',
   },
   de: {
+    drivenRoutes: 'Driven Roots', noRouteData: 'Keine hochgeladenen Routendaten', routesNote: '— = keine hochgeladenen Routendaten. Anzahl für die gesamte Flotte.', routesError: 'Routendaten konnten nicht geladen werden. Bitte aktualisieren.', lmrVehicles: 'LMR-Fahrzeuge diesen Monat', lmrSeparate: 'Separates Abrechnungsmodell',
     title: 'Mietkalender', subtitle: 'Mietzeiträume, Kosten und Kilometer auf einen Blick.',
     search: 'Kennzeichen, Fahrzeug, Station suchen…', allSources: 'Alle Quellen', allStatus: 'Alle Zeiträume',
     active: 'Aktiv', upcoming: 'Geplant', ended: 'Beendet', missing: 'Zeitraum fehlt',
@@ -42,7 +44,7 @@ export const fleetRentalsCopy = {
     cancel: 'Abbrechen', save: 'Änderungen speichern', saving: 'Speichern…', close: 'Schließen', saved: 'Mietdetails gespeichert.',
     errorDates: 'Gültigen Zeitraum eingeben. Das Enddatum darf nicht vor dem Startdatum liegen.',
     errorOdometer: 'Anfangsstand eingeben; der Endstand darf nicht darunter liegen.',
-    knownOnly: 'Bekannte Tagestarife · ohne Mehrkilometer', missingRates: 'Fahrzeuge ohne Tagestarif',
+    knownOnly: 'Rental / Self source · ohne Mehrkilometer', missingRates: 'Fahrzeuge ohne Tagestarif',
     currency: 'Alle Beträge in EUR anhand der eingegebenen Tarife.', retry: 'Erneut versuchen',
   },
 };

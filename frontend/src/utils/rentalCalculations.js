@@ -1,4 +1,12 @@
 const DAY = 86400000;
+export function rentalSource(car) {
+  const source = String(car.fleet_provider || '').trim().toLowerCase();
+  return source === 'lmr' ? 'lmr' : source === 'self source' ? 'self' : 'rental';
+}
+
+export function rentalOverlapsMonth(car, first, last) {
+  return rentalTotals(car).days != null && car.active_from <= last && car.active_to >= first;
+}
 function number(value) {
   if (value == null || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
   return Number(value);

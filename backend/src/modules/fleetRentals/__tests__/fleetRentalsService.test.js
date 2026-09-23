@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { pool } from '../../../db.js';
-import { listRentals, saveRental } from '../fleetRentalsService.js';
+import { listRentals, saveRental, getDrivenRoutes } from '../fleetRentalsService.js';
 import router from '../fleetRentalsRoutes.js';
 
 const row = { id: 7, license_plate: 'TEST', fleet_provider: 'Self source', active_from: '2026-09-01', active_to: '2026-09-30', rental_updated_at: null };
@@ -52,6 +52,14 @@ test('rental service selects shared vehicle data and saves both records atomical
     assert.ok(!calls.some(call => call.sql === 'COMMIT'));
 
     calls.length = 0;
+    failure = false;
+    provider = 'LMR';
+    await saveRental(7, { ...form, daily_rate: 'ignored', revision: rows[0].revision });
+    const lmrWrite = calls.find(call => call.sql.startsWith('INSERT INTO fleet_rental_details'));
+    assert.deepEqual(lmrWrite.params, [7, '']);
+    assert.doesNotMatch(lmrWrite.sql, /daily_rate|daily_km|odometer|extra_km_rate/);
+
+    calls.length = 0;
     provider = 'Owned';
     await assert.rejects(saveRental(7, { ...form, revision: rows[0].revision }), { status: 400 });
     assert.ok(!calls.some(call => call.sql.startsWith('INSERT')));
@@ -66,6 +74,25 @@ test('rental endpoints require authentication, including read access', async () 
   try {
     const url = `http://127.0.0.1:${server.address().port}/api/fleet-rentals`;
     assert.equal((await fetch(url)).status, 401);
+    assert.equal((await fetch(`${url}/driven-routes?month=2026-09`)).status, 401);
     assert.equal((await fetch(`${url}/7`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })).status, 401);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('driven routes use all fleet uploads within exactly one calendar month', async () => {
+  const originalQuery = pool.query;
+  pool.query = async (sql, params) => {
+    assert.match(sql, /FROM daily_upload_rows/);
+    assert.match(sql, /COUNT\(\*\)/);
+    assert.match(sql, /INTERVAL '1 month'/);
+    assert.doesNotMatch(sql, /fleet_provider|car_id/);
+    assert.deepEqual(params, ['2026-09-01']);
+    return { rows: [{ date: '2026-09-23', count: 48 }] };
+  };
+  try {
+    assert.deepEqual(await getDrivenRoutes('2026-09'), [{ date: '2026-09-23', count: 48 }]);
+    for (const month of ['', undefined, '2026-13', '2026-9', '2026-09-01']) {
+      await assert.rejects(getDrivenRoutes(month), { status: 400 });
+    }
+  } finally { pool.query = originalQuery; }
 });
