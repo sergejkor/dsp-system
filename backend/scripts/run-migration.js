@@ -1234,6 +1234,8 @@ async function run() {
     const chatMigrationSql = readFileSync(new URL('../migrations/004_chat_module.sql', import.meta.url), 'utf8');
     await query(chatMigrationSql);
     console.log('Migration OK: chat module tables (or already exist).');
+    await query(readFileSync(new URL('../migrations/009_atlas_shipments.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: Atlas shipments.');
   } catch (e) {
     console.error('Migration failed:', e.message);
     process.exit(1);

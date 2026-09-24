@@ -7,6 +7,8 @@
     "build": "node -e \"console.log('Backend does not require a build step.')\"",
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "test:atlas": "node --test src/modules/atlas/__tests__/*.test.js",
+    "atlas:sync": "node scripts/atlas-sync-once.js",
     "test": "node --test src/modules/pave/__tests__/*.test.js src/modules/vehicleInspections/__tests__/*.test.js",
     "transfer:sheets": "node scripts/transfer-from-sheets.js",
     "pave:backfill": "node scripts/pave-backfill.js",
