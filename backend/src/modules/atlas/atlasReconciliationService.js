@@ -58,7 +58,7 @@ async function reconcileAtlasRoutesWithClient(serviceDate, client) {
         await client.query(`
             INSERT INTO atlas_route_assignments
               (service_date, route_code, driver_name, match_status, matched_at)
-            VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'MATCHED' THEN NOW() ELSE NULL END)
+        VALUES ($1, $2, $3, $4, CASE WHEN $4::varchar = 'MATCHED' THEN NOW() ELSE NULL END)
             ON CONFLICT (service_date, route_code) DO UPDATE SET
               driver_name = EXCLUDED.driver_name,
               match_status = EXCLUDED.match_status,
