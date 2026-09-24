@@ -19,6 +19,7 @@ import analyticsRoutes from './modules/analytics/analyticsRoutes.js';
 import giftCardsRoutes from './modules/giftCards/giftCardsRoutes.js';
 import insuranceRoutes from './modules/insurance/insuranceRoutes.js';
 import carPlanningRoutes from './modules/carPlanning/carPlanningRoutes.js';
+import { startAtlasEmailWatcher } from './modules/atlas/atlasEmailWatcher.js';
 import finesRoutes from './modules/fines/finesRoutes.js';
 import damagesRoutes from './modules/damages/damagesRoutes.js';
 import dashboardRoutes from './modules/dashboard/dashboardRoutes.js';
@@ -165,4 +166,5 @@ httpServer.listen(port, () => {
   startPaveSyncScheduler();
   startKenjoSyncScheduler();
   startInspectionReminderScheduler();
+  startAtlasEmailWatcher();
 });

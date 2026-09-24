@@ -26,25 +26,35 @@ function addressList(value) {
   })).filter((entry) => entry.address);
 }
 
-export async function fetchAtlasEmails() {
+export function createAtlasImapClient({ connectionTimeout = 30000 } = {}) {
   const user = required('ATLAS_IMAP_USER');
   const pass = required('ATLAS_IMAP_PASSWORD');
   const port = Number(process.env.ATLAS_IMAP_PORT || 993);
   const secure = String(process.env.ATLAS_IMAP_SECURE || 'true').toLowerCase() !== 'false';
-  const sender = String(process.env.ATLAS_MAIL_FROM || 'aahmedmi@amazon.de').trim();
-  const subject = String(process.env.ATLAS_MAIL_SUBJECT || 'List for AlfaMile GmbH').trim();
-  const client = new ImapFlow({
+  return new ImapFlow({
     host: String(process.env.ATLAS_IMAP_HOST || 'imap.goneo.de').trim(),
     port,
     secure,
     auth: { user, pass },
     logger: false,
+    connectionTimeout,
   });
+}
+
+export function atlasMailboxName() {
+  return String(process.env.ATLAS_IMAP_MAILBOX || 'INBOX').trim() || 'INBOX';
+}
+
+export async function fetchAtlasEmails() {
+  const sender = String(process.env.ATLAS_MAIL_FROM || 'aahmedmi@amazon.de').trim();
+  const subject = String(process.env.ATLAS_MAIL_SUBJECT || 'List for AlfaMile GmbH').trim();
+  const client = createAtlasImapClient();
+  const pass = String(process.env.ATLAS_IMAP_PASSWORD || '');
   let connected = false;
   try {
     await client.connect();
     connected = true;
-    await client.mailboxOpen(String(process.env.ATLAS_IMAP_MAILBOX || 'INBOX').trim());
+    await client.mailboxOpen(atlasMailboxName());
     const uids = await client.search({ since: sinceDate(lookbackDays()), from: sender, subject }, { uid: true });
     const emails = [];
     for (const imapUid of (uids || []).sort((a, b) => a - b)) {

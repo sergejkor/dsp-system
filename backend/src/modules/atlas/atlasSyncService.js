@@ -2,6 +2,7 @@ import { query, withTransaction } from '../../db.js';
 import { fetchAtlasEmails } from './atlasImapService.js';
 import { parseAtlasShipments } from './atlasEmailParser.js';
 import { toAtlasServiceDate } from './atlasDateUtils.js';
+import { reconcileAtlasRoutes } from './atlasReconciliationService.js';
 
 const EXPECTED_BODY = 'Please find below the list of your Atlas shipment of the day';
 const EXPECTED_HEADER = 'Tracking ID - Route code - Transporter ID';
@@ -59,22 +60,36 @@ async function importEmail(email, shipments, serviceDate) {
           transporter_id = EXCLUDED.transporter_id, updated_at = NOW()
       `, [incoming.id, serviceDate, shipment.trackingId, shipment.routeCode, shipment.transporterId]);
     }
+    await reconcileAtlasRoutes(serviceDate);
     await query(`UPDATE incoming_emails SET processing_status = 'processed', updated_at = NOW() WHERE id = $1`, [incoming.id]);
     return incoming.id;
   });
 }
 
-export async function syncAtlasEmails({ fetchEmails = fetchAtlasEmails } = {}) {
+export async function hasAtlasEmailPersistedForDate(serviceDate) {
+  const result = await query(`
+    SELECT EXISTS (
+      SELECT 1 FROM incoming_emails
+      WHERE provider = 'atlas_goneo'
+        AND processing_status = 'processed'
+        AND raw_extraction_payload->>'serviceDate' = $1
+    ) AS exists
+  `, [serviceDate]);
+  return result.rows[0]?.exists === true;
+}
+
+export async function syncAtlasEmails({ fetchEmails = fetchAtlasEmails, onlyServiceDate } = {}) {
   const emails = await fetchEmails();
   const result = { emailsScanned: emails.length, emailsMatched: 0, emailsImported: 0, shipmentsImported: 0, routes: 0, errors: [] };
   for (const email of emails) {
     if (!isAtlasEmail(email)) continue;
-    result.emailsMatched += 1;
     try {
-      const shipments = parseAtlasShipments(email.rawBodyText);
-      if (!shipments.length) throw new Error('Atlas email contains no valid shipment rows');
       const dateSource = email.sentAt || email.receivedAt;
       const serviceDate = toAtlasServiceDate(dateSource, process.env.ATLAS_TIMEZONE || 'Europe/Berlin');
+      if (onlyServiceDate && serviceDate !== onlyServiceDate) continue;
+      result.emailsMatched += 1;
+      const shipments = parseAtlasShipments(email.rawBodyText);
+      if (!shipments.length) throw new Error('Atlas email contains no valid shipment rows');
       await importEmail(email, shipments, serviceDate);
       result.emailsImported += 1;
       result.shipmentsImported += shipments.length;

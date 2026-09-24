@@ -1,5 +1,6 @@
 import { query } from '../../db.js';
 import * as XLSX from 'xlsx';
+import { reconcileAtlasRoutes } from '../atlas/atlasReconciliationService.js';
 
 /**
  * Get weeks for a year (from `weeks` table).
@@ -392,6 +393,12 @@ async function saveUpload(dayKey, fileName, buffer) {
         JSON.stringify(row),
       ]
     );
+  }
+
+  try {
+    await reconcileAtlasRoutes(dayKey);
+  } catch (error) {
+    console.error(`[atlas] route reconciliation after Excel import failed for ${dayKey}: ${String(error?.message || error)}`);
   }
 
   return { dayKey, uploadId, rowCount: rows.length };

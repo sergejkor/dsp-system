@@ -1236,6 +1236,8 @@ async function run() {
     console.log('Migration OK: chat module tables (or already exist).');
     await query(readFileSync(new URL('../migrations/009_atlas_shipments.sql', import.meta.url), 'utf8'));
     console.log('Migration OK: Atlas shipments.');
+    await query(readFileSync(new URL('../migrations/010_atlas_route_assignments.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: Atlas route assignments.');
   } catch (e) {
     console.error('Migration failed:', e.message);
     process.exit(1);
