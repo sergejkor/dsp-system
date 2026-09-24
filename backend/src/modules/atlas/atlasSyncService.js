@@ -3,6 +3,7 @@ import { fetchAtlasEmails } from './atlasImapService.js';
 import { parseAtlasShipments } from './atlasEmailParser.js';
 import { toAtlasServiceDate } from './atlasDateUtils.js';
 import { reconcileAtlasRoutes } from './atlasReconciliationService.js';
+import { attemptAtlasSlackDeliverySafely } from './atlasSlackService.js';
 
 const EXPECTED_BODY = 'Please find below the list of your Atlas shipment of the day';
 const EXPECTED_HEADER = 'Tracking ID - Route code - Transporter ID';
@@ -74,6 +75,12 @@ async function importEmail(email, shipments, serviceDate) {
   }
 }
 
+export async function persistAtlasEmailThenAttemptSlack(serviceDate, persistEmail, deliver) {
+  const persisted = await persistEmail();
+  await attemptAtlasSlackDeliverySafely(serviceDate, deliver);
+  return persisted;
+}
+
 export async function hasAtlasEmailPersistedForDate(serviceDate) {
   const result = await query(`
     SELECT EXISTS (
@@ -98,7 +105,10 @@ export async function syncAtlasEmails({ fetchEmails = fetchAtlasEmails, onlyServ
       result.emailsMatched += 1;
       const shipments = parseAtlasShipments(email.rawBodyText);
       if (!shipments.length) throw new Error('Atlas email contains no valid shipment rows');
-      await importEmail(email, shipments, serviceDate);
+      await persistAtlasEmailThenAttemptSlack(
+        serviceDate,
+        () => importEmail(email, shipments, serviceDate),
+      );
       result.emailsImported += 1;
       result.shipmentsImported += shipments.length;
       result.routes += new Set(shipments.map((shipment) => shipment.routeCode)).size;

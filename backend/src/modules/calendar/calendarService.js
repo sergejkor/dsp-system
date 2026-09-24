@@ -1,6 +1,7 @@
 import { query } from '../../db.js';
 import * as XLSX from 'xlsx';
 import { reconcileAtlasRoutes } from '../atlas/atlasReconciliationService.js';
+import { attemptAtlasSlackDeliverySafely } from '../atlas/atlasSlackService.js';
 
 /**
  * Get weeks for a year (from `weeks` table).
@@ -397,6 +398,7 @@ async function saveUpload(dayKey, fileName, buffer) {
 
   try {
     await reconcileAtlasRoutes(dayKey);
+    await attemptAtlasSlackDeliverySafely(dayKey);
   } catch (error) {
     console.error(`[atlas] route reconciliation after Excel import failed for ${dayKey}: ${String(error?.message || error)}`);
   }
