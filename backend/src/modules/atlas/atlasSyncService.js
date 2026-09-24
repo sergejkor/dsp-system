@@ -1,4 +1,4 @@
-import { query, withTransaction } from '../../db.js';
+import { pool, query } from '../../db.js';
 import { fetchAtlasEmails } from './atlasImapService.js';
 import { parseAtlasShipments } from './atlasEmailParser.js';
 import { toAtlasServiceDate } from './atlasDateUtils.js';
@@ -32,8 +32,10 @@ async function saveFailure(email, error) {
 }
 
 async function importEmail(email, shipments, serviceDate) {
-  return withTransaction(async () => {
-    const incoming = (await query(`
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const incoming = (await client.query(`
       INSERT INTO incoming_emails
         (provider, message_id, subject, from_email, from_name, to_email, cc, received_at, sent_at,
          raw_body_text, raw_body_html, processing_status, parsing_errors, raw_extraction_payload)
@@ -52,7 +54,7 @@ async function importEmail(email, shipments, serviceDate) {
         routeCount: new Set(shipments.map((shipment) => shipment.routeCode)).size })])).rows[0];
 
     for (const shipment of shipments) {
-      await query(`
+      await client.query(`
         INSERT INTO atlas_shipments (incoming_email_id, service_date, tracking_id, route_code, transporter_id)
         VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (service_date, tracking_id) DO UPDATE SET
@@ -60,10 +62,16 @@ async function importEmail(email, shipments, serviceDate) {
           transporter_id = EXCLUDED.transporter_id, updated_at = NOW()
       `, [incoming.id, serviceDate, shipment.trackingId, shipment.routeCode, shipment.transporterId]);
     }
-    await reconcileAtlasRoutes(serviceDate);
-    await query(`UPDATE incoming_emails SET processing_status = 'processed', updated_at = NOW() WHERE id = $1`, [incoming.id]);
+    await reconcileAtlasRoutes(serviceDate, { client });
+    await client.query(`UPDATE incoming_emails SET processing_status = 'processed', updated_at = NOW() WHERE id = $1`, [incoming.id]);
+    await client.query('COMMIT');
     return incoming.id;
-  });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch { /* preserve the original failure */ }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function hasAtlasEmailPersistedForDate(serviceDate) {
