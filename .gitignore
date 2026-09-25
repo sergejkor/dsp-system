@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .vscode/
 backend/.venv-finance/
+ev-monitoring/
+**/rivian-profile/
+**/geotab-profile/

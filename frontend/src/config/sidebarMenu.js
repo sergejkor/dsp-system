@@ -52,6 +52,13 @@ export const sidebarMenuItems = [
         matchPatterns: ['/car-planning'],
       },
       {
+        id: 'ev-monitoring',
+        type: 'item',
+        path: '/ev-monitoring',
+        labelKey: 'nav.evMonitoring',
+        matchPatterns: ['/ev-monitoring'],
+      },
+      {
         id: 'internal-inspections',
         type: 'item',
         path: '/fleet-inspections',
