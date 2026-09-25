@@ -11,3 +11,14 @@ test('Rivian authentication errors are structured and do not throw', async () =>
   const service = createRivianFleetService({ environment: () => ({ EV_MONITORING_RIVIAN_PROFILE_DIR: '/tmp/profile' }), withContext: async () => { const error = new Error('login required'); error.code = 'AUTH_REQUIRED'; throw error; } });
   assert.deepEqual(await service.fetchVehicles(), { status: 'auth_required', errorCode: 'AUTH_REQUIRED', vehicles: [] });
 });
+
+
+test('Rivian ordinary provider errors are not reported as authentication failures', async () => {
+  const service = createRivianFleetService({ environment: () => ({ EV_MONITORING_RIVIAN_PROFILE_DIR: '/tmp/profile' }), withContext: async () => { throw new Error('provider unavailable'); } });
+  assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'PROVIDER_ERROR', vehicles: [] });
+});
+
+test('Rivian GraphQL errors are provider errors', async () => {
+  const service = createRivianFleetService({ environment: () => ({ EV_MONITORING_RIVIAN_PROFILE_DIR: '/tmp/profile' }), withContext: async (_name, _dir, work) => work({ pages: () => [], newPage: async () => ({ goto: async () => {}, url: () => 'https://business.rivian.com/vehicles/tracker', evaluate: async () => ({ httpStatus: 200, payload: { errors: [{ message: 'bad query', extensions: { code: 'GRAPHQL_VALIDATION_FAILED' } }] } }) }) }) });
+  assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'PROVIDER_ERROR', vehicles: [] });
+});

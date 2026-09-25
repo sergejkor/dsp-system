@@ -16,19 +16,27 @@ test('unwraps the MyGeotab JSON-RPC result array', () => {
 });
 
 test('captures the current Geotab authorization header in memory and reuses it', async () => {
-  let handler; let evaluationArgs;
-  const page = { on: (_event, callback) => { handler = callback; }, goto: async () => { handler({ url: () => 'https://my.geotab.com/apiv1', headers: () => ({ authorization: 'Bearer current-session-token' }) }); }, evaluate: async (_fn, args) => { evaluationArgs = args; return { devices: { result: [{ id: 'b28', name: 'EV' }] }, statuses: { result: [] } }; } };
-  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile' }), withContext: async (_name, _dir, work) => work({ pages: () => [page] }) });
-  assert.equal((await service.fetchVehicles()).status, 'connected'); assert.equal(evaluationArgs.authorization, 'Bearer current-session-token');
+  let handler; let evaluationArgs; let headerValueCalled = false;
+  const page = { goto: async () => { await handler({ url: () => 'https://my.geotab.com/apiv1', headerValue: async (name) => { headerValueCalled = name === 'authorization'; return 'Bearer current-session-token'; } }); }, title: async () => 'Geotab', url: () => 'https://my.geotab.com/amazon_de_alui/', evaluate: async (_fn, args) => { evaluationArgs = args; return { devices: { result: [{ id: 'b28', name: 'EV' }] }, statuses: { result: [] } }; } };
+  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile', EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS: '1000' }), withContext: async (_name, _dir, work) => work({ on: (event, callback) => { if (event === 'request') handler = callback; }, pages: () => [page] }) });
+  assert.equal((await service.fetchVehicles()).status, 'connected'); assert.equal(headerValueCalled, true); assert.equal(evaluationArgs.authorization, 'Bearer current-session-token');
 });
 
 for (const status of [401, 403]) test(`maps Geotab HTTP ${status} to AUTH_REQUIRED`, async () => {
-  const page = { on: (_event, callback) => { page.handler = callback; }, goto: async () => { page.handler({ url: () => 'https://my.geotab.com/apiv1', headers: () => ({ authorization: 'Bearer current-session-token' }) }); }, evaluate: async () => { throw new Error(`Geotab HTTP ${status}`); } };
-  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile' }), withContext: async (_name, _dir, work) => work({ pages: () => [page] }) });
+  let handler;
+  const page = { goto: async () => { await handler({ url: () => 'https://my.geotab.com/apiv1', headerValue: async () => 'Bearer current-session-token' }); }, title: async () => 'Geotab', evaluate: async () => { throw new Error(`Geotab HTTP ${status}`); } };
+  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile', EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS: '1000' }), withContext: async (_name, _dir, work) => work({ on: (event, callback) => { if (event === 'request') handler = callback; }, pages: () => [page] }) });
   assert.deepEqual(await service.fetchVehicles(), { status: 'auth_required', errorCode: 'AUTH_REQUIRED', vehicles: [] });
 });
 
 test('maps non-authentication Geotab failures to PROVIDER_ERROR', async () => {
   const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile' }), withContext: async () => { throw new Error('provider unavailable'); } });
   assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'PROVIDER_ERROR', vehicles: [] });
+});
+
+
+test('returns provider error when no API request is observed', async () => {
+  const page = { goto: async () => {}, title: async () => 'FleetOS', url: () => 'https://my.geotab.com/amazon_de_alui/' };
+  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile', EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS: '1' }), withContext: async (_name, _dir, work) => work({ on: () => {}, pages: () => [page] }) });
+  assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'GEOTAB_API_REQUEST_NOT_OBSERVED', vehicles: [] });
 });

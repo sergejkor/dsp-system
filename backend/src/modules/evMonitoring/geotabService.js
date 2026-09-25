@@ -1,28 +1,27 @@
 import { isAuthenticationFailure, withPersistentContext } from './browserSessionManager.js';
 
 const SOC = 'DiagnosticStateOfChargeId'; const POWER = 'DiagnosticElectricVehicleBatteryPowerId'; const CHARGING = 'DiagnosticElectricVehicleChargingStateId';
+const isLoginUrl = (url) => /\/(login|sign-?in|auth)(\/|$)/i.test(new URL(url).pathname);
 const isAuthError = (error) => isAuthenticationFailure(error) || /Geotab HTTP (401|403)/.test(String(error?.message || ''));
 export function unwrapGeotabResult(payload) { if (!Array.isArray(payload?.result)) throw new Error('Geotab provider returned an invalid response'); return payload.result; }
+function providerError(error) { const errorCode = isAuthError(error) ? 'AUTH_REQUIRED' : error?.code === 'GEOTAB_API_REQUEST_NOT_OBSERVED' ? error.code : 'PROVIDER_ERROR'; return { status: errorCode === 'AUTH_REQUIRED' ? 'auth_required' : 'provider_error', errorCode, vehicles: [] }; }
 export function normalizeGeotabVehicles(devices, statuses, now = new Date(), staleMinutes = 360) {
   const names = new Map(devices.map((d) => [d.id, d.name]));
-  return statuses.map((entry) => {
-    const values = new Map((entry.statusData || []).map((d) => [d.diagnostic?.id, d])); const socData = values.get(SOC); const charge = values.get(CHARGING); const power = values.get(POWER);
-    const soc = Number.isFinite(Number(socData?.data)) ? Number(socData.data) : null; const timestamp = socData?.dateTime || null;
-    return { source: 'geotab', externalId: entry.device?.id, vehicleName: names.get(entry.device?.id) || entry.device?.id || 'Unbekannt', vin: null, soc, chargingState: charge ? ({ 0: 'not charging', 1: 'AC charging', 2: 'DC charging' }[Number(charge.data)] || String(charge.data)) : null, chargingPowerW: Number.isFinite(Number(power?.data)) ? Number(power.data) : null, socTimestamp: timestamp, lastReportedAt: entry.dateTime || null, rangeKm: Number.isFinite(Number(entry.realTimeRangeRemainingMeanKm)) ? Number(entry.realTimeRangeRemainingMeanKm) : null, stale: timestamp ? now.getTime() - new Date(timestamp).getTime() > staleMinutes * 60_000 : true };
-  });
+  return statuses.map((entry) => { const values = new Map((entry.statusData || []).map((d) => [d.diagnostic?.id, d])); const socData = values.get(SOC); const charge = values.get(CHARGING); const power = values.get(POWER); const soc = Number.isFinite(Number(socData?.data)) ? Number(socData.data) : null; const timestamp = socData?.dateTime || null; return { source: 'geotab', externalId: entry.device?.id, vehicleName: names.get(entry.device?.id) || entry.device?.id || 'Unbekannt', vin: null, soc, chargingState: charge ? ({ 0: 'not charging', 1: 'AC charging', 2: 'DC charging' }[Number(charge.data)] || String(charge.data)) : null, chargingPowerW: Number.isFinite(Number(power?.data)) ? Number(power.data) : null, socTimestamp: timestamp, lastReportedAt: entry.dateTime || null, rangeKm: Number.isFinite(Number(entry.realTimeRangeRemainingMeanKm)) ? Number(entry.realTimeRangeRemainingMeanKm) : null, stale: timestamp ? now.getTime() - new Date(timestamp).getTime() > staleMinutes * 60_000 : true }; });
 }
-export function createGeotabService({ withContext = withPersistentContext, environment = () => process.env, now = () => new Date() } = {}) {
+export function createGeotabService({ withContext = withPersistentContext, environment = () => process.env, now = () => new Date(), diagnostics = () => {} } = {}) {
   return { async fetchVehicles() { const env = environment(); try { return await withContext('geotab', env.EV_MONITORING_GEOTAB_PROFILE_DIR, async (context) => {
-    const page = context.pages()[0] || await context.newPage(); let authorization;
+    const page = context.pages()[0] || await context.newPage(); let authorization; let apiv1Observed = false; let authorizationObserved = false; let apiStatus = null;
     let resolveAuthorization; const authorizationSeen = new Promise((resolve) => { resolveAuthorization = resolve; });
-    const observeRequest = (request) => { try { const url = new URL(request.url()); const header = request.headers().authorization; if (url.hostname === 'my.geotab.com' && url.pathname.startsWith('/apiv1') && /^Bearer\s+\S+$/i.test(header || '')) { authorization = header; resolveAuthorization(); } } catch (_error) {} };
-    page.on('request', observeRequest);
+    const observeRequest = async (request) => { try { const url = new URL(request.url()); if (url.hostname !== 'my.geotab.com' || !url.pathname.startsWith('/apiv1')) return; apiv1Observed = true; const header = await request.headerValue('authorization'); authorizationObserved ||= Boolean(header); if (header) { authorization = header; resolveAuthorization(); } } catch (_error) {} };
+    (context.on ? context : page).on('request', (request) => { void observeRequest(request); });
+    context.on('response', (response) => { try { const url = new URL(response.url()); if (url.hostname === 'my.geotab.com' && url.pathname.startsWith('/apiv1')) apiStatus = response.status(); } catch (_error) {} });
     await page.goto(env.EV_MONITORING_GEOTAB_URL || 'https://my.geotab.com/amazon_de_alui/', { waitUntil: 'domcontentloaded' });
-    const authTimeout = Number(env.EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS || 10_000);
-    await Promise.race([authorizationSeen, new Promise((_, reject) => setTimeout(() => { const error = new Error('Geotab authentication required'); error.code = 'AUTH_REQUIRED'; reject(error); }, authTimeout))]);
+    const timeout = Number(env.EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS || 20_000);
+    try { await Promise.race([authorizationSeen, new Promise((_, reject) => setTimeout(() => reject(new Error('not observed')), timeout))]); } catch (_error) { const error = new Error(isLoginUrl(page.url()) ? 'Geotab authentication required' : 'Geotab API request was not observed'); error.code = isLoginUrl(page.url()) ? 'AUTH_REQUIRED' : 'GEOTAB_API_REQUEST_NOT_OBSERVED'; diagnostics({ finalUrl: new URL(page.url()).hostname + new URL(page.url()).pathname, title: await page.title(), apiv1Observed, authorizationObserved, apiStatus, deviceCount: 0, evStatusInfoCount: 0 }); throw error; }
     const result = await page.evaluate(async ({ apiUrl, database, authorization: currentAuthorization }) => { const request = async (method, params) => { const response = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json', database, authorization: currentAuthorization }, body: JSON.stringify({ method, params }) }); if (!response.ok) throw new Error(`Geotab HTTP ${response.status}`); return response.json(); }; const devices = await request('Get', { typeName: 'Device' }); const deviceRows = Array.isArray(devices?.result) ? devices.result : []; const statuses = await request('Get', { typeName: 'EVStatusInfo', search: { deviceSearch: { deviceIds: deviceRows.map((d) => d.id) } } }); return { devices, statuses }; }, { apiUrl: env.EV_MONITORING_GEOTAB_API_URL || 'https://my.geotab.com/apiv1', database: env.EV_MONITORING_GEOTAB_DATABASE || 'amazon_de_alui', authorization });
-    const devices = unwrapGeotabResult(result?.devices); const statuses = unwrapGeotabResult(result?.statuses);
+    const devices = unwrapGeotabResult(result?.devices); const statuses = unwrapGeotabResult(result?.statuses); diagnostics({ finalUrl: new URL(page.url()).hostname + new URL(page.url()).pathname, title: await page.title(), apiv1Observed, authorizationObserved, apiStatus, deviceCount: devices.length, evStatusInfoCount: statuses.length });
     return { status: 'connected', vehicles: normalizeGeotabVehicles(devices, statuses, now(), Number(env.EV_MONITORING_STALE_MINUTES || 360)) };
-  }); } catch (error) { const errorCode = isAuthError(error) ? 'AUTH_REQUIRED' : 'PROVIDER_ERROR'; return { status: errorCode === 'AUTH_REQUIRED' ? 'auth_required' : 'provider_error', errorCode, vehicles: [] }; } } };
+  }); } catch (error) { return providerError(error); } } };
 }
 export const geotabService = createGeotabService();
