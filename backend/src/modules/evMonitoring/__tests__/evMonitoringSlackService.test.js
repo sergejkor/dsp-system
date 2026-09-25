@@ -3,8 +3,14 @@ import assert from 'node:assert/strict';
 import { createEvMonitoringSlackService, formatEvMonitoringSlackMessage } from '../evMonitoringSlackService.js';
 test('formats an all-clear daily message and reports partial authentication failure', () => {
   const base = { threshold: 90, summary: { totalVehicles: 2, okVehicles: 2 }, vehicles: [], providers: { rivian: { status: 'connected', vehicleCount: 1 }, geotab: { status: 'connected', vehicleCount: 1 } } };
-  assert.match(formatEvMonitoringSlackMessage(base, new Date('2026-09-25T04:00:00Z')), /All 2 EVs are at or above 90%/);
+  assert.match(formatEvMonitoringSlackMessage(base, new Date('2026-09-25T04:00:00Z')), /All verified EVs are at or above 90%/);
   base.providers.geotab = { status: 'auth_required', vehicleCount: 0, errorCode: 'AUTH_REQUIRED' }; assert.match(formatEvMonitoringSlackMessage(base), /Authentication required/);
+});
+
+test('uses the configured threshold and never reports all-clear for stale or missing SOC data', () => {
+  const base = { threshold: 95, summary: { totalVehicles: 2, okVehicles: 0 }, vehicles: [{ vehicleName: 'Stale EV', soc: 100, stale: true }, { vehicleName: 'No SOC EV', soc: null, stale: false }], providers: { rivian: { status: 'connected', vehicleCount: 1 }, geotab: { status: 'connected', vehicleCount: 1 } } };
+  const message = formatEvMonitoringSlackMessage(base); assert.match(message, /Data issues/); assert.doesNotMatch(message, /All verified EVs/);
+  base.vehicles = [{ vehicleName: 'Low EV', soc: 94, stale: false }]; assert.match(formatEvMonitoringSlackMessage(base), /Vehicles below 95%/);
 });
 
 test('Slack delivery uses the Berlin service date as an idempotency key', async () => {

@@ -1240,6 +1240,8 @@ async function run() {
     console.log('Migration OK: Atlas route assignments.');
     await query(readFileSync(new URL('../migrations/011_atlas_slack_deliveries.sql', import.meta.url), 'utf8'));
     console.log('Migration OK: Atlas Slack deliveries.');
+    await query(readFileSync(new URL('../migrations/013_ev_monitoring.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: EV Monitoring tables.');
   } catch (e) {
     console.error('Migration failed:', e.message);
     process.exit(1);

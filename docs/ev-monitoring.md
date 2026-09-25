@@ -2,6 +2,8 @@
 
 Set the EV monitoring environment variables on the backend host. The Rivian and Geotab profile directories must be outside this repository and must be writable only by the backend service account.
 
+`EV_MONITORING_ENABLED` controls only the 06:00 scheduled check and its retry window; authenticated EV Monitoring UI routes remain available when it is disabled. `EV_MONITORING_TIMEZONE` controls scheduler and Slack timestamps (default: `Europe/Berlin`). Geotab reuses the current browser-session Authorization header in memory for the active check only; it is never logged or persisted.
+
 ```text
 EV_MONITORING_ENABLED=true
 EV_MONITORING_SOC_THRESHOLD=90
