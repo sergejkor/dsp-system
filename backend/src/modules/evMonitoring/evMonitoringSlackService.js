@@ -6,6 +6,7 @@ function berlinDate(now = new Date(), timezone = 'Europe/Berlin') {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 function berlinTime(now = new Date(), timezone = 'Europe/Berlin') { return new Intl.DateTimeFormat('de-DE', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now); }
+function chargingStateText(value) { if (value == null) return 'charging state unavailable'; if (typeof value === 'string' || typeof value === 'number') return String(value); return value.formattedValue || value.value || 'charging state unavailable'; }
 function errorCode(error) { return error?.name === 'AbortError' ? 'timeout' : /^[A-Z0-9_-]+$/.test(String(error?.code || '')) ? error.code : 'network_error'; }
 export function formatEvMonitoringSlackMessage(result, now = new Date(), timezone = 'Europe/Berlin') {
   const date = berlinDate(now, timezone).split('-').reverse().join('.'); const below = result.vehicles.filter((v) => v.soc !== null && v.soc < result.threshold); const dataIssues = result.vehicles.filter((v) => v.stale || v.soc === null); const provider = (name, info) => info.status === 'connected' ? `✅ ${info.vehicleCount}/${info.vehicleCount} vehicles checked` : `❌ ${info.errorCode === 'AUTH_REQUIRED' ? 'Authentication required' : 'Error'}\n0 vehicles verified`;
@@ -27,3 +28,4 @@ export function createEvMonitoringSlackService({ dbPool = pool, fetchImpl = glob
   } finally { if (locked) await client.query('SELECT pg_advisory_unlock(hashtext($1), hashtext($2))', ['ev-monitoring-slack', serviceDate]).catch(() => {}); client.release(); } } };
 }
 export const evMonitoringSlackService = createEvMonitoringSlackService();
+
