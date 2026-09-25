@@ -36,7 +36,7 @@ test('maps non-authentication Geotab failures to PROVIDER_ERROR', async () => {
 
 
 test('returns provider error when no API request is observed', async () => {
-  const page = { goto: async () => {}, title: async () => 'FleetOS', url: () => 'https://my.geotab.com/amazon_de_alui/' };
+  const page = { locator: () => ({ evaluateAll: async () => [], }), goto: async () => {}, title: async () => 'FleetOS', url: () => 'https://my.geotab.com/amazon_de_alui/' };
   const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile', EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS: '1' }), withContext: async (_name, _dir, work) => work({ on: () => {}, pages: () => [page] }) });
-  assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'GEOTAB_API_REQUEST_NOT_OBSERVED', vehicles: [] });
+  assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'GEOTAB_EV_STATUS_REQUEST_NOT_OBSERVED', vehicles: [] });
 });
