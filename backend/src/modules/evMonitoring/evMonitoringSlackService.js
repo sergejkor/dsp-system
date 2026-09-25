@@ -11,7 +11,7 @@ function errorCode(error) { return error?.name === 'AbortError' ? 'timeout' : /^
 export function formatEvMonitoringSlackMessage(result, now = new Date(), timezone = 'Europe/Berlin') {
   const date = berlinDate(now, timezone).split('-').reverse().join('.'); const below = result.vehicles.filter((v) => v.soc !== null && v.soc < result.threshold); const dataIssues = result.vehicles.filter((v) => v.stale || v.soc === null); const provider = (name, info) => info.status === 'connected' ? `✅ ${info.vehicleCount}/${info.vehicleCount} vehicles checked` : `❌ ${info.errorCode === 'AUTH_REQUIRED' ? 'Authentication required' : 'Error'}\n0 vehicles verified`;
   const lines = [`⚡ *EV Monitoring — ${date}*`, ''];
-  if (Object.values(result.providers).some((p) => p.status !== 'connected')) lines.push('❌ *Check incomplete*', ''); else if (below.length) lines.push(`⚠️ *Vehicles below ${result.threshold}%*`, '', ...below.map((v) => `• ${v.vehicleName} — *${v.soc}%* — ${v.chargingState || 'charging state unavailable'}`), ''); else if (dataIssues.length) lines.push('⚠️ *Data issues*', '', ...dataIssues.map((v) => `• ${v.vehicleName} — ${v.soc === null ? 'SOC unavailable' : 'stale telemetry'}`), ''); else lines.push(`✅ *All verified EVs are at or above ${result.threshold}%*`, '');
+  if (Object.values(result.providers).some((p) => p.status !== 'connected')) lines.push('❌ *Check incomplete*', ''); else if (below.length) lines.push(`⚠️ *Vehicles below ${result.threshold}%*`, '', ...below.map((v) => `• ${v.vehicleName} — *${Math.round(Number(v.soc))}%* — ${chargingStateText(v.chargingState)}`), ''); else if (dataIssues.length) lines.push('⚠️ *Data issues*', '', ...dataIssues.map((v) => `• ${v.vehicleName} — ${v.soc === null ? 'SOC unavailable' : 'stale telemetry'}`), ''); else lines.push(`✅ *All verified EVs are at or above ${result.threshold}%*`, '');
   lines.push('*Rivian FleetOS*', provider('Rivian', result.providers.rivian), '', '*Geotab*', provider('Geotab', result.providers.geotab), '');
   if (dataIssues.length && below.length) lines.push(`⚠️ Data issues: ${dataIssues.map((v) => v.vehicleName).join(', ')}`, '');
   if (below.length) lines.push(`${result.summary.okVehicles}/${result.summary.totalVehicles} vehicles at or above ${result.threshold}%`);
@@ -28,4 +28,5 @@ export function createEvMonitoringSlackService({ dbPool = pool, fetchImpl = glob
   } finally { if (locked) await client.query('SELECT pg_advisory_unlock(hashtext($1), hashtext($2))', ['ev-monitoring-slack', serviceDate]).catch(() => {}); client.release(); } } };
 }
 export const evMonitoringSlackService = createEvMonitoringSlackService();
+
 

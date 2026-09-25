@@ -26,3 +26,15 @@ test('Slack delivery uses the Berlin service date as an idempotency key', async 
   const result = { checkId: 5, threshold: 90, summary: { totalVehicles: 0, okVehicles: 0 }, vehicles: [], providers: { rivian: { status: 'connected', vehicleCount: 0 }, geotab: { status: 'connected', vehicleCount: 0 } } };
   assert.equal((await service.deliver(result)).status, 'sent'); assert.equal((await service.deliver(result)).status, 'already_sent'); assert.equal(sends, 1);
 });
+
+test('rounds SOC only in Slack presentation and formats charging states', () => {
+  const base = { threshold: 90, summary: { totalVehicles: 4, okVehicles: 0 }, vehicles: [
+    { vehicleName: 'A', soc: 58.299999, chargingState: { formattedValue: 'Charging complete' }, stale: false },
+    { vehicleName: 'B', soc: 68.900002, chargingState: { value: 'charging_complete' }, stale: false },
+    { vehicleName: 'C', soc: 42.5, chargingState: 'not charging', stale: false },
+    { vehicleName: 'D', soc: 89.9, chargingState: null, stale: false },
+  ], providers: { rivian: { status: 'connected', vehicleCount: 4 }, geotab: { status: 'connected', vehicleCount: 0 } } };
+  const message = formatEvMonitoringSlackMessage(base);
+  assert.match(message, /58%.*Charging complete/); assert.match(message, /69%.*charging_complete/); assert.match(message, /43%.*not charging/); assert.match(message, /90%.*charging state unavailable/);
+  assert.doesNotMatch(message, /58\.299999|68\.900002|42\.5|89\.9|\[object Object\]/);
+});
