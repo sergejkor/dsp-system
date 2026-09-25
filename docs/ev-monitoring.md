@@ -30,3 +30,6 @@ node scripts/ev-monitoring-login.js geotab
 ```
 
 The script opens a headed browser and does not accept, store, or log passwords. Close its browser after reaching the authenticated provider page. Provider cookies, browser profiles, OAuth values, and the Slack webhook must never be committed.
+
+Geotab EV route
+V_MONITORING_GEOTAB_EV_URL\ may override the default authenticated hash route.

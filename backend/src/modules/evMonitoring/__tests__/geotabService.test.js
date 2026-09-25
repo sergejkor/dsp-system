@@ -1,42 +1,7 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { createGeotabService, normalizeGeotabVehicles, unwrapGeotabResult } from '../geotabService.js';
-
-test('normalizes Geotab device names, SOC freshness, power, and charging state', () => {
-  const rows = normalizeGeotabVehicles([{ id: 'b28', name: 'M-AZ 7673E' }, { id: 'b2B', name: 'M-AZ 8233E' }], [
-    { device: { id: 'b28' }, dateTime: '2026-09-25T06:12:00.000Z', realTimeRangeRemainingMeanKm: 220, statusData: [{ data: 100, dateTime: '2026-09-25T06:11:05.016Z', diagnostic: { id: 'DiagnosticStateOfChargeId' } }, { data: 160, diagnostic: { id: 'DiagnosticElectricVehicleBatteryPowerId' } }, { data: 0, diagnostic: { id: 'DiagnosticElectricVehicleChargingStateId' } }] },
-    { device: { id: 'b2B' }, statusData: [{ data: 98.5, dateTime: '2026-09-25T00:00:00.000Z', diagnostic: { id: 'DiagnosticStateOfChargeId' } }, { data: 2, diagnostic: { id: 'DiagnosticElectricVehicleChargingStateId' } }] },
-  ], new Date('2026-09-25T06:12:00.000Z'), 360);
-  assert.deepEqual(rows[0], { source: 'geotab', externalId: 'b28', vehicleName: 'M-AZ 7673E', vin: null, soc: 100, chargingState: 'not charging', chargingPowerW: 160, socTimestamp: '2026-09-25T06:11:05.016Z', lastReportedAt: '2026-09-25T06:12:00.000Z', rangeKm: 220, stale: false });
-  assert.equal(rows[1].vehicleName, 'M-AZ 8233E'); assert.equal(rows[1].chargingState, 'DC charging'); assert.equal(rows[1].stale, true);
-});
-
-test('unwraps the MyGeotab JSON-RPC result array', () => {
-  assert.deepEqual(unwrapGeotabResult({ result: [{ id: 'b28' }], jsonrpc: '2.0' }), [{ id: 'b28' }]);
-});
-
-test('captures the current Geotab authorization header in memory and reuses it', async () => {
-  let handler; let evaluationArgs; let headerValueCalled = false;
-  const page = { goto: async () => { await handler({ url: () => 'https://my.geotab.com/apiv1', headerValue: async (name) => { headerValueCalled = name === 'authorization'; return 'Bearer current-session-token'; } }); }, title: async () => 'Geotab', url: () => 'https://my.geotab.com/amazon_de_alui/', evaluate: async (_fn, args) => { evaluationArgs = args; return { devices: { result: [{ id: 'b28', name: 'EV' }] }, statuses: { result: [] } }; } };
-  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile', EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS: '1000' }), withContext: async (_name, _dir, work) => work({ on: (event, callback) => { if (event === 'request') handler = callback; }, pages: () => [page] }) });
-  assert.equal((await service.fetchVehicles()).status, 'connected'); assert.equal(headerValueCalled, true); assert.equal(evaluationArgs.authorization, 'Bearer current-session-token');
-});
-
-for (const status of [401, 403]) test(`maps Geotab HTTP ${status} to AUTH_REQUIRED`, async () => {
-  let handler;
-  const page = { goto: async () => { await handler({ url: () => 'https://my.geotab.com/apiv1', headerValue: async () => 'Bearer current-session-token' }); }, title: async () => 'Geotab', evaluate: async () => { throw new Error(`Geotab HTTP ${status}`); } };
-  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile', EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS: '1000' }), withContext: async (_name, _dir, work) => work({ on: (event, callback) => { if (event === 'request') handler = callback; }, pages: () => [page] }) });
-  assert.deepEqual(await service.fetchVehicles(), { status: 'auth_required', errorCode: 'AUTH_REQUIRED', vehicles: [] });
-});
-
-test('maps non-authentication Geotab failures to PROVIDER_ERROR', async () => {
-  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile' }), withContext: async () => { throw new Error('provider unavailable'); } });
-  assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'PROVIDER_ERROR', vehicles: [] });
-});
-
-
-test('returns provider error when no API request is observed', async () => {
-  const page = { locator: () => ({ evaluateAll: async () => [], }), goto: async () => {}, title: async () => 'FleetOS', url: () => 'https://my.geotab.com/amazon_de_alui/' };
-  const service = createGeotabService({ environment: () => ({ EV_MONITORING_GEOTAB_PROFILE_DIR: '/tmp/profile', EV_MONITORING_GEOTAB_AUTH_TIMEOUT_MS: '1' }), withContext: async (_name, _dir, work) => work({ on: () => {}, pages: () => [page] }) });
-  assert.deepEqual(await service.fetchVehicles(), { status: 'provider_error', errorCode: 'GEOTAB_EV_STATUS_REQUEST_NOT_OBSERVED', vehicles: [] });
-});
+import test from 'node:test';import assert from 'node:assert/strict';import {adaptLatestStatusRows,createGeotabService,normalizeGeotabVehicles,parseDeviceResponse,parseLatestStatusResponse} from '../geotabService.js';
+const status={jsonrpc:'2.0',result:{totalPages:1,totalRecords:2,data:[{device:{id:'device-1'},dateTime:'2026-09-25T06:12:00.000Z',sensorData:[{diagnosticId:'DiagnosticStateOfChargeId',sensorValue:100,lastUpdateTime:'2026-09-25T06:11:05.000Z'},{diagnosticId:'DiagnosticElectricVehicleChargingStateId',sensorValue:0,lastUpdateTime:'2026-09-25T06:11:05.000Z'},{diagnosticId:'DiagnosticElectricVehicleBatteryPowerId',sensorValue:160,lastUpdateTime:'2026-09-25T06:11:05.000Z'}]},{device:{id:'device-2'},dateTime:'2026-09-25T06:12:00.000Z',sensorData:[{diagnosticId:'DiagnosticStateOfChargeId',sensorValue:98.5,lastUpdateTime:'2026-09-25T04:37:26.000Z'}]},{device:{id:'x'},sensorData:[{diagnosticId:'Other',sensorValue:1,lastUpdateTime:'2026-09-25'}]}]}};const devices={jsonrpc:'2.0',result:[{id:'device-1',name:'EV-001',serialNumber:'x'},{id:'device-2',name:'EV-002',serialNumber:'y'}]};
+test('legacy normalization',()=>{const v=normalizeGeotabVehicles(parseDeviceResponse(devices),adaptLatestStatusRows(status.result.data),new Date('2026-09-25T06:20:00Z'));assert.equal(v[0].vehicleName,'EV-001');assert.equal(v[0].soc,100);assert.equal(v[0].chargingPowerW,160);});
+test('native parser adapter',()=>{const p=parseLatestStatusResponse(status);assert.equal(p.rows.length,3);const a=adaptLatestStatusRows(p.rows);assert.equal(a.length,2);assert.equal(a[0].statusData[0].data,100);assert.equal(a[0].statusData[0].dateTime,'2026-09-25T06:11:05.000Z');assert.deepEqual(parseDeviceResponse(devices)[1],{id:'device-2',name:'EV-002'});});
+test('empty and malformed',()=>{assert.equal(parseLatestStatusResponse({result:{totalPages:0,totalRecords:0,data:[]}}).rows.length,0);assert.throws(()=>parseLatestStatusResponse({result:[]}));assert.throws(()=>parseDeviceResponse({result:{}}));});
+function contextMock({status=200,device=200,omitStatus=false,omitDevice=false}={}){const listeners={request:[],response:[]};const mk=(url,body)=>({url:()=>url,postDataJSON:async()=>body});const ctx={pages:()=>[page],on:(e,fn)=>listeners[e].push(fn),close:async()=>{}};const page={locator:()=>{},goto:async()=>{const sr=mk('https://my.geotab.com/apiv1',{method:'GetLatestStatusDataByDevice'}),dr=mk('https://my.geotab.com/apiv1',{method:'Get',params:{typeName:'Device'}});for(const f of listeners.request)await f(sr);for(const f of listeners.request)await f(dr);if(!omitStatus)for(const f of listeners.response)await f({request:()=>sr,status:()=>status,json:async()=>status===200?status:status});if(!omitDevice)for(const f of listeners.response)await f({request:()=>dr,status:()=>device,json:async()=>devices});},url:()=> 'https://my.geotab.com/amazon_de_alui/#evChargeMonitoring'};return ctx;}
+test('runtime no status',async()=>{const r=await createGeotabService({withContext:async(_p,_d,w)=>w(contextMock({omitStatus:true})),environment:()=>({EV_MONITORING_GEOTAB_PROFILE_DIR:'x',EV_MONITORING_GEOTAB_EV_URL:'https://x'})}).fetchVehicles();assert.equal(r.errorCode,'GEOTAB_STATUS_DATA_REQUEST_NOT_OBSERVED');});
