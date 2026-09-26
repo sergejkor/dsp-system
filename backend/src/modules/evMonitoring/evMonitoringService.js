@@ -13,7 +13,7 @@ export function buildEvResult({ rivian, geotab, threshold, checkedAt }) {
     const priority = (v) => v.status === 'error' ? 0 : v.soc !== null && v.soc < threshold ? 1 : v.stale ? 2 : 3;
     return priority(a) - priority(b) || (a.soc ?? Infinity) - (b.soc ?? Infinity) || a.vehicleName.localeCompare(b.vehicleName);
   });
-  const summary = { totalVehicles: vehicles.length, okVehicles: vehicles.filter((v) => v.status === 'ok').length, belowThreshold: vehicles.filter((v) => v.soc !== null && v.soc < threshold).length, staleVehicles: vehicles.filter((v) => v.stale).length, errorVehicles: vehicles.filter((v) => v.status === 'error').length };
+  const summary = { totalVehicles: vehicles.length, okVehicles: vehicles.filter((v) => v.status === 'ok').length, belowThreshold: vehicles.filter((v) => v.soc !== null && v.soc < threshold).length, staleVehicles: vehicles.filter((v) => v.stale).length, errorVehicles: vehicles.filter((v) => v.status === 'error').length, providerErrors: [rivian, geotab].filter((provider) => provider.status !== 'connected').length };
   return { checkedAt, threshold, summary, providers: { rivian: providerInfo(rivian), geotab: providerInfo(geotab) }, vehicles };
 }
 
