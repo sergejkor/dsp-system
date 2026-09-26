@@ -554,7 +554,6 @@ function AppLayout() {
             <Route path="/o2-telefonica" element={<O2TelefonicaPage />} />
             <Route path="/cars" element={<CarsPage />} />
             <Route path="/ev-monitoring" element={<EVMonitoringPage />} />
-            <Route path="/ev-monitoring" element={<EVMonitoringPage />} />
             <Route path="/fleet-rentals" element={<FleetRentalsPage />} />
             <Route path="/fleet-inspections" element={<FleetInspectionsPage />} />
             <Route path="/fleet-inspections/:id" element={<FleetInspectionDetailPage />} />

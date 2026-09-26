@@ -3,6 +3,8 @@ import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } fr
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, getHistoricalAssignment, addCar } from '../services/carPlanningApi';
 import { syncKenjoEmployees } from '../services/kenjoApi';
+import AtlasUpload from '../components/AtlasUpload';
+import TourImport from '../components/TourImport';
 
 /** Day window around today included in planning columns (saved to DB). */
 const CAR_PLANNING_PAST_DAYS = 14;
@@ -69,6 +71,13 @@ function DriverCell({
   abfahrtskontrolleMode,
   abfahrtskontrolleDone,
   disabled,
+  entryTime,
+  entryDayOffset = 0,
+  routeCode,
+  systemVehicle,
+  qrReservedFor,
+  requiredType,
+  entryTimeLabel,
   pasteValue = '',
   onCopyValue,
   usePasteButton = false,
@@ -177,6 +186,13 @@ function DriverCell({
         }}
         placeholder="—"
       />
+      {qrReservedFor && <small className="car-planning-cell-entry-time">System/QR → {qrReservedFor}</small>}
+      {routeCode && <small className="car-planning-cell-entry-time">{routeCode} · {requiredType} · System/QR: {systemVehicle || '—'}</small>}
+      {entryTime ? (
+        <small className="car-planning-cell-entry-time" title={routeCode ? `${routeCode} · ${entryTimeLabel}` : entryTimeLabel}>
+          {entryTimeLabel}: {entryTime}{entryDayOffset === -1 ? ' (−1 day)' : ''}
+        </small>
+      ) : null}
       {!disabled && !locked && (
         <div className="car-planning-cell-icons">
           <button
@@ -337,6 +353,7 @@ function syncCarPlanningTables(fixedEl, daysEl) {
 export default function CarPlanningPage() {
   const { t } = useAppSettings();
   const [cars, setCars] = useState([]);
+  const [tourPlanRefresh, setTourPlanRefresh] = useState(0);
   const [drivers, setDrivers] = useState([]);
   const [copiedDriverName, setCopiedDriverName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -346,6 +363,7 @@ export default function CarPlanningPage() {
   const copiedSlotsByCarIdRef = useRef(null);
   const [abfahrtskontrolleMode, setAbfahrtskontrolleMode] = useState(false);
   const [carStates, setCarStates] = useState({});
+  const [activityFilter, setActivityFilter] = useState('active');
   const [slots, setSlots] = useState({});
   const [newDayDrafts, setNewDayDrafts] = useState({});
   const [reportOpen, setReportOpen] = useState(false);
@@ -375,6 +393,16 @@ export default function CarPlanningPage() {
   const newDayAutoSaveInitializedRef = useRef(false);
   const newDayAutoSaveLastSignatureRef = useRef('');
   const newDayAutoSaveRequestIdRef = useRef(0);
+  const planningSaveQueueRef = useRef(Promise.resolve());
+  const [carStateSaving, setCarStateSaving] = useState({});
+  const queuePlanningSave = useCallback((save) => {
+    const request = planningSaveQueueRef.current.catch(() => {}).then(save);
+    planningSaveQueueRef.current = request;
+    return request;
+  }, []);
+  const waitForPlanningSave = useCallback(async () => {
+    await planningSaveQueueRef.current;
+  }, []);
   const [screenshotStatus, setScreenshotStatus] = useState('');
   const [historyCarId, setHistoryCarId] = useState('');
   const [historyDate, setHistoryDate] = useState('');
@@ -638,7 +666,21 @@ export default function CarPlanningPage() {
         const slotMap = {};
         (data.slots || []).forEach((s) => {
           const key = `${s.car_id}_${s.plan_date}`;
-          slotMap[key] = { driver_identifier: s.driver_identifier, abfahrtskontrolle: s.abfahrtskontrolle };
+          slotMap[key] = {
+            driver_identifier: s.driver_identifier,
+            abfahrtskontrolle: s.abfahrtskontrolle,
+            route_code: s.route_code,
+            required_type: s.required_type,
+            system_vehicle_id: s.system_vehicle_id,
+            entry_time: s.entry_time,
+            entry_day_offset: s.entry_day_offset,
+          };
+        });
+        (data.slots || []).forEach((s) => {
+          if (s.route_code && s.system_vehicle_id && s.system_vehicle_id !== s.car_id) {
+            const key = `${s.system_vehicle_id}_${s.plan_date}`;
+            if (!slotMap[key]?.driver_identifier) slotMap[key] = { ...slotMap[key], qr_reserved_for: s.route_code };
+          }
         });
         setSlots(slotMap);
         const nextNewDayDrafts = {};
@@ -655,7 +697,7 @@ export default function CarPlanningPage() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [allPlanningDates.join(',')]);
+  }, [allPlanningDates.join(','), tourPlanRefresh]);
 
   const usedDriversByDateExcludingCar = useMemo(() => {
     const out = {};
@@ -698,9 +740,20 @@ export default function CarPlanningPage() {
     });
   }, []);
 
-  const setCarState = useCallback((carId, deactivated) => {
+  const setCarState = useCallback(async (carId, deactivated) => {
+    const previous = !!carStates[carId];
     setCarStates((prev) => ({ ...prev, [carId]: !!deactivated }));
-  }, []);
+    setCarStateSaving((prev) => ({ ...prev, [carId]: true }));
+    try {
+      await queuePlanningSave(() => savePlanningData({ [carId]: !!deactivated }, []));
+      setError('');
+    } catch (e) {
+      setCarStates((prev) => ({ ...prev, [carId]: previous }));
+      setError(e?.message || 'Failed to save vehicle activity');
+    } finally {
+      setCarStateSaving((prev) => ({ ...prev, [carId]: false }));
+    }
+  }, [carStates, queuePlanningSave]);
 
   const currentDaySlotList = useMemo(() => {
     const slotList = [];
@@ -750,6 +803,12 @@ export default function CarPlanningPage() {
     return out;
   }, [cars, slots, sortByDate, sortAsc, carStates]);
 
+  const visibleCars = useMemo(() => sortedCars.filter((car) => {
+    if (activityFilter === 'all') return true;
+    const inactive = !!carStates[car.id] || isCarUnavailableForPlanning(car, newDayDate);
+    return activityFilter === 'inactive' ? inactive : !inactive;
+  }), [sortedCars, activityFilter, carStates, isCarUnavailableForPlanning, newDayDate]);
+
   useLayoutEffect(() => {
     runSyncCarPlanningHeights();
     const ro = new ResizeObserver(() => {
@@ -760,7 +819,7 @@ export default function CarPlanningPage() {
     if (fixed) ro.observe(fixed);
     if (days) ro.observe(days);
     return () => ro.disconnect();
-  }, [sortedCars, scrollDates, slots, drivers, runSyncCarPlanningHeights]);
+  }, [visibleCars, scrollDates, slots, drivers, runSyncCarPlanningHeights]);
 
   useLayoutEffect(() => {
     const el = carPlanningDaysScrollWrapRef.current;
@@ -786,7 +845,7 @@ export default function CarPlanningPage() {
       cancelAnimationFrame(raf1);
       if (raf2) cancelAnimationFrame(raf2);
     };
-  }, [loading, scrollDates, sortedCars.length]);
+  }, [loading, scrollDates, visibleCars.length]);
 
   const setSlot = (carId, date, driverIdentifier, abfahrtskontrolle) => {
     const key = `${carId}_${date}`;
@@ -802,6 +861,7 @@ export default function CarPlanningPage() {
       return {
         ...prev,
         [key]: {
+          ...prev[key],
           driver_identifier: nextDriverIdentifier,
           abfahrtskontrolle: nextAbfahrtskontrolle,
         },
@@ -817,6 +877,7 @@ export default function CarPlanningPage() {
     setSlots((prev) => ({
       ...prev,
       [key]: {
+        ...prev[key],
         driver_identifier: prev[key]?.driver_identifier,
         abfahrtskontrolle: !prev[key]?.abfahrtskontrolle,
       },
@@ -844,7 +905,7 @@ export default function CarPlanningPage() {
       setNewDayAutoSaveStatus('saving');
       try {
         const { carStates: cs, slots: slotList } = buildPayload();
-        await savePlanningData(cs, slotList);
+        await queuePlanningSave(() => savePlanningData(cs, slotList));
         if (newDayAutoSaveRequestIdRef.current !== requestId) return;
         newDayAutoSaveLastSignatureRef.current = newDayAutoSaveSignature;
         setNewDayAutoSaveStatus('saved');
@@ -861,7 +922,7 @@ export default function CarPlanningPage() {
     }, 650);
 
     return clearNewDayAutoSaveTimer;
-  }, [buildPayload, clearNewDayAutoSaveTimer, frozen, loading, newDayAutoSaveSignature]);
+  }, [buildPayload, clearNewDayAutoSaveTimer, frozen, loading, newDayAutoSaveSignature, queuePlanningSave]);
 
   const handleSave = async () => {
     clearNewDayAutoSaveTimer();
@@ -870,7 +931,7 @@ export default function CarPlanningPage() {
     setSaving(true);
     const { carStates: cs, slots: slotList } = buildPayload();
     try {
-      const saveResult = await savePlanningDataAndSend(cs, slotList);
+      const saveResult = await queuePlanningSave(() => savePlanningDataAndSend(cs, slotList));
       const notificationSummary = saveResult?.notifications || null;
       const notificationIssues = [];
       if ((notificationSummary?.unresolved || 0) > 0) {
@@ -914,7 +975,7 @@ export default function CarPlanningPage() {
 
   useEffect(() => () => clearNewDayAutoSaveTimer(), [clearNewDayAutoSaveTimer]);
 
-  if (loading) {
+  if (loading && !cars.length) {
     return (
       <section className="car-planning-page card">
         <h2>{t('carPlanning.title')}</h2>
@@ -925,10 +986,30 @@ export default function CarPlanningPage() {
 
   return (
     <section className="car-planning-page card">
-      <h2>{t('carPlanning.title')}</h2>
+      <header className="car-planning-header">
+        <h2>{t('carPlanning.title')}</h2>
+      </header>
+      <AtlasUpload />
+      <TourImport beforeImport={waitForPlanningSave} defaultDate={newDayDate} onApplied={() => setTourPlanRefresh((v) => v + 1)} />
 
       <div className="car-planning-toolbar">
-        <label className="car-planning-check-label">
+        <div className="car-planning-toolbar-group" aria-label="Vehicles">
+          <span className="car-planning-toolbar-label">Vehicles</span>
+          <label className="car-planning-check-label">
+            <span className="visually-hidden">{t('carPlanning.activityFilter')}</span>
+            <select value={activityFilter} onChange={(e) => setActivityFilter(e.target.value)} aria-label={t('carPlanning.activityFilter')}>
+              <option value="active">{t('carPlanning.activeVehicles')}</option>
+              <option value="inactive">{t('carPlanning.inactiveVehicles')}</option>
+              <option value="all">{t('carPlanning.allVehicles')}</option>
+            </select>
+          </label>
+          <span className="car-planning-total">
+            {t('carPlanning.totalCount')}: <span ref={totalCountNewDayRef}>{totalCountNewDay}</span>
+          </span>
+        </div>
+        <div className="car-planning-toolbar-group" aria-label="Inspection">
+          <span className="car-planning-toolbar-label">Inspection</span>
+          <label className="car-planning-check-label">
           <input
             type="checkbox"
             checked={abfahrtskontrolleMode}
@@ -936,9 +1017,6 @@ export default function CarPlanningPage() {
           />
           <span>{t('carPlanning.abfahrtskontrolle')}</span>
         </label>
-        <span className="car-planning-total">
-          {t('carPlanning.totalCount')}: <span ref={totalCountNewDayRef}>{totalCountNewDay}</span>
-        </span>
         <button
           type="button"
           className="btn-secondary car-planning-btn-sm car-planning-toolbar-btn"
@@ -946,6 +1024,9 @@ export default function CarPlanningPage() {
         >
           Set Abfahrtskontrolle
         </button>
+        </div>
+        <div className="car-planning-toolbar-group" aria-label="Management">
+          <span className="car-planning-toolbar-label">Management</span>
         <button
           type="button"
           className="btn-secondary car-planning-btn-sm car-planning-toolbar-btn"
@@ -974,8 +1055,9 @@ export default function CarPlanningPage() {
         >
           Add Car
         </button>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', whiteSpace: 'nowrap' }}>
-          <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{t('carPlanning.historyTitle')}</span>
+        </div>
+        <div className="car-planning-toolbar-group car-planning-history-group" aria-label={t('carPlanning.historyTitle')}>
+          <span className="car-planning-toolbar-label">{t('carPlanning.historyTitle')}</span>
           <select
             value={historyCarId}
             onChange={(e) => setHistoryCarId(e.target.value)}
@@ -1000,20 +1082,21 @@ export default function CarPlanningPage() {
           {historySearched && !historyLoading && (
             <span className="muted" style={{ maxWidth: '14rem', overflow: 'hidden', textOverflow: 'ellipsis' }} title={historyResult?.driver_identifier || t('carPlanning.historyEmpty')}>
               {historyResult?.driver_identifier
-                ? `${t('carPlanning.driver')}: ${historyResult.driver_identifier}`
+                ? `${t('carPlanning.driver')}: ${historyResult.driver_identifier}${historyResult.route_code ? ` · ${historyResult.route_code} · ${historyResult.required_type} · System/QR: ${historyResult.system_vehicle_id || historyResult.system_license_plate || '—'}` : ''}`
                 : t('carPlanning.historyEmpty')}
             </span>
           )}
           {historyError && <span className="car-planning-error" style={{ margin: 0 }}>{historyError}</span>}
         </div>
-        <span className="muted" style={{ minWidth: '10rem', fontSize: '0.82rem' }}>
+        <div className="car-planning-toolbar-group car-planning-actions-group" aria-label="Actions">
+        <span className="muted car-planning-autosave-status">
           {newDayAutoSaveStatus === 'saving' || newDayAutoSaveStatus === 'pending'
-            ? 'Auto-saving New Day...'
+            ? 'Autosaving…'
             : newDayAutoSaveStatus === 'saved'
-              ? 'New Day saved'
+              ? 'Autosaved'
               : newDayAutoSaveStatus === 'error'
-                ? 'New Day save failed'
-                : 'New Day autosave on'}
+                ? 'Autosave failed'
+                : 'Autosave on'}
         </span>
         <button
           type="button"
@@ -1030,6 +1113,7 @@ export default function CarPlanningPage() {
         >
           Edit
         </button>
+        </div>
       </div>
 
       {error && <p className="car-planning-error">{error}</p>}
@@ -1112,7 +1196,7 @@ export default function CarPlanningPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedCars.map((car) => {
+              {visibleCars.map((car) => {
                 const { plateRaw, plateClass } = getCarPlateDisplay(car);
                 const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
                 const statusBlocked = isOutsideLease(car, newDayDate) || isStatusAutoDeactivated(car.status);
@@ -1131,7 +1215,7 @@ export default function CarPlanningPage() {
                             type="checkbox"
                             checked={!!carStates[car.id]}
                             onChange={(e) => setCarState(car.id, e.target.checked)}
-                            disabled={statusBlocked || !!newDayWorkshopBlock}
+                            disabled={!!carStateSaving[car.id] || statusBlocked || !!newDayWorkshopBlock}
                             title={rowInactiveTitle}
                           />
                         </label>
@@ -1194,7 +1278,14 @@ export default function CarPlanningPage() {
                           onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, newDayDate)}
                           abfahrtskontrolleMode={abfahrtskontrolleMode}
                           abfahrtskontrolleDone={!!slots[`${car.id}_${newDayDate}`]?.abfahrtskontrolle}
-                          disabled={!!carStates[car.id] || (frozen && !abfahrtskontrolleMode)}
+                          entryTime={slots[`${car.id}_${newDayDate}`]?.entry_time}
+                          entryDayOffset={slots[`${car.id}_${newDayDate}`]?.entry_day_offset}
+                          routeCode={slots[`${car.id}_${newDayDate}`]?.route_code}
+                          requiredType={slots[`${car.id}_${newDayDate}`]?.required_type}
+                          systemVehicle={cars.find(c => c.id === slots[`${car.id}_${newDayDate}`]?.system_vehicle_id)?.vehicle_id}
+                          qrReservedFor={slots[`${car.id}_${newDayDate}`]?.qr_reserved_for}
+                          entryTimeLabel={t('carPlanning.entryTime')}
+                          disabled={!!slots[`${car.id}_${newDayDate}`]?.qr_reserved_for || !!carStates[car.id] || (frozen && !abfahrtskontrolleMode)}
                         />
                       )}
                     </td>
@@ -1248,7 +1339,7 @@ export default function CarPlanningPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedCars.map((car) => {
+              {visibleCars.map((car) => {
                 const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
                 const statusBlocked = isOutsideLease(car, newDayDate) || isStatusAutoDeactivated(car.status);
                 const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
@@ -1307,7 +1398,14 @@ export default function CarPlanningPage() {
                               onAbfahrtskontrolle={() => toggleAbfahrtskontrolle(car.id, date)}
                               abfahrtskontrolleMode={abfahrtskontrolleMode}
                               abfahrtskontrolleDone={!!slots[`${car.id}_${date}`]?.abfahrtskontrolle}
-                              disabled={!!carStates[car.id] || ((frozen && date <= newDayDate) && !abfahrtskontrolleMode)}
+                              entryTime={slots[`${car.id}_${date}`]?.entry_time}
+                              entryDayOffset={slots[`${car.id}_${date}`]?.entry_day_offset}
+                              routeCode={slots[`${car.id}_${date}`]?.route_code}
+                              requiredType={slots[`${car.id}_${date}`]?.required_type}
+                              systemVehicle={cars.find(c => c.id === slots[`${car.id}_${date}`]?.system_vehicle_id)?.vehicle_id}
+                              qrReservedFor={slots[`${car.id}_${date}`]?.qr_reserved_for}
+                              entryTimeLabel={t('carPlanning.entryTime')}
+                              disabled={!!slots[`${car.id}_${date}`]?.qr_reserved_for || !!carStates[car.id] || ((frozen && date <= newDayDate) && !abfahrtskontrolleMode)}
                             />
                           )}
                         </td>

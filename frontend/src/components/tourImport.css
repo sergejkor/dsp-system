@@ -1,0 +1,62 @@
+.tour-import { margin: 0 0 1rem; }
+.tour-import > .btn-secondary { min-height: 36px; }
+.tour-import-panel { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 8px; background: var(--bg-card); }
+.tour-import-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border: 0; padding: 0; }
+.tour-import-controls label { display: flex; align-items: center; gap: .4rem; }
+.tour-import-table { overflow: auto; max-height: 60vh; margin: 12px 0; border: 1px solid var(--border); border-radius: 8px; }
+.tour-import-table table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tour-import-table th { position: sticky; top: 0; z-index: 1; background: var(--input-bg); }
+.tour-import-table td, .tour-import-table th { padding: .65rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; min-width: 90px; }
+.tour-import-table small { display: block; margin: .3rem 0; }
+.tour-import-table select { max-width: 240px; }
+.tour-import input, .tour-import select { min-height: 36px; color: inherit; background: var(--input-bg, var(--card-bg, transparent)); border: 1px solid var(--border); border-radius: 8px; padding: .3rem .5rem; }
+.tour-import input[type="file"] { max-width: 250px; padding: 3px; }
+.tour-import input[type="file"]::file-selector-button { min-height: 28px; margin-right: 8px; border: 0; border-radius: 6px; padding: 0 10px; color: #fff; background: var(--primary); cursor: pointer; }
+.tour-import button:disabled { opacity: .5; cursor: not-allowed; }
+.tour-import-dialog-backdrop { position: fixed; inset: 0; z-index: 2200; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(15, 23, 42, .58); }
+.tour-import-dialog { width: min(520px, 100%); max-height: calc(100vh - 2rem); overflow: auto; padding: 1.25rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card, #fff); color: var(--text, #111827); box-shadow: 0 24px 60px rgba(15, 23, 42, .28); }
+.tour-import-dialog h3 { margin: 0 0 .75rem; }
+.tour-import-dialog p { margin: 0; line-height: 1.55; }
+.tour-import-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.tour-import-dialog-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; }
+.tour-import-roster-text { max-height: 55vh; overflow: auto; margin: .75rem 0 0; padding: 1rem; border: 1px solid var(--border-color, #8886); border-radius: 8px; background: var(--input-bg, #f8fafc); color: inherit; font: inherit; line-height: 1.5; white-space: pre-wrap; }
+.tour-import-dialog-actions { display: flex; justify-content: flex-end; gap: .75rem; margin-top: 1.25rem; }
+.tour-import-rescue-backdrop { z-index: 2300; }
+.tour-import-rescue-dialog { width: min(380px, 100%); }
+.tour-import-rescue-dialog label { display: grid; gap: .35rem; margin-top: .8rem; }
+
+.tour-dispatch-source { margin: 12px 0 4px; overflow-wrap: anywhere; color: var(--text-muted); font-size: .82rem; }
+.tour-dispatch-summary { margin: 0; color: var(--text-muted); font-size: .84rem; }
+.tour-dispatch-table table { table-layout: fixed; font-size: .95rem; }
+.tour-dispatch-table th:first-child { width: 17%; }
+.tour-dispatch-table th:nth-child(2) { width: 27%; }
+.tour-dispatch-table th:nth-child(3) { width: 17%; }
+.tour-dispatch-table td, .tour-dispatch-table th { min-width: 0; padding: .8rem .55rem; vertical-align: middle; overflow-wrap: anywhere; }
+.tour-vehicle-area { display: inline-flex; max-width: 100%; align-items: center; flex-wrap: wrap; gap: .35rem; padding: .2rem .35rem; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); }
+.tour-vehicle-area.is-substitution { background: #eab30818; box-shadow: inset 3px 0 #d6a123; }
+.tour-vehicle-area.is-issue { background: #ef444418; box-shadow: inset 3px 0 #dc4b4b; }
+.tour-vehicle-button, .tour-qr-button { background: transparent; color: inherit; border: 0; padding: .35rem; font: inherit; cursor: pointer; text-align: left; }
+.tour-vehicle-button { overflow-wrap: anywhere; }
+.tour-vehicle-button:hover, .tour-qr-button:hover { background: #8882; border-radius: 5px; }
+.tour-vehicle-button:focus-visible, .tour-qr-button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+.tour-qr-button { font-size: 1.2rem; line-height: 1; }
+.tour-issue-label { font-size: .8rem; }
+.tour-dispatch-table select { max-width: 100%; }
+.tour-import-diagnostics > summary { cursor: pointer; width: fit-content; opacity: .8; }
+.tour-dispatch-actions { display: flex; gap: .6rem; justify-content: flex-end; margin-top: .8rem; padding-top: .8rem; border-top: 1px solid var(--border); }
+.tour-qr-source { position: fixed; left: -10000px; top: 0; pointer-events: none; }
+.tour-qr-dialog { width: min(350px, calc(100vw - 2rem)); box-sizing: border-box; border: 1px solid #8886; border-radius: 12px; padding: 1rem; background: var(--card-bg, #fff); color: var(--text, #111827); }
+.tour-qr-dialog::backdrop { background: #0f172a66; }
+.tour-qr-dialog canvas { display: block; max-width: 100%; height: auto !important; margin: .7rem auto; }
+.tour-qr-dialog code { display: block; overflow-wrap: anywhere; text-align: center; }
+.tour-qr-dialog p { font-size: .85rem; }
+.tour-qr-dialog .tour-import-dialog-header button { border: 0; background: transparent; color: inherit; font-size: 1.3rem; cursor: pointer; }
+.tour-copy-toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 2500; padding: .6rem 1rem; border: 1px solid #8886; border-radius: 8px; background: var(--card-bg, #fff); color: var(--text, #111827); box-shadow: 0 4px 18px #0002; }
+.tour-save-warning { padding: .6rem 0; }
+@media (max-width: 600px) {
+  .tour-import-panel { padding: .6rem; }
+  .tour-dispatch-table table { font-size: .82rem; }
+  .tour-dispatch-table th:first-child { width: 23%; }
+  .tour-dispatch-table th:nth-child(2) { width: 30%; }
+  .tour-dispatch-table td, .tour-dispatch-table th { padding: .55rem .2rem; }
+}

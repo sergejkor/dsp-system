@@ -80,12 +80,13 @@ function readyRoutes() {
 }
 
 function createService({ routes = readyRoutes(), hasEmail = true, invalidAssignments = 0, now, fetchImpl } = {}) {
-  const db = createFakeDb({ routes, hasEmail, invalidAssignments, now });
+  const effectiveNow = now || (() => new Date('2026-09-25T06:00:00.000Z'));
+  const db = createFakeDb({ routes, hasEmail, invalidAssignments, now: effectiveNow });
   const service = createAtlasSlackService({
     dbPool: db.pool,
     fetchImpl: fetchImpl || (async () => ({ ok: true, status: 200 })),
     environment: () => ({ ATLAS_SLACK_ENABLED: 'true', ATLAS_SLACK_WEBHOOK_URL: 'https://example.invalid/test-hook' }),
-    now,
+    now: effectiveNow,
   });
   return { ...db, ...service };
 }
