@@ -276,16 +276,14 @@ export default function TourImport({ defaultDate, onApplied, beforeImport }) {
             <select value={rescueTime} onChange={e => setRescueTime(e.target.value)}>{timeOptions.map(option => <option key={`${option.dayOffset}|${option.time}`} value={`${option.dayOffset}|${option.time}`}>{option.time}</option>)}</select>
           </label>
           <label>{language === 'de' ? 'Mitarbeiter' : language === 'ru' ? 'Сотрудник' : 'Employee'}
-            <select value={rescueEmployee} disabled={busy} onChange={e => {
-              const employeeId = e.target.value; setRescueEmployee(employeeId);
-              if (!employeeId) return;
-              const [dayOffset,time] = rescueTime.split('|');
-              run(async () => { accept(await request(`/${draft.id}/rescue`, {employeeId,entryTime:time,entryDayOffset:Number(dayOffset),version:draft.version})); setRescueOpen(false); });
-            }}><option value="">—</option>{rescueCandidates.map(employee => <option key={employee.id} value={employee.id}>{employee.display_name}</option>)}</select>
+            <select value={rescueEmployee} disabled={busy} onChange={e => setRescueEmployee(e.target.value)}><option value="">—</option>{rescueCandidates.map(employee => <option key={employee.id} value={employee.id}>{employee.display_name}</option>)}</select>
           </label>
           <div className="tour-import-dialog-actions">
             <button type="button" className="btn-secondary" onClick={() => setRescueOpen(false)}>{language === 'de' ? 'Abbrechen' : language === 'ru' ? 'Отмена' : 'Cancel'}</button>
-
+            <button type="button" className="btn-primary" disabled={busy || !rescueTime || !rescueEmployee} onClick={() => {
+              const [dayOffset, time] = rescueTime.split('|');
+              run(async () => { accept(await request(`/${draft.id}/rescue`, { employeeId: rescueEmployee, entryTime: time, entryDayOffset: Number(dayOffset), version: draft.version })); setRescueOpen(false); });
+            }}>{language === 'de' ? 'Speichern' : language === 'ru' ? 'Сохранить' : 'Save'}</button>
           </div>
         </div>
       </div></ViewportOverlay>}

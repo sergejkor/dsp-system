@@ -2591,6 +2591,11 @@ body.dark .car-planning-cell-input.car-planning-cell-green:disabled {
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   z-index: 10;
 }
+.car-planning-cell-dropdown-portal {
+  position: fixed;
+  right: auto;
+  z-index: 1200;
+}
 .car-planning-cell-option {
   padding: 0.4rem 0.6rem;
   cursor: pointer;

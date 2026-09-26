@@ -1,5 +1,6 @@
 import { isOutsideLease } from '../utils/carLeaseAvailability';
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useAppSettings } from '../context/AppSettingsContext';
 import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, getHistoricalAssignment, addCar } from '../services/carPlanningApi';
 import { syncKenjoEmployees } from '../services/kenjoApi';
@@ -84,6 +85,9 @@ function DriverCell({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const inputRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const [dropdownStyle, setDropdownStyle] = useState(null);
   const locked = !!abfahrtskontrolleMode;
   const query = value || '';
 
@@ -120,11 +124,35 @@ function DriverCell({
     if (!open) return;
     if (locked) return;
     function handleClickOutside(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (!ref.current?.contains(e.target) && !dropdownRef.current?.contains(e.target)) setOpen(false);
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [open, locked]);
+
+  const positionDropdown = useCallback(() => {
+    const rect = inputRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setDropdownStyle({
+      top: `${rect.bottom}px`,
+      left: `${rect.left}px`,
+      width: `${rect.width}px`,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open || locked) {
+      setDropdownStyle(null);
+      return undefined;
+    }
+    positionDropdown();
+    window.addEventListener('resize', positionDropdown);
+    window.addEventListener('scroll', positionDropdown, true);
+    return () => {
+      window.removeEventListener('resize', positionDropdown);
+      window.removeEventListener('scroll', positionDropdown, true);
+    };
+  }, [open, locked, positionDropdown]);
 
   return (
     <div className="car-planning-cell-wrap" ref={ref}>
@@ -134,6 +162,7 @@ function DriverCell({
         </span>
       ) : null}
       <input
+        ref={inputRef}
         type="text"
         className={`car-planning-cell-input ${abfahrtskontrolleDone ? 'car-planning-cell-green' : ''}`}
         value={query}
@@ -237,8 +266,8 @@ function DriverCell({
           </button>
         </div>
       )}
-      {open && !locked && (
-        <ul className="car-planning-cell-dropdown">
+      {open && !locked && dropdownStyle && createPortal(
+        <ul ref={dropdownRef} className="car-planning-cell-dropdown car-planning-cell-dropdown-portal" style={dropdownStyle}>
           {query.trim() && !drivers.some((d) => (d.display_name || '').toLowerCase() === query.trim().toLowerCase()) && (
             <li
               className="car-planning-cell-option"
@@ -269,7 +298,7 @@ function DriverCell({
             </li>
           ))}
         </ul>
-      )}
+      , document.body)}
     </div>
   );
 }
