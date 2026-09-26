@@ -214,10 +214,16 @@ export function allocate(rows, cars, scores, allowed) {
   const fleet = [...cars].sort((a, b) => a.id - b.id);
   for (const row of sorted) {
     row.systemCandidates = fleet.filter(c => (row.isRescue || c.service_type === row.type) && !allowed(row, c, 'system')).map(c => c.id);
-    // The dispatcher may choose any currently available physical vehicle.  When
-    // its type differs from the route type, the separately allocated system
-    // vehicle remains the route-compatible QR vehicle.
-    row.candidates = fleet.filter(c => !allowed(row, c, 'physical')).map(c => c.id);
+    // Keep the automatic search bounded to route-compatible alternatives. The
+    // UI may still offer the whole available fleet for an explicit dispatcher
+    // override; only that locked choice is added to this row's search space.
+    row.manualCandidates = fleet.filter(c => !allowed(row, c, 'physical')).map(c => c.id);
+    row.candidates = fleet.filter(c => (
+      row.isRescue ? true :
+        row.historyPhysicalType ? c.service_type === row.historyPhysicalType :
+          (c.service_type === row.type || (['Medium VN', 'Standard Parcel'].includes(row.type) && isElectric(c.service_type)))
+    ) && !allowed(row, c, 'physical')).map(c => c.id);
+    if (row.locked && row.manualCandidates.includes(row.carId) && !row.candidates.includes(row.carId)) row.candidates.push(row.carId);
   }
   const pins = sorted.map(row => ({ physical: row.locked ? row.carId : null, system: row.systemLocked ? row.systemCarId : null, isRescue: !!row.isRescue, row }));
   const pinConflict = (a, b) => (a.physical && b.physical && a.physical === b.physical) ||
@@ -247,6 +253,10 @@ export function allocate(rows, cars, scores, allowed) {
       for (const system of fleet) {
         if (!row.systemCandidates.includes(system.id) || (row.systemLocked && row.systemCarId !== system.id)) continue;
         if (pins.some(p => p.row !== row && pinConflict(p, { physical: physical.id, system: system.id, isRescue: !!row.isRescue }))) continue;
+        const manualCrossType = row.locked && physical.id === row.carId && physical.service_type !== row.type;
+        if (!row.isRescue && physical.id !== system.id && !manualCrossType &&
+          !((row.historyPhysicalType === physical.service_type && physical.service_type !== row.type) ||
+            (isElectric(physical.service_type) && !isElectric(row.type)))) continue;
         result.push({ physical: physical.id, system: system.id, isRescue: !!row.isRescue, weight: coverageWeight +
           (!row.isRescue && isElectric(row.type) ? electricTourWeight : 0) +
           (isElectric(physical.service_type) ? evWeight : 0) +

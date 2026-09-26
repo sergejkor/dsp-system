@@ -109,7 +109,8 @@ export default function TourImport({ defaultDate, onApplied, beforeImport }) {
   };
   const validRows = draft?.rows.filter(r => r.carId && r.systemCarId && !r.errors.length) || [];
   function physicalCandidates(row) {
-    return draft.cars.filter(car => row.candidates.includes(car.id) && !excluded.includes(car.id));
+    const candidateIds = row.manualCandidates || row.candidates;
+    return draft.cars.filter(car => candidateIds.includes(car.id) && !excluded.includes(car.id));
   }
   async function changePhysical(row, value) {
     setEditingVehicle(null);
@@ -220,7 +221,7 @@ export default function TourImport({ defaultDate, onApplied, beforeImport }) {
               <small>Physical Vehicle · {draft.cars.find(c => c.id === current.carId)?.service_type || '—'}</small>
               {!dirty && row.carId && <small><strong>{vehicleCopy.proposed}: {plate(row.carId)}</strong></small>}
               {!dirty && row.carId && row.historyDays && <small>{row.assignedCarDays} {vehicleCopy.days} · {vehicleCopy.window} {row.historyDays} {vehicleCopy.days}</small>}
-              <select aria-label={`${t[13]} ${row.route}`} disabled={busy} value={current.carId || ''} onChange={e => edit(row, { carId: Number(e.target.value) || null, locked: !!e.target.value })}><option value="">{t[17]}</option>{draft.cars.filter(c => row.candidates.includes(c.id) || c.id === current.carId).map(c => <option disabled={!row.candidates.includes(c.id)} key={c.id} value={c.id}>{plate(c.id)}</option>)}</select>
+              <select aria-label={`${t[13]} ${row.route}`} disabled={busy} value={current.carId || ''} onChange={e => edit(row, { carId: Number(e.target.value) || null, locked: !!e.target.value })}><option value="">{t[17]}</option>{draft.cars.filter(c => (row.manualCandidates || row.candidates).includes(c.id) || c.id === current.carId).map(c => <option disabled={!(row.manualCandidates || row.candidates).includes(c.id)} key={c.id} value={c.id}>{plate(c.id)}</option>)}</select>
               {!dirty && row.historyDays && <small>{row.usualCarId
                 ? `${vehicleCopy.usual}: ${plate(row.usualCarId)} — ${row.usualCarDays} ${vehicleCopy.days} (${vehicleCopy.window} ${row.historyDays} ${vehicleCopy.days})`
                 : vehicleCopy.noHistory}</small>}
