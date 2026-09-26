@@ -1,6 +1,7 @@
+import { isOutsideLease } from '../utils/carLeaseAvailability';
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
 import { useAppSettings } from '../context/AppSettingsContext';
-import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, addCar } from '../services/carPlanningApi';
+import { getCars, getDrivers, getPlanningData, savePlanningData, savePlanningDataAndSend, getReport, getHistoricalAssignment, addCar } from '../services/carPlanningApi';
 import { syncKenjoEmployees } from '../services/kenjoApi';
 
 /** Day window around today included in planning columns (saved to DB). */
@@ -414,7 +415,7 @@ export default function CarPlanningPage() {
   }, []);
 
   const isCarUnavailableForPlanning = useCallback(
-    (car, dateStr) => isStatusAutoDeactivated(car?.status) || !!getWorkshopBlockForDate(car, dateStr),
+    (car, dateStr) => isOutsideLease(car, dateStr) || isStatusAutoDeactivated(car?.status) || !!getWorkshopBlockForDate(car, dateStr),
     [getWorkshopBlockForDate]
   );
 
@@ -614,15 +615,7 @@ export default function CarPlanningPage() {
     setHistoryError('');
     setHistorySearched(false);
     try {
-      const selectedCar = cars.find((car) => String(car.id) === String(historyCarId));
-      const assignments = await getReport(historyDate);
-      const assignment = assignments.find((row) => {
-        const rowPlate = String(row.license_plate || '').trim().toLowerCase();
-        const rowVehicleId = String(row.vehicle_id || '').trim().toLowerCase();
-        const selectedPlate = String(selectedCar?.license_plate || '').trim().toLowerCase();
-        const selectedVehicleId = String(selectedCar?.vehicle_id || '').trim().toLowerCase();
-        return (selectedPlate && rowPlate === selectedPlate) || (selectedVehicleId && rowVehicleId === selectedVehicleId);
-      }) || null;
+      const assignment = await getHistoricalAssignment(historyCarId, historyDate);
       setHistoryResult(assignment);
       setHistorySearched(true);
     } catch (e) {
@@ -1041,6 +1034,28 @@ export default function CarPlanningPage() {
 
       {error && <p className="car-planning-error">{error}</p>}
 
+      <div className="car-planning-toolbar" style={{ marginTop: '0.8rem', padding: '0.7rem', border: '1px solid var(--border)', borderRadius: 8 }}>
+        <strong>{t('carPlanning.historyTitle')}</strong>
+        <select value={historyCarId} onChange={(e) => setHistoryCarId(e.target.value)} aria-label={t('carPlanning.vehicle')}>
+          <option value="">{t('carPlanning.historyVehiclePlaceholder')}</option>
+          {cars.map((car) => (
+            <option key={car.id} value={car.id}>{car.license_plate || car.vehicle_id || `#${car.id}`}</option>
+          ))}
+        </select>
+        <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} aria-label={t('carPlanning.historyDate')} />
+        <button type="button" className="btn-secondary car-planning-btn-sm" onClick={handleHistorySearch} disabled={historyLoading}>
+          {historyLoading ? t('carPlanning.loading') : t('carPlanning.historySearch')}
+        </button>
+        {historyError && <span className="car-planning-error">{historyError}</span>}
+        {historySearched && !historyLoading && (
+          <span className="muted">
+            {historyResult?.driver_identifier
+              ? `${t('carPlanning.driver')}: ${historyResult.driver_identifier}${historyResult.abfahrtskontrolle ? ` (${t('carPlanning.abfahrtskontrolle')})` : ''}`
+              : t('carPlanning.historyEmpty')}
+          </span>
+        )}
+      </div>
+
       <div className="car-planning-split" role="region" aria-label={t('carPlanning.title')}>
         <div className="car-planning-fixed-wrap">
           <table ref={carPlanningFixedTableRef} className="car-planning-table car-planning-table-fixed">
@@ -1100,9 +1115,9 @@ export default function CarPlanningPage() {
               {sortedCars.map((car) => {
                 const { plateRaw, plateClass } = getCarPlateDisplay(car);
                 const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
-                const statusBlocked = isStatusAutoDeactivated(car.status);
+                const statusBlocked = isOutsideLease(car, newDayDate) || isStatusAutoDeactivated(car.status);
                 const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
-                const rowInactiveTitle = statusBlocked
+                const rowInactiveTitle = isOutsideLease(car, newDayDate) ? 'Outside lease period' : statusBlocked
                   ? `Unavailable because of car status: ${car.status || 'inactive'}`
                   : newDayWorkshopBlock
                     ? `Workshop: ${newDayWorkshopBlock.periodLabel}`
@@ -1133,7 +1148,7 @@ export default function CarPlanningPage() {
                     >
                       {statusBlocked ? (
                         <div
-                          title={car.status || 'Unavailable'}
+                          title={isOutsideLease(car, newDayDate) ? 'Outside lease period' : car.status || 'Unavailable'}
                           style={{
                             minHeight: '2.6rem',
                             padding: '0.35rem 0.5rem',
@@ -1145,7 +1160,7 @@ export default function CarPlanningPage() {
                             lineHeight: 1.25,
                           }}
                         >
-                          <strong>{car.status || 'Unavailable'}</strong>
+                          <strong>{isOutsideLease(car, newDayDate) ? 'Outside lease period' : car.status || 'Unavailable'}</strong>
                           <div>Car is deactivated in planning</div>
                         </div>
                       ) : newDayWorkshopBlock ? (
@@ -1235,13 +1250,13 @@ export default function CarPlanningPage() {
             <tbody>
               {sortedCars.map((car) => {
                 const newDayWorkshopBlock = getWorkshopBlockForDate(car, newDayDate);
-                const statusBlocked = isStatusAutoDeactivated(car.status);
+                const statusBlocked = isOutsideLease(car, newDayDate) || isStatusAutoDeactivated(car.status);
                 const rowInactive = !!carStates[car.id] || statusBlocked || !!newDayWorkshopBlock;
                 return (
                   <tr key={car.id} className={rowInactive ? 'car-planning-row-inactive' : ''}>
                     {scrollDates.map((date) => {
                       const workshopBlock = getWorkshopBlockForDate(car, date);
-                      const statusBlock = isStatusAutoDeactivated(car.status);
+                      const statusBlock = isOutsideLease(car, date) || isStatusAutoDeactivated(car.status);
                       return (
                         <td
                           key={date}
@@ -1250,7 +1265,7 @@ export default function CarPlanningPage() {
                         >
                           {statusBlock ? (
                             <div
-                              title={car.status || 'Unavailable'}
+                              title={isOutsideLease(car, date) ? 'Outside lease period' : car.status || 'Unavailable'}
                               style={{
                                 minHeight: '2.6rem',
                                 padding: '0.35rem 0.4rem',
@@ -1262,7 +1277,7 @@ export default function CarPlanningPage() {
                                 lineHeight: 1.2,
                               }}
                             >
-                              <strong>{car.status || 'Unavailable'}</strong>
+                              <strong>{isOutsideLease(car, date) ? 'Outside lease period' : car.status || 'Unavailable'}</strong>
                             </div>
                           ) : workshopBlock ? (
                             <div

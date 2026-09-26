@@ -1290,7 +1290,9 @@ export async function calculatePayroll(month, fromDate, toDate) {
       manualByEmployee.delete(eid);
       const afterAbzug = Math.round((manual.total_bonus - manual.abzug) * 100) / 100;
       const maxVerpfl = manual.working_days * 14;
-      const verpflMehr = Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
+      const verpflMehr = verpflegungRemovedByEmployee.has(eid)
+        ? 0
+        : Math.round((afterAbzug <= maxVerpfl ? afterAbzug : maxVerpfl) * 100) / 100;
       const fahrtGeld = Math.round((afterAbzug > maxVerpfl ? afterAbzug - maxVerpfl : 0) * 100) / 100;
       const explicitAbzugLines = normalizeAbzugLines(row.abzug_lines);
       const effectiveAbzug = hasExplicitAbzugLines(explicitAbzugLines)

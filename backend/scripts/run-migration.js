@@ -1240,6 +1240,14 @@ async function run() {
     console.log('Migration OK: Atlas route assignments.');
     await query(readFileSync(new URL('../migrations/011_atlas_slack_deliveries.sql', import.meta.url), 'utf8'));
     console.log('Migration OK: Atlas Slack deliveries.');
+    await query(readFileSync(new URL('../migrations/005_fleet_rentals.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: fleet rental details.');
+    await query(readFileSync(new URL('../migrations/006_fleet_rental_totals.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: fleet rental contract totals.');
+    await query(readFileSync(new URL('../migrations/007_fleet_rental_monthly.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: fleet rental monthly rates.');
+    await query(readFileSync(new URL('../migrations/008_kenjo_time_off_type_name.sql', import.meta.url), 'utf8'));
+    console.log('Migration OK: Kenjo time-off type name column.');
   } catch (e) {
     console.error('Migration failed:', e.message);
     process.exit(1);

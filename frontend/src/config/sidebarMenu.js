@@ -59,6 +59,14 @@ export const sidebarMenuItems = [
         matchPatterns: ['/ev-monitoring'],
       },
       {
+        id: 'fleet-rentals',
+        type: 'item',
+        path: '/fleet-rentals',
+        labelKey: 'nav.fleetRentals',
+        permissionCode: 'page_cars',
+        matchPatterns: ['/fleet-rentals'],
+      },
+      {
         id: 'internal-inspections',
         type: 'item',
         path: '/fleet-inspections',

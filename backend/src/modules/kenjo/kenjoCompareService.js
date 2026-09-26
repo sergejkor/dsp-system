@@ -96,8 +96,6 @@ function nameVariants(first, last) {
     set.add(`${l},${f}`);
     set.add(`${l}, ${f}`);
   }
-  if (f) set.add(f);
-  if (l) set.add(l);
   return [...set];
 }
 
@@ -117,43 +115,35 @@ function parseCortexName(driverName) {
   return { first: n, last: '' };
 }
 
-function matchUser(users, driverName, transporterId) {
+export function matchUser(users, driverName, transporterId) {
   const tid = norm(transporterId);
   const cortexVariants = cortexNameVariants(driverName);
-  const name = norm(driverName);
-  const { first: cortexFirst, last: cortexLast } = parseCortexName(driverName);
-
   const idNorm = (v) => (v != null ? String(v).trim().toLowerCase() : '');
+
+  // A Transporter ID is the durable identifier. Resolve it across the entire
+  // directory before considering a name fallback.
+  if (tid) {
+    for (const u of users || []) {
+      const uid = String(u._id || u.id || '').trim();
+      if (!uid) continue;
+      const transport = idNorm(u.transportationId || u.transporterId);
+      const employeeNumber = idNorm(u.employeeNumber || u.employee_number);
+      if (transport === tid || employeeNumber === tid || idNorm(uid) === tid) return uid;
+    }
+  }
 
   for (const u of users || []) {
     const uid = String(u._id || u.id || '').trim();
     if (!uid) continue;
 
-    if (tid) {
-      const t = idNorm(u.transportationId || u.transporterId);
-      const empNum = idNorm(u.employeeNumber || u.employee_number);
-      if (t === tid || empNum === tid || idNorm(uid) === tid) return uid;
-    }
-
-    if (!name && cortexVariants.length === 0) continue;
-
     const dn = norm(u.displayName || '');
-    const first = norm(u.firstName || '');
-    const last = norm(u.lastName || '');
     const variants = nameVariants(u.firstName, u.lastName);
 
-    const matchStr = (a, b) => a && b && (a === b || a.includes(b) || b.includes(a));
-
-    if (cortexLast && cortexFirst && last === cortexLast && first === cortexFirst) return uid;
-    if (cortexLast && last === cortexLast && (!cortexFirst || first === cortexFirst || first.includes(cortexFirst) || cortexFirst.includes(first))) return uid;
-    if (cortexFirst && first === cortexFirst && (!cortexLast || last === cortexLast)) return uid;
-
-    if (variants.some((v) => cortexVariants.some((c) => matchStr(c, v)))) return uid;
-    if (dn && cortexVariants.some((v) => matchStr(v, dn))) return uid;
-    if (name && dn && matchStr(name, dn)) return uid;
-
-    const emailLocal = (u.email || '').split('@')[0];
-    if (emailLocal && norm(emailLocal).length >= 3 && (name && name.includes(norm(emailLocal)) || cortexVariants.some((v) => v.includes(norm(emailLocal))))) return uid;
+    // Never match on one name token or a partial string: two people can share
+    // a first or last name. This previously paired e.g. Cosmin Lata with
+    // Raluca Lata and then reported a false "Kenjo no match".
+    if (variants.some((v) => cortexVariants.includes(v))) return uid;
+    if (dn && cortexVariants.includes(dn)) return uid;
   }
   return null;
 }

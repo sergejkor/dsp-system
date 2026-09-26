@@ -1,3 +1,5 @@
+import { isOutsideLease } from '../utils/carLeaseAvailability';
+import CarLeaseFields, { isLeasedCar } from '../components/CarLeaseFields';
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -23,6 +25,16 @@ import { formatPaveInspectionDate } from '../utils/paveInspectionDateDisplay.js'
 import { formatPortalDate, formatPortalNumber } from '../utils/portalLocale.js';
 
 const STATUS_OPTIONS = ['Active', 'Maintenance', 'Grounded', 'Out of Service', 'Defleeted', 'Defleeting candidate', 'Defleeting finalized'];
+const FLEET_PROVIDERS = ['Armada', 'Arval', 'Armada Lease Plan', 'LMR', 'Rental', 'Self Source'];
+
+function FleetProviderField({ form, setForm }) {
+  const known = FLEET_PROVIDERS.includes(form.fleet_provider);
+  return <label>Fleet Provider <select value={form.fleet_provider} onChange={(e) => setForm({ ...form, fleet_provider: e.target.value })}>
+    <option value="">—</option>
+    {!known && form.fleet_provider && <option value={form.fleet_provider}>{form.fleet_provider}</option>}
+    {FLEET_PROVIDERS.map(provider => <option key={provider} value={provider}>{provider}</option>)}
+  </select></label>;
+}
 const VEHICLE_TYPES = ['Van', 'Step Van', 'Rental', 'Personal'];
 const FUEL_TYPES = ['Diesel', 'Gasoline', 'Electric'];
 
@@ -832,7 +844,7 @@ export default function CarsPage() {
                           </td>
                           <td>{car.vin || '—'}</td>
                           <td>{car.model || '—'}</td>
-                          <td><span style={statusColor(car.status)}>{car.status || '—'}</span></td>
+                          <td><span style={statusColor(car.status)}>{car.status || '—'}</span>{isOutsideLease(car) && <small style={{ display: 'block', color: '#b45309' }}>Inactive · outside lease period</small>}</td>
                           <td>{getCarDriverLabel(car)}</td>
                           <td>{car.station || '—'}</td>
                           <td>{formatDate(kpiModal.key === 'defleetingCandidates' ? car.planned_defleeting_date : car.registration_expiry)}</td>
@@ -1276,7 +1288,7 @@ function AddCarModal({ onClose, onSaved, onError }) {
   const [form, setForm] = useState({
     vehicle_id: '', license_plate: '', vin: '', model: '', year: '', fuel_type: '', vehicle_type: 'Van',
     status: 'Active', station: '', fleet_provider: '', mileage: '',
-    registration_expiry: '', insurance_expiry: '', lease_expiry: '',
+    registration_expiry: '', insurance_expiry: '', lease_expiry: '', active_from: '', active_to: '',
   });
 
   function handleSubmit(e) {
@@ -1304,11 +1316,12 @@ function AddCarModal({ onClose, onSaved, onError }) {
             <label>Vehicle Type <select value={form.vehicle_type} onChange={(e) => setForm({ ...form, vehicle_type: e.target.value })}>{VEHICLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
             <label>Status <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
             <label>Station <input value={form.station} onChange={(e) => setForm({ ...form, station: e.target.value })} /></label>
-            <label>Fleet Provider <input value={form.fleet_provider} onChange={(e) => setForm({ ...form, fleet_provider: e.target.value })} /></label>
+            <FleetProviderField form={form} setForm={setForm} />
+            <CarLeaseFields form={form} setForm={setForm} />
             <label>Initial Mileage <input type="number" value={form.mileage} onChange={(e) => setForm({ ...form, mileage: e.target.value })} /></label>
             <label>Registration Expiry <input type="date" value={form.registration_expiry} onChange={(e) => setForm({ ...form, registration_expiry: e.target.value })} /></label>
             <label>Insurance Expiry <input type="date" value={form.insurance_expiry} onChange={(e) => setForm({ ...form, insurance_expiry: e.target.value })} /></label>
-            <label>Lease Expiry <input type="date" value={form.lease_expiry} onChange={(e) => setForm({ ...form, lease_expiry: e.target.value })} /></label>
+            {!isLeasedCar(form.fleet_provider) && <label>Lease Expiry <input type="date" value={form.lease_expiry} onChange={(e) => setForm({ ...form, lease_expiry: e.target.value })} /></label>}
           </div>
           <div className="modal-footer">
             <button type="button" onClick={onClose}>Cancel</button>
@@ -1353,6 +1366,7 @@ function EditCarModal({ carId, onClose, onSaved, onError }) {
           status: c.status || '',
           station: c.station || '',
           fleet_provider: c.fleet_provider || '',
+          active_from: c.active_from || '', active_to: c.active_to || '',
           mileage: c.mileage ?? '',
           last_maintenance_date: c.last_maintenance_date?.slice?.(0, 10) || '',
           next_maintenance_date: c.next_maintenance_date?.slice?.(0, 10) || '',
@@ -1426,13 +1440,14 @@ function EditCarModal({ carId, onClose, onSaved, onError }) {
               </label>
             )}
             <label>Station <input value={form.station} onChange={(e) => setForm({ ...form, station: e.target.value })} /></label>
-            <label>Fleet Provider <input value={form.fleet_provider} onChange={(e) => setForm({ ...form, fleet_provider: e.target.value })} /></label>
+            <FleetProviderField form={form} setForm={setForm} />
+            <CarLeaseFields form={form} setForm={setForm} />
             <label>Mileage <input type="number" value={form.mileage} onChange={(e) => setForm({ ...form, mileage: e.target.value })} /></label>
             <label>Last Maintenance <input type="date" value={form.last_maintenance_date} onChange={(e) => setForm({ ...form, last_maintenance_date: e.target.value })} /></label>
             <label>Next Maintenance <input type="date" value={form.next_maintenance_date} onChange={(e) => setForm({ ...form, next_maintenance_date: e.target.value })} /></label>
             <label>Registration Expiry <input type="date" value={form.registration_expiry} onChange={(e) => setForm({ ...form, registration_expiry: e.target.value })} /></label>
             <label>Insurance Expiry <input type="date" value={form.insurance_expiry} onChange={(e) => setForm({ ...form, insurance_expiry: e.target.value })} /></label>
-            <label>Lease Expiry <input type="date" value={form.lease_expiry} onChange={(e) => setForm({ ...form, lease_expiry: e.target.value })} /></label>
+            {!isLeasedCar(form.fleet_provider) && <label>Lease Expiry <input type="date" value={form.lease_expiry} onChange={(e) => setForm({ ...form, lease_expiry: e.target.value })} /></label>}
           </div>
           <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
             <div>

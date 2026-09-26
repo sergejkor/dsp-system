@@ -39,6 +39,16 @@ function getRating(totalScore) {
   return 'FANTASTIC PLUS';
 }
 
+function ratingClass(rating) {
+  return `scorecard-report-row--${String(rating).toLowerCase().replace(/\s+/g, '-')}`;
+}
+
+const KPI_LEGEND_KEYS = [
+  ['dcr', 'DCR'], ['dsc', 'DSC DPMO'], ['lor', 'Lost on Road / LoR DPMO'],
+  ['pod', 'POD'], ['cc', 'Contact Compliance / CC'], ['ce', 'Customer Escalation / CE'],
+  ['cdf', 'Kundenbewertung / CDF'],
+];
+
 export default function ScorecardUploadsPage() {
   const { t } = useAppSettings();
   const now = new Date();
@@ -230,6 +240,7 @@ export default function ScorecardUploadsPage() {
               ) : reportRows.length === 0 ? (
                 <p className="muted">{t('scorecardUploads.noDataForWeek')}</p>
               ) : (
+                <>
                 <div className="scorecard-report-table-wrap scorecard-report-table-wrap-fullpage">
                   <table className="scorecard-report-table scorecard-report-table-fullpage">
                     <thead>
@@ -240,8 +251,9 @@ export default function ScorecardUploadsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {reportRowsSorted.map((row, idx) => (
-                        <tr key={idx}>
+                      {reportRowsSorted.map((row, idx) => {
+                        const rating = getRating(row.total_score);
+                        return <tr key={idx} className={ratingClass(rating)}>
                           {REPORT_COLUMNS.map((col) => {
                             let val;
                             if (col.key === 'names') {
@@ -249,17 +261,22 @@ export default function ScorecardUploadsPage() {
                               const last = row.last_name != null && row.last_name !== '' ? row.last_name : '';
                               val = (first || last)
                                 ? `${first} ${last}`.trim()
-                                : (row.display_name || row.transporter_id || '—');
+                                : (row.display_name || t('scorecardUploads.noEmployeeMatch'));
                             } else if (col.key === 'cdf') val = formatCdf(row.cdf);
-                            else if (col.key === 'rating') val = getRating(row.total_score);
+                            else if (col.key === 'rating') val = rating;
                             else val = row[col.key] ?? '—';
                             return <td key={col.key}>{val}</td>;
                           })}
-                        </tr>
-                      ))}
+                        </tr>;
+                      })}
                     </tbody>
                   </table>
+                  <section className="scorecard-kpi-legend" aria-label={t('scorecardUploads.kpiLegendTitle')}>
+                    <h4>{t('scorecardUploads.kpiLegendTitle')}</h4>
+                    <div>{KPI_LEGEND_KEYS.map(([key, label]) => <p key={key}><strong>{label}</strong><span>{t(`scorecardUploads.kpiLegend.${key}`)}</span></p>)}</div>
+                  </section>
                 </div>
+                </>
               )}
             </div>
           </div>

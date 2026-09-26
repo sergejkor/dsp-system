@@ -142,13 +142,14 @@ async function ensureKenjoTimeOffTable() {
       start_date DATE,
       end_date DATE,
       time_off_type VARCHAR(255),
-      time_off_type_name VARCHAR(255),
+      time_off_type_name TEXT,
       status VARCHAR(64),
       part_of_day_from VARCHAR(64),
       part_of_day_to VARCHAR(64),
       synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     )
   `);
+  await query(`ALTER TABLE kenjo_time_off ALTER COLUMN time_off_type_name TYPE TEXT`);
   await query(`CREATE INDEX IF NOT EXISTS idx_kenjo_time_off_dates ON kenjo_time_off (start_date, end_date)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_kenjo_time_off_user ON kenjo_time_off (kenjo_user_id)`);
   kenjoTimeOffTableReady = true;
@@ -900,7 +901,17 @@ async function syncKenjoTimeOffMonthToCache(year, month, nameById = null) {
     const startDate = normalizeDateOnly(item.from ?? item.startDate ?? item.start);
     const endDate = normalizeDateOnly(item.to ?? item.endDate ?? item.end);
     const typeId = String(item._timeOffTypeId ?? item.timeOffTypeId ?? item.time_off_type_id ?? item.type ?? '').trim() || null;
-    const typeName = String(item._timeOffType?.name ?? item.timeOffTypeName ?? item.time_off_type_name ?? item.typeName ?? item.type ?? item.description ?? '').trim() || null;
+    const typeName = String(
+      item._timeOffType?.name ??
+      item.timeOffTypeName ??
+      item.time_off_type_name ??
+      item.typeName ??
+      item._policyName ??
+      item._policyType ??
+      item._type ??
+      item.type ??
+      ''
+    ).trim() || null;
     const status = String(item.status ?? '').trim() || null;
     const partFrom = item.partOfDayFrom ?? item.part_of_day_from ?? null;
     const partTo = item.partOfDayTo ?? item.part_of_day_to ?? null;

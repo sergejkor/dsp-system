@@ -72,12 +72,14 @@ export default function SyncWithKenjoPage() {
   const [fromDate, setFromDate] = useState(today);
   const [toDate, setToDate] = useState(today);
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [result, setResult] = useState(null);
   const [actioning, setActioning] = useState(null);
   const [minDiffMinutes, setMinDiffMinutes] = useState(10);
   const [showUnmatched, setShowUnmatched] = useState(false);
+  const [noMatchReminderOpen, setNoMatchReminderOpen] = useState(false);
+  const [initialConflictCount, setInitialConflictCount] = useState(0);
+  const [completionReminderShown, setCompletionReminderShown] = useState(false);
   const [sendToKenjoRow, setSendToKenjoRow] = useState(null);
   const [sendToKenjoStart, setSendToKenjoStart] = useState('');
   const [sendToKenjoEnd, setSendToKenjoEnd] = useState('');
@@ -107,6 +109,22 @@ export default function SyncWithKenjoPage() {
       .catch(() => setKenjoEmployees([]))
       .finally(() => setAddAttendanceEmployeesLoading(false));
   }, [addAttendanceOpen]);
+
+  useEffect(() => {
+    const remainingConflicts = result?.conflicts ?? [];
+    const unmatchedKenjo = result?.kenjoNoMatch ?? [];
+    if (
+      !loading &&
+      !actioning &&
+      initialConflictCount > 0 &&
+      remainingConflicts.length === 0 &&
+      unmatchedKenjo.length > 0 &&
+      !completionReminderShown
+    ) {
+      setNoMatchReminderOpen(true);
+      setCompletionReminderShown(true);
+    }
+  }, [loading, actioning, result, initialConflictCount, completionReminderShown]);
 
   const addBreakToForm = () => {
     setAddAttendanceForm((f) => ({
@@ -200,26 +218,35 @@ export default function SyncWithKenjoPage() {
       return;
     }
     setLoading(true);
-    setProgress(0);
+    setResult(null);
+    setShowUnmatched(false);
+    setNoMatchReminderOpen(false);
+    setInitialConflictCount(0);
+    setCompletionReminderShown(false);
     setStatus(t('syncWithKenjo.loadingStatus'));
-    const progressInterval = setInterval(() => {
-      setProgress((p) => (p >= 90 ? 90 : p + 5));
-    }, 200);
     try {
       const data = await compareCortexWithKenjo(from, to, minDiffMinutes);
-      setResult(data);
-      const s = data?.stats || {};
+      const kenjoNoMatch = Array.isArray(data?.kenjoNoMatch) ? data.kenjoNoMatch : [];
+      const normalizedResult = {
+        ...data,
+        kenjoNoMatch,
+        stats: {
+          ...(data?.stats || {}),
+          unmatchedKenjo: kenjoNoMatch.length,
+        },
+      };
+      setResult(normalizedResult);
+      setInitialConflictCount((normalizedResult.conflicts ?? []).length);
+      const s = normalizedResult.stats;
       setStatus(
         `${t('syncWithKenjo.done')} ${t('syncWithKenjo.cortex')}: ${s.totalExcelRows ?? 0} | ${t('syncWithKenjo.kenjo')}: ${s.totalKenjoRows ?? 0} | ` +
-          `${t('syncWithKenjo.matched')}: ${s.totalMatched ?? 0} | ${t('syncWithKenjo.conflicts')}: ${(data?.conflicts ?? []).length} | ` +
+          `${t('syncWithKenjo.matched')}: ${s.totalMatched ?? 0} | ${t('syncWithKenjo.conflicts')}: ${(normalizedResult.conflicts ?? []).length} | ` +
           `${t('syncWithKenjo.cortexNoMatch')}: ${s.unmatchedExcel ?? 0} | ${t('syncWithKenjo.kenjoNoMatch')}: ${s.unmatchedKenjo ?? 0}`
       );
     } catch (err) {
       setStatus(t('syncWithKenjo.errorPrefix') + (err?.message || String(err)));
       setResult(null);
     } finally {
-      clearInterval(progressInterval);
-      setProgress(100);
       setLoading(false);
     }
   }, [fromDate, toDate, minDiffMinutes, t]);
@@ -301,6 +328,11 @@ export default function SyncWithKenjoPage() {
   const conflicts = result?.conflicts ?? [];
   const unmatchedCortex = result?.unmatchedCortex ?? [];
   const kenjoNoMatch = result?.kenjoNoMatch ?? [];
+  const kenjoNoMatchCount = kenjoNoMatch.length;
+  const resolvedConflictCount = Math.max(0, initialConflictCount - conflicts.length);
+  const conflictProgress = initialConflictCount > 0
+    ? Math.round((resolvedConflictCount / initialConflictCount) * 100)
+    : 0;
   const hasUnmatched = unmatchedCortex.length > 0;
 
   return (
@@ -483,10 +515,15 @@ export default function SyncWithKenjoPage() {
         </div>
       )}
 
-      {loading && (
+      {result != null && initialConflictCount > 0 && (
         <div className="sync-progress-wrap">
+          <div className="sync-progress-label">
+            {t('syncWithKenjo.conflictsResolved')
+              .replace('{done}', String(resolvedConflictCount))
+              .replace('{total}', String(initialConflictCount))}
+          </div>
           <div className="sync-progress-bar">
-            <div className="sync-progress-fill" style={{ width: `${progress}%` }} />
+            <div className="sync-progress-fill" style={{ width: `${conflictProgress}%` }} />
           </div>
         </div>
       )}
@@ -500,8 +537,32 @@ export default function SyncWithKenjoPage() {
             className={showUnmatched ? 'btn-primary' : 'btn-secondary'}
             onClick={() => setShowUnmatched((v) => !v)}
           >
-            {t('syncWithKenjo.kenjoNoMatch')} ({kenjoNoMatch.length})
+            {t('syncWithKenjo.kenjoNoMatch')} ({kenjoNoMatchCount})
           </button>
+        </div>
+      )}
+
+      {noMatchReminderOpen && (
+        <div className="sync-modal-overlay" onClick={() => setNoMatchReminderOpen(false)}>
+          <div className="sync-modal sync-no-match-reminder" onClick={(e) => e.stopPropagation()}>
+            <h3>{t('syncWithKenjo.kenjoNoMatchReminderTitle')}</h3>
+            <p className="sync-modal-meta">{t('syncWithKenjo.kenjoNoMatchReminderText').replace('{count}', String(kenjoNoMatchCount))}</p>
+            <div className="sync-modal-actions">
+              <button type="button" className="btn-secondary" onClick={() => setNoMatchReminderOpen(false)}>
+                {t('syncWithKenjo.cancel')}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  setNoMatchReminderOpen(false);
+                  setShowUnmatched(true);
+                }}
+              >
+                {t('syncWithKenjo.kenjoNoMatchReminderShow')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -852,6 +913,12 @@ export default function SyncWithKenjoPage() {
         }
         .sync-progress-wrap {
           margin-bottom: 1rem;
+        }
+        .sync-progress-label {
+          margin-bottom: 0.35rem;
+          color: #374151;
+          font-size: 0.9rem;
+          font-weight: 600;
         }
         .sync-progress-bar {
           height: 8px;

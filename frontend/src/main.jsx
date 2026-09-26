@@ -27,6 +27,7 @@ import O2TelefonicaPage from './pages/O2TelefonicaPage';
 import ScorecardUploadsPage from './pages/ScorecardUploadsPage';
 import CarsPage from './pages/CarsPage';
 import EVMonitoringPage from './pages/EVMonitoringPage.jsx';
+import FleetRentalsPage from './pages/FleetRentalsPage';
 import PavePage from './pages/PavePage';
 import PaveNewPage from './pages/PaveNewPage';
 import PaveDetailPage from './pages/PaveDetailPage';
@@ -553,6 +554,8 @@ function AppLayout() {
             <Route path="/o2-telefonica" element={<O2TelefonicaPage />} />
             <Route path="/cars" element={<CarsPage />} />
             <Route path="/ev-monitoring" element={<EVMonitoringPage />} />
+            <Route path="/ev-monitoring" element={<EVMonitoringPage />} />
+            <Route path="/fleet-rentals" element={<FleetRentalsPage />} />
             <Route path="/fleet-inspections" element={<FleetInspectionsPage />} />
             <Route path="/fleet-inspections/:id" element={<FleetInspectionDetailPage />} />
             <Route path="/pave" element={<PavePage />} />

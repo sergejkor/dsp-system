@@ -1,19 +1,31 @@
 import { getAuthHeader } from './kenjoAuth.js';
 
 const BASE_URL = 'https://api.kenjo.io/api/v1';
+const KENJO_REQUEST_TIMEOUT_MS = 30_000;
 
 async function kenjoGet(path, queryParams = {}) {
   const authHeader = await getAuthHeader();
   const qs = new URLSearchParams(queryParams).toString();
   const url = qs ? `${BASE_URL}${path}?${qs}` : `${BASE_URL}${path}`;
 
-  const resp = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: authHeader,
-      'Content-Type': 'application/json',
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), KENJO_REQUEST_TIMEOUT_MS);
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`Kenjo GET ${path} timed out after 30 seconds`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const text = await resp.text();
   if (!resp.ok) {

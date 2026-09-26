@@ -55,7 +55,7 @@ router.post('/', async (req, res) => {
   } catch (err) {
     if (err.code === '23505') return res.status(400).json({ error: 'Vehicle ID already exists' });
     console.error('POST /api/cars', err);
-    res.status(500).json({ error: err.message || 'Failed to create car' });
+    res.status(err.status || 500).json({ error: err.message || 'Failed to create car' });
   }
 });
 
@@ -89,7 +89,7 @@ router.put('/:id', authMiddleware.requireAuth, async (req, res) => {
     res.json(car);
   } catch (err) {
     console.error('PUT /api/cars/:id', err);
-    res.status(500).json({ error: err.message || 'Failed to update car' });
+    res.status(err.status || 500).json({ error: err.message || 'Failed to update car' });
   }
 });
 

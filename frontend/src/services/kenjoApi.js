@@ -6,6 +6,29 @@ function authOpts(opts = {}) {
   return { ...opts, headers: { ...getAuthHeaders(), ...(opts.headers || {}) } };
 }
 
+async function fetchWithTimeout(url, options, timeoutMs = 45_000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const text = await response.text();
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { error: text };
+      }
+    }
+    return { response, data };
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('Comparison timed out. Please try again.');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function getKenjoHealth() {
   const response = await fetch(`${API_BASE}/api/kenjo/health`, authOpts());
   if (!response.ok) throw new Error('Kenjo health failed');
@@ -97,12 +120,11 @@ export async function updateEmployeeInternalProfile(employeeId, payload) {
 export async function compareCortexWithKenjo(from, to, minDiff) {
   const params = new URLSearchParams({ from, to });
   if (minDiff != null && minDiff !== '') params.set('minDiff', String(minDiff));
-  const response = await fetch(`${API_BASE}/api/kenjo/compare?${params}`, authOpts());
+  const { response, data } = await fetchWithTimeout(`${API_BASE}/api/kenjo/compare?${params}`, authOpts());
   if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
     throw new Error(data.error || response.statusText || 'Compare failed');
   }
-  return response.json();
+  return data;
 }
 
 export async function ignoreConflict(conflictKey) {
