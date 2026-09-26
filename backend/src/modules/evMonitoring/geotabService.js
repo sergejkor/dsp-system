@@ -31,7 +31,10 @@ export function normalizeGeotabVehicles(devices, statuses, now = new Date(), sta
   for (const status of fallbackStatuses) if (status?.device?.id && hasSoc(status)) byDevice.set(status.device.id, status);
   // The dashboard response is richer; use it wherever it is present.
   for (const status of statuses) if (status?.device?.id) byDevice.set(status.device.id, status);
-  return devices.map((device) => byDevice.get(device.id) || { device: { id: device.id }, statusData: [] }).map((entry) => {
+  // The Device endpoint contains the complete historical fleet, including
+  // deactivated vehicles. Only expose a device when current EV telemetry (the
+  // dashboard result or the SOC fallback) actually identifies it.
+  return [...byDevice.values()].map((entry) => {
     const values = new Map((entry.statusData || []).map((item) => [item.diagnostic?.id, item]));
     const socData = values.get(SOC); const charge = values.get(CHARGING); const power = values.get(POWER);
     const soc = Number.isFinite(Number(socData?.data)) ? Number(socData.data) : null;
