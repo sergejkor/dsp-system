@@ -1147,28 +1147,6 @@ export default function CarPlanningPage() {
 
       {error && <p className="car-planning-error">{error}</p>}
 
-      <div className="car-planning-toolbar" style={{ marginTop: '0.8rem', padding: '0.7rem', border: '1px solid var(--border)', borderRadius: 8 }}>
-        <strong>{t('carPlanning.historyTitle')}</strong>
-        <select value={historyCarId} onChange={(e) => setHistoryCarId(e.target.value)} aria-label={t('carPlanning.vehicle')}>
-          <option value="">{t('carPlanning.historyVehiclePlaceholder')}</option>
-          {cars.map((car) => (
-            <option key={car.id} value={car.id}>{car.license_plate || car.vehicle_id || `#${car.id}`}</option>
-          ))}
-        </select>
-        <input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} aria-label={t('carPlanning.historyDate')} />
-        <button type="button" className="btn-secondary car-planning-btn-sm" onClick={handleHistorySearch} disabled={historyLoading}>
-          {historyLoading ? t('carPlanning.loading') : t('carPlanning.historySearch')}
-        </button>
-        {historyError && <span className="car-planning-error">{historyError}</span>}
-        {historySearched && !historyLoading && (
-          <span className="muted">
-            {historyResult?.driver_identifier
-              ? `${t('carPlanning.driver')}: ${historyResult.driver_identifier}${historyResult.abfahrtskontrolle ? ` (${t('carPlanning.abfahrtskontrolle')})` : ''}`
-              : t('carPlanning.historyEmpty')}
-          </span>
-        )}
-      </div>
-
       <div className="car-planning-split" role="region" aria-label={t('carPlanning.title')}>
         <div className="car-planning-fixed-wrap">
           <table ref={carPlanningFixedTableRef} className="car-planning-table car-planning-table-fixed">

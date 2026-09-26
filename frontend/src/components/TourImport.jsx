@@ -109,8 +109,7 @@ export default function TourImport({ defaultDate, onApplied, beforeImport }) {
   };
   const validRows = draft?.rows.filter(r => r.carId && r.systemCarId && !r.errors.length) || [];
   function physicalCandidates(row) {
-    return draft.cars.filter(car => row.candidates.includes(car.id) && !excluded.includes(car.id) &&
-      !(row.systemLocked && car.service_type === row.type && car.id !== row.systemCarId));
+    return draft.cars.filter(car => row.candidates.includes(car.id) && !excluded.includes(car.id));
   }
   async function changePhysical(row, value) {
     setEditingVehicle(null);

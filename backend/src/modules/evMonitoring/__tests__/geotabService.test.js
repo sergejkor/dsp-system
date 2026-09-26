@@ -16,6 +16,18 @@ test('normalizes Geotab device names, SOC freshness, power, and charging state',
   assert.equal(rows[1].stale, true);
 });
 
+test('uses DeviceStatusInfo when the dashboard omits an EV, and keeps unavailable telemetry visible', () => {
+  const rows = normalizeGeotabVehicles([{ id: '7670', name: 'M-AZ 7670E' }, { id: 'missing', name: 'M-AZ missing' }], [], new Date('2026-09-26T06:00:00Z'), 360, [
+    { device: { id: '7670' }, dateTime: '2026-09-26T06:00:00Z', statusData: [{ diagnostic: { id: 'DiagnosticStateOfChargeId' }, data: 36, dateTime: '2026-09-26T05:59:00Z' }, { diagnostic: { id: 'DiagnosticElectricVehicleChargingStateId' }, data: 1 }] },
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].vehicleName, 'M-AZ 7670E');
+  assert.equal(rows[0].soc, 36);
+  assert.equal(rows[0].chargingState, 'AC charging');
+  assert.equal(rows[1].soc, null);
+  assert.equal(rows[1].stale, true);
+});
+
 test('parses native MyGeotab device and latest-status responses', () => {
   assert.deepEqual(parseDeviceResponse({ result: [{ id: 'b28', name: 'EV' }] }), [{ id: 'b28', name: 'EV' }]);
   const parsed = parseLatestStatusResponse({ result: { data: [{ device: { id: 'b28' }, sensorData: [{ diagnosticId: 'DiagnosticStateOfChargeId', sensorValue: 91, lastUpdateTime: '2026-09-25T06:00:00Z' }] }], totalPages: 1, totalRecords: 1 } });
