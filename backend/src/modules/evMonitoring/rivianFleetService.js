@@ -8,14 +8,18 @@ function hasGraphqlAuthError(errors) {
   return errors.some((error) => GRAPHQL_AUTH_CODES.has(String(error?.extensions?.code || '').toUpperCase()));
 }
 
+function numericValue(value) {
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
 function normalizeItem(item, now, staleMinutes) {
   const telemetry = item.telemetry || {};
   const battery = telemetry.battery?.main || {};
   const socValue = battery.stateOfCharge?.value ?? battery.stateOfCharge ?? null;
   const socTimestamp = battery.stateOfCharge?.timestamp ?? battery.stateOfCharge?.measuredAt ?? null;
-  const soc = Number.isFinite(Number(socValue)) ? Number(socValue) : null;
+  const soc = numericValue(socValue);
   const stale = socTimestamp ? now.getTime() - new Date(socTimestamp).getTime() > staleMinutes * 60_000 : true;
-  return { source: 'rivian', externalId: item.vin || item.id || item.name, vehicleName: item.name || item.vin || 'Unbekannt', vin: item.vin || null, soc, chargingState: battery.chargerState || null, chargingPowerW: Number.isFinite(Number(battery.chargingPower)) ? Number(battery.chargingPower) : null, socTimestamp, lastReportedAt: telemetry.lastReportedAt || null, rangeKm: null, stale };
+  return { source: 'rivian', externalId: item.vin || item.id || item.name, vehicleName: item.name || item.vin || 'Unbekannt', vin: item.vin || null, soc, chargingState: battery.chargerState || null, chargingPowerW: numericValue(battery.chargingPower), socTimestamp, lastReportedAt: telemetry.lastReportedAt || null, rangeKm: null, stale };
 }
 
 export function createRivianFleetService({ withContext = withPersistentContext, environment = () => process.env, now = () => new Date(), diagnostics = () => {} } = {}) {
@@ -44,7 +48,9 @@ export function createRivianFleetService({ withContext = withPersistentContext, 
         if (errors.length) { const error = new Error('FleetOS GraphQL provider error'); error.code = hasGraphqlAuthError(errors) ? 'AUTH_REQUIRED' : 'PROVIDER_ERROR'; error.graphqlErrors = errors; throw error; }
         if (!pageData || !Array.isArray(pageData.items) || !pageData.pageInfo) { const error = new Error('FleetOS returned an unexpected response'); error.code = 'PROVIDER_ERROR'; throw error; }
         const vehicles = pageData.items.map((item) => normalizeItem(item, now(), Number(env.EV_MONITORING_STALE_MINUTES || 360)));
-        return { status: 'connected', vehicles, paginationLimited: Number(pageData.pageInfo.totalItems || vehicles.length) > vehicles.length };
+        const totalVehicleCount = Number(pageData.pageInfo.totalItems);
+        const reportedCount = Number.isFinite(totalVehicleCount) ? totalVehicleCount : vehicles.length;
+        return { status: 'connected', vehicles, totalVehicleCount: reportedCount, paginationLimited: reportedCount > vehicles.length };
       }
       const response = await page.evaluate(async ({ apiUrl, assetGroup }) => { const res = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operationName: 'Vehicles', variables: { assetGroups: [assetGroup], filter: '{}', limit: PAGE_SIZE, offset: 0, sort: [{ attr: 'core/info/identifiers.vin', order: 'DESC' }] }, query: 'query Vehicles($assetGroups:[String!]!,$limit:Int,$offset:Int,$sort:[FleetVehiclesPaginatedSortInput!],$filter:String) { fleetVehiclesPaginated(assetGroups:$assetGroups, filter:$filter, limit:$limit, offset:$offset, sort:$sort) { items { id name vin telemetry { lastReportedAt battery { main { stateOfCharge { value timestamp } chargerState chargingPower } } } } pageInfo { totalItems } } }' }) }); return { status: res.status, payload: await res.json() }; }, { apiUrl: env.EV_MONITORING_RIVIAN_API_URL || 'https://business.rivian.com/api', assetGroup: env.EV_MONITORING_RIVIAN_ASSET_GROUP });
       if ([401, 403].includes(response.status)) { const error = new Error('FleetOS authentication required'); error.code = 'AUTH_REQUIRED'; throw error; }
@@ -52,7 +58,7 @@ export function createRivianFleetService({ withContext = withPersistentContext, 
       const payload = response.payload ?? response;
       const pageData = payload?.data?.fleetVehiclesPaginated; if (!pageData) { const error = new Error('FleetOS returned an unexpected response'); error.code = 'PROVIDER_ERROR'; throw error; }
       return { status: 'connected', vehicles: pageData.items.map((item) => normalizeItem(item, now(), Number(env.EV_MONITORING_STALE_MINUTES || 360))) };
-    }); } catch (error) { const errorCode = isAuthenticationFailure(error) || error?.code === 'AUTH_REQUIRED' ? 'AUTH_REQUIRED' : 'PROVIDER_ERROR'; return { status: errorCode === 'AUTH_REQUIRED' ? 'auth_required' : 'provider_error', errorCode, vehicles: [] }; }
+    }); } catch (error) { const errorCode = error?.code === 'PROFILE_NOT_CONFIGURED' ? 'PROFILE_NOT_CONFIGURED' : isAuthenticationFailure(error) || error?.code === 'AUTH_REQUIRED' ? 'AUTH_REQUIRED' : 'PROVIDER_ERROR'; return { status: errorCode === 'AUTH_REQUIRED' ? 'auth_required' : 'provider_error', errorCode, vehicles: [] }; }
   } };
 }
 export const rivianFleetService = createRivianFleetService();
