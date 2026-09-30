@@ -2,6 +2,11 @@ import { isAuthenticationFailure, withPersistentContext } from './browserSession
 
 const PAGE_SIZE = 25;
 const isLoginUrl = (url) => /\/(login|sign-?in|auth)(\/|$)/i.test(new URL(url).pathname);
+const GRAPHQL_AUTH_CODES = new Set(['AUTH_REQUIRED', 'AUTHENTICATION_ERROR', 'TOKEN_EXPIRED', 'UNAUTHENTICATED', 'UNAUTHORIZED']);
+
+function hasGraphqlAuthError(errors) {
+  return errors.some((error) => GRAPHQL_AUTH_CODES.has(String(error?.extensions?.code || '').toUpperCase()));
+}
 
 function normalizeItem(item, now, staleMinutes) {
   const telemetry = item.telemetry || {};
@@ -36,14 +41,14 @@ export function createRivianFleetService({ withContext = withPersistentContext, 
         const pageData = payload?.data?.fleetVehiclesPaginated;
         diagnostics({ finalUrl: new URL(currentUrl()).hostname + new URL(currentUrl()).pathname, nativeRequestObserved: true, httpStatus: native.status, graphqlErrorCount: errors.length, graphqlErrorCodes: errors.map((e) => e?.extensions?.code).filter(Boolean), totalItems: pageData?.pageInfo?.totalItems ?? null, itemCount: Array.isArray(pageData?.items) ? pageData.items.length : 0 });
         if ([401, 403].includes(native.status)) { const error = new Error('FleetOS authentication required'); error.code = 'AUTH_REQUIRED'; throw error; }
-        if (errors.length) { const error = new Error('FleetOS GraphQL provider error'); error.code = 'PROVIDER_ERROR'; error.graphqlErrors = errors; throw error; }
+        if (errors.length) { const error = new Error('FleetOS GraphQL provider error'); error.code = hasGraphqlAuthError(errors) ? 'AUTH_REQUIRED' : 'PROVIDER_ERROR'; error.graphqlErrors = errors; throw error; }
         if (!pageData || !Array.isArray(pageData.items) || !pageData.pageInfo) { const error = new Error('FleetOS returned an unexpected response'); error.code = 'PROVIDER_ERROR'; throw error; }
         const vehicles = pageData.items.map((item) => normalizeItem(item, now(), Number(env.EV_MONITORING_STALE_MINUTES || 360)));
         return { status: 'connected', vehicles, paginationLimited: Number(pageData.pageInfo.totalItems || vehicles.length) > vehicles.length };
       }
       const response = await page.evaluate(async ({ apiUrl, assetGroup }) => { const res = await fetch(apiUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operationName: 'Vehicles', variables: { assetGroups: [assetGroup], filter: '{}', limit: PAGE_SIZE, offset: 0, sort: [{ attr: 'core/info/identifiers.vin', order: 'DESC' }] }, query: 'query Vehicles($assetGroups:[String!]!,$limit:Int,$offset:Int,$sort:[FleetVehiclesPaginatedSortInput!],$filter:String) { fleetVehiclesPaginated(assetGroups:$assetGroups, filter:$filter, limit:$limit, offset:$offset, sort:$sort) { items { id name vin telemetry { lastReportedAt battery { main { stateOfCharge { value timestamp } chargerState chargingPower } } } } pageInfo { totalItems } } }' }) }); return { status: res.status, payload: await res.json() }; }, { apiUrl: env.EV_MONITORING_RIVIAN_API_URL || 'https://business.rivian.com/api', assetGroup: env.EV_MONITORING_RIVIAN_ASSET_GROUP });
       if ([401, 403].includes(response.status)) { const error = new Error('FleetOS authentication required'); error.code = 'AUTH_REQUIRED'; throw error; }
-      if (response.payload?.errors?.length) { const error = new Error('FleetOS GraphQL provider error'); error.code = 'PROVIDER_ERROR'; throw error; }
+      if (response.payload?.errors?.length) { const error = new Error('FleetOS GraphQL provider error'); error.code = hasGraphqlAuthError(response.payload.errors) ? 'AUTH_REQUIRED' : 'PROVIDER_ERROR'; throw error; }
       const payload = response.payload ?? response;
       const pageData = payload?.data?.fleetVehiclesPaginated; if (!pageData) { const error = new Error('FleetOS returned an unexpected response'); error.code = 'PROVIDER_ERROR'; throw error; }
       return { status: 'connected', vehicles: pageData.items.map((item) => normalizeItem(item, now(), Number(env.EV_MONITORING_STALE_MINUTES || 360))) };
